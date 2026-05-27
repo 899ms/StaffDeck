@@ -601,6 +601,19 @@ class AgentLoop:
                 "reflection_error",
                 {"message": str(exc)},
             )
+            if stream_events is not None:
+                stream_events.append(
+                    (
+                        "reflection_decision",
+                        {
+                            "needs_retry": False,
+                            "reason": f"反思失败：{exc}",
+                            "target_skill_id": None,
+                            "target_step_id": None,
+                            "target_tool_name": None,
+                        },
+                    )
+                )
             return active_skill, router_decision, step_result, tool_result
 
         self.events.record(
@@ -609,6 +622,8 @@ class AgentLoop:
             "reflection_decision_created",
             reflection.model_dump(),
         )
+        if stream_events is not None:
+            stream_events.append(("reflection_decision", reflection.model_dump(mode="json")))
         if not reflection.needs_retry:
             return active_skill, router_decision, step_result, tool_result
 
@@ -620,6 +635,7 @@ class AgentLoop:
                 request,
                 chat_session,
                 active_skill,
+                router_decision,
                 retry_tool_call,
                 reflection.reason,
                 stream_events,
@@ -644,6 +660,7 @@ class AgentLoop:
                 request,
                 chat_session,
                 active_skill,
+                router_decision,
                 retry_tool_call,
                 reflection.reason,
                 stream_events,
@@ -666,6 +683,7 @@ class AgentLoop:
         request: ChatTurnRequest,
         chat_session: ChatSession,
         active_skill: Skill | None,
+        router_decision: RouterDecision,
         retry_tool_call: ToolCall,
         retry_reason: str | None,
         stream_events: list[tuple[str, dict[str, object]]] | None = None,
@@ -685,6 +703,17 @@ class AgentLoop:
                 "target_tool_name": retry_tool_call.name,
             },
         )
+        if stream_events is not None:
+            stream_events.append(
+                (
+                    "status",
+                    {
+                        "phase": "tool",
+                        "text": f"正在调用工具 {retry_tool_call.name}",
+                        "tool_name": retry_tool_call.name,
+                    },
+                )
+            )
         retry_tool_result = self._execute_tool_call(request, chat_session, retry_tool_call)
         self._advance_after_successful_tool(
             request.tenant_id, chat_session, active_skill, retry_step_result, retry_tool_result
@@ -751,6 +780,17 @@ class AgentLoop:
         active_skill = self._get_active_skill(request.tenant_id, chat_session.active_skill_id)
         if stream_events is not None:
             stream_events.append(("skill_state", self._skill_state_payload(chat_session, skills)))
+            stream_events.append(
+                (
+                    "status",
+                    {
+                        "phase": "stepping",
+                        "text": "正在思考",
+                        "active_skill_id": chat_session.active_skill_id,
+                        "active_step_id": chat_session.active_step_id,
+                    },
+                )
+            )
 
         step_result = self.step_agent.run(request.message, chat_session, active_skill, tools, model_config)
         self.events.record(
@@ -765,6 +805,17 @@ class AgentLoop:
 
         tool_result: ToolResult | None = None
         if step_result.tool_call:
+            if stream_events is not None:
+                stream_events.append(
+                    (
+                        "status",
+                        {
+                            "phase": "tool",
+                            "text": f"正在调用工具 {step_result.tool_call.name}",
+                            "tool_name": step_result.tool_call.name,
+                        },
+                    )
+                )
             tool_result = self._execute_tool_call(request, chat_session, step_result.tool_call)
             self._advance_after_successful_tool(
                 request.tenant_id, chat_session, active_skill, step_result, tool_result

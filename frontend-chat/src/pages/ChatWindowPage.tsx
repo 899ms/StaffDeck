@@ -225,6 +225,35 @@ function normalizeTraceTool(value: unknown): TraceTool | null {
   };
 }
 
+function shortTraceValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return '';
+}
+
+function toolTraceDetail(tool: TraceTool): string | undefined {
+  const content = tool.content && typeof tool.content === 'object' ? tool.content as Record<string, unknown> : null;
+  const data = content?.data && typeof content.data === 'object' ? content.data as Record<string, unknown> : null;
+  const parts = [
+    tool.rawToolName && tool.rawToolName !== tool.toolName ? tool.rawToolName : '',
+    shortTraceValue(data?.source),
+    data?.found === false ? '未命中' : data?.found === true ? '已命中' : '',
+    shortTraceValue(data?.miss_reason),
+    shortTraceValue(data?.recommendation),
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(' · ') : undefined;
+}
+
+function reflectionTraceDetail(data: Record<string, unknown>): string | undefined {
+  const parts = [
+    typeof data.reason === 'string' ? data.reason : '',
+    typeof data.target_tool_name === 'string' ? `工具 ${data.target_tool_name}` : '',
+    typeof data.target_skill_id === 'string' ? `技能 ${data.target_skill_id}` : '',
+    typeof data.target_step_id === 'string' ? `步骤 ${data.target_step_id}` : '',
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(' · ') : undefined;
+}
+
 function traceLineAllowed(line: TraceLine, config: UIConfigRead): boolean {
   if (line.kind === 'thinking' || line.kind === 'decision') return config.show_thinking_trace;
   if (line.kind === 'skill') return config.show_skill_trace;
@@ -243,10 +272,7 @@ function traceSummary(trace: TurnTrace, lines: TraceLine[]): { text: string; sta
 }
 
 function traceDetails(lines: TraceLine[]): TraceLine[] {
-  const order = { decision: 0, skill: 1, tool: 2, thinking: 3 } as const;
-  const details = lines
-    .filter((line) => line.kind !== 'thinking')
-    .sort((left, right) => order[left.kind] - order[right.kind]);
+  const details = lines.filter((line) => line.kind !== 'thinking');
   return details.length > 0 ? details : lines.filter((line) => line.text !== '已完成思考');
 }
 
@@ -330,7 +356,7 @@ export default function ChatWindowPage() {
       trace.lines = [...trace.lines];
       trace.lines[index] = line;
     } else {
-      trace.lines = [...trace.lines, line].slice(-8);
+      trace.lines = [...trace.lines, line].slice(-24);
     }
     notifyTrace();
   }, [getTurnTrace, notifyTrace]);
@@ -648,10 +674,21 @@ export default function ChatWindowPage() {
               id: `tool_${tool.rawToolName || tool.toolId}`,
               kind: 'tool',
               text: `${tool.isError ? '工具调用失败' : '调用工具'} ${tool.toolName}`,
-              detail: tool.rawToolName && tool.rawToolName !== tool.toolName ? tool.rawToolName : undefined,
+              detail: toolTraceDetail(tool),
               state: tool.isError ? 'failed' : 'completed',
             });
           }
+          return;
+        }
+        if (item.event === 'reflection_decision') {
+          const needsRetry = item.data.needs_retry === true;
+          upsertTraceLine(turnId, {
+            id: 'reflection',
+            kind: 'decision',
+            text: needsRetry ? '反思后继续尝试' : '反思通过',
+            detail: reflectionTraceDetail(item.data),
+            state: 'completed',
+          });
           return;
         }
         if (item.event === 'status') {
@@ -667,9 +704,9 @@ export default function ChatWindowPage() {
           } else if (item.data.phase === 'responding') {
             upsertTraceLine(turnId, { id: 'thinking', kind: 'thinking', text: '正在思考', state: 'running' });
           } else if (item.data.phase === 'routing') {
-            upsertTraceLine(turnId, { id: 'thinking', kind: 'thinking', text: '正在思考', state: 'running' });
+            upsertTraceLine(turnId, { id: 'decision_router', kind: 'decision', text: '判断意图', state: 'running' });
           } else if (item.data.phase === 'reflecting') {
-            upsertTraceLine(turnId, { id: 'thinking', kind: 'thinking', text: '正在思考', state: 'running' });
+            upsertTraceLine(turnId, { id: 'reflection', kind: 'decision', text: '正在反思', state: 'running' });
           } else {
             upsertTraceLine(turnId, { id: 'thinking', kind: 'thinking', text: '正在思考', state: 'running' });
           }

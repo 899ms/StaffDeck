@@ -374,14 +374,27 @@ def _event_trace_line(event: AgentEvent, skill_names: dict[str, str]) -> dict | 
             "id": f"tool_{name or event.id}",
             "kind": "tool",
             "text": f"{'调用工具' if success else '工具调用失败'} {name}",
-            "detail": None,
+            "detail": _tool_trace_detail(payload),
             "state": "completed" if success else "failed",
         }
-    if event.event_type == "reflection_decision_created" and payload.get("needs_retry"):
+    if event.event_type == "reflection_decision_created":
+        needs_retry = bool(payload.get("needs_retry"))
         return {
             "id": f"decision_{event.id}",
             "kind": "decision",
-            "text": "反思后重试",
+            "text": "反思后继续尝试" if needs_retry else "反思通过",
+            "detail": _reflection_trace_detail(payload),
+            "state": "completed",
+        }
+    if event.event_type == "reflection_retry_started":
+        mode = str(payload.get("mode") or "").strip()
+        target_tool = str(payload.get("target_tool_name") or "").strip()
+        target_skill = str(payload.get("target_skill_id") or "").strip()
+        target = target_tool or skill_names.get(target_skill, target_skill)
+        return {
+            "id": f"decision_{event.id}",
+            "kind": "decision",
+            "text": f"重试{ '工具' if mode == 'tool' else '技能' } {target}".strip(),
             "detail": str(payload.get("reason") or "") or None,
             "state": "completed",
         }
@@ -394,6 +407,30 @@ def _event_trace_line(event: AgentEvent, skill_names: dict[str, str]) -> dict | 
             "state": "failed",
         }
     return None
+
+
+def _tool_trace_detail(payload: dict) -> str | None:
+    data = payload.get("data")
+    data_dict = data if isinstance(data, dict) else {}
+    parts = [
+        str(data_dict.get("source") or "").strip(),
+        "未命中" if data_dict.get("found") is False else "已命中" if data_dict.get("found") is True else "",
+        str(data_dict.get("miss_reason") or "").strip(),
+        str(data_dict.get("recommendation") or "").strip(),
+    ]
+    text = " · ".join(part for part in parts if part)
+    return text or None
+
+
+def _reflection_trace_detail(payload: dict) -> str | None:
+    parts = [
+        str(payload.get("reason") or "").strip(),
+        f"工具 {payload['target_tool_name']}" if payload.get("target_tool_name") else "",
+        f"技能 {payload['target_skill_id']}" if payload.get("target_skill_id") else "",
+        f"步骤 {payload['target_step_id']}" if payload.get("target_step_id") else "",
+    ]
+    text = " · ".join(part for part in parts if part)
+    return text or None
 
 
 def _upsert_trace_line(lines: list[dict], line: dict) -> None:
