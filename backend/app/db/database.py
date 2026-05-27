@@ -67,6 +67,13 @@ def _migrate_sqlite_skill_schema() -> None:
                 else:
                     conn.execute(text("UPDATE tools SET allowed_skills_json = '[]'"))
 
+        if "ui_configs" in tables:
+            ui_columns = {column["name"] for column in inspector.get_columns("ui_configs")}
+            if "reflection_max_rounds" not in ui_columns:
+                conn.execute(
+                    text("ALTER TABLE ui_configs ADD COLUMN reflection_max_rounds INTEGER NOT NULL DEFAULT 1")
+                )
+
         if legacy_table in tables and "skills" in tables:
             rows = conn.execute(text(f"SELECT * FROM {legacy_table}")).mappings().all()
             for row in rows:

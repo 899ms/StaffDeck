@@ -1,5 +1,5 @@
 import { SaveOutlined, UserOutlined } from '@ant-design/icons';
-import { Button, Card, Form, Input, Switch, Typography, message } from 'antd';
+import { Button, Card, Form, Input, InputNumber, Switch, Typography, message } from 'antd';
 import { useEffect, useState } from 'react';
 import { api, TENANT_ID } from '../api/client';
 import type { PersonaRead, UIConfigRead } from '../types';
@@ -64,6 +64,7 @@ export default function PersonaPage() {
         show_thinking_trace: values.show_thinking_trace,
         show_skill_trace: values.show_skill_trace,
         show_tool_trace: values.show_tool_trace,
+        reflection_max_rounds: values.reflection_max_rounds,
       });
       setUiUpdatedAt(row.updated_at);
       message.success('展示设置已保存');
@@ -88,11 +89,16 @@ export default function PersonaPage() {
         </Form>
         {updatedAt && <Typography.Text type="secondary">最后更新：{formatDateOnly(updatedAt)}</Typography.Text>}
       </Card>
-      <Card className="editor-card settings-card" title="用户端展示设置">
+      <Card className="editor-card settings-card" title="Agent 与展示设置">
         <Form
           form={uiForm}
           layout="vertical"
-          initialValues={{ show_thinking_trace: true, show_skill_trace: true, show_tool_trace: true }}
+          initialValues={{
+            show_thinking_trace: true,
+            show_skill_trace: true,
+            show_tool_trace: true,
+            reflection_max_rounds: 1,
+          }}
         >
           <Form.Item
             name="show_thinking_trace"
@@ -115,8 +121,16 @@ export default function PersonaPage() {
           >
             <Switch />
           </Form.Item>
+          <Form.Item
+            name="reflection_max_rounds"
+            label="反思轮数"
+            tooltip="设为 0 时关闭反思；每轮允许模型检查当前技能和工具结果，并决定是否重试其他技能或工具。"
+            rules={[{ required: true, type: 'number', min: 0, max: 5 }]}
+          >
+            <InputNumber min={0} max={5} step={1} precision={0} />
+          </Form.Item>
           <Button type="primary" icon={<SaveOutlined />} loading={uiLoading} onClick={saveUiConfig}>
-            保存展示设置
+            保存设置
           </Button>
         </Form>
         {uiUpdatedAt && <Typography.Text type="secondary">最后更新：{formatDateOnly(uiUpdatedAt)}</Typography.Text>}

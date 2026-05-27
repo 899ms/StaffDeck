@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session
 
@@ -18,6 +18,7 @@ class UIConfigRead(BaseModel):
     show_thinking_trace: bool
     show_skill_trace: bool
     show_tool_trace: bool
+    reflection_max_rounds: int
     updated_at: str
 
     model_config = ConfigDict(from_attributes=True)
@@ -28,6 +29,7 @@ class UIConfigUpdateRequest(BaseModel):
     show_thinking_trace: bool = True
     show_skill_trace: bool = True
     show_tool_trace: bool = True
+    reflection_max_rounds: int = Field(default=1, ge=0, le=5)
 
 
 def ui_config_read(row: UIConfig) -> UIConfigRead:
@@ -36,6 +38,7 @@ def ui_config_read(row: UIConfig) -> UIConfigRead:
         show_thinking_trace=row.show_thinking_trace,
         show_skill_trace=row.show_skill_trace,
         show_tool_trace=row.show_tool_trace,
+        reflection_max_rounds=row.reflection_max_rounds,
         updated_at=row.updated_at.isoformat(),
     )
 
@@ -66,6 +69,7 @@ def update_enterprise_ui_config(
     row.show_thinking_trace = request.show_thinking_trace
     row.show_skill_trace = request.show_skill_trace
     row.show_tool_trace = request.show_tool_trace
+    row.reflection_max_rounds = request.reflection_max_rounds
     row.updated_at = utc_now()
     db.add(row)
     db.commit()

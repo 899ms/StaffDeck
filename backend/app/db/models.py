@@ -89,6 +89,7 @@ class UIConfig(SQLModel, table=True):
     show_thinking_trace: bool = True
     show_skill_trace: bool = True
     show_tool_trace: bool = True
+    reflection_max_rounds: int = 1
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 

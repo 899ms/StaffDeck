@@ -297,6 +297,7 @@ export default function ChatWindowPage() {
     show_thinking_trace: true,
     show_skill_trace: true,
     show_tool_trace: true,
+    reflection_max_rounds: 1,
     updated_at: '',
   });
   const chatMessagesRef = useRef<HTMLDivElement>(null);

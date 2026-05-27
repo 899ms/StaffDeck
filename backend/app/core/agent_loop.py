@@ -12,7 +12,7 @@ from app.core.response_generator import FALLBACK_REPLY, ResponseGenerator
 from app.core.router import Router
 from app.core.skill_runtime import SkillRuntime
 from app.core.step_agent import StepAgent
-from app.db.models import ChatSession, Message, ModelConfig, PersonaConfig, Skill, Tool, new_id, utc_now
+from app.db.models import ChatSession, Message, ModelConfig, PersonaConfig, Skill, Tool, UIConfig, new_id, utc_now
 from app.llm import LLMError
 from app.memory.service import MemoryService, memory_read
 from app.observability import EventLog
@@ -24,6 +24,8 @@ from app.tools.tool_schema import ToolCall, ToolResult
 
 StatusCallback = Callable[[str, dict[str, object]], None]
 STREAM_CHUNK_INTERVAL_SECONDS = 0.045
+DEFAULT_REFLECTION_MAX_ROUNDS = 1
+REFLECTION_MAX_ROUNDS_LIMIT = 5
 PENDING_REPLY_MARKERS = (
     "请稍候",
     "请稍等",
@@ -269,15 +271,33 @@ class AgentLoop:
                 self.db.commit()
                 self.db.refresh(chat_session)
 
-            if self._should_try_reflection(router_decision, step_result, tool_result):
-                yield self._stream_status(chat_session, "reflecting", "正在反思")
             reflection_stream_events: list[tuple[str, dict[str, object]]] = []
+            step_result, tool_result = self._close_pending_tool_loop(
+                request,
+                chat_session,
+                active_skill,
+                tools,
+                step_result,
+                tool_result,
+                reflection_stream_events,
+            )
+            for event_name, payload in reflection_stream_events:
+                yield self._stream_event(event_name, chat_session, payload)
+            reflection_stream_events = []
+            reflection_max_rounds = self._get_reflection_max_rounds(request.tenant_id)
+            if reflection_max_rounds > 0 and self._should_try_reflection(router_decision, step_result, tool_result):
+                yield self._stream_status(
+                    chat_session,
+                    "reflecting",
+                    "正在反思",
+                    {"reflection_round": 1, "reflection_max_rounds": reflection_max_rounds},
+                )
             (
                 active_skill,
                 router_decision,
                 step_result,
                 tool_result,
-            ) = self._reflect_and_retry(
+            ) = self._run_reflection_rounds(
                 request,
                 chat_session,
                 skills,
@@ -287,15 +307,7 @@ class AgentLoop:
                 router_decision,
                 step_result,
                 tool_result,
-                reflection_stream_events,
-            )
-            step_result, tool_result = self._close_pending_tool_loop(
-                request,
-                chat_session,
-                active_skill,
-                tools,
-                step_result,
-                tool_result,
+                reflection_max_rounds,
                 reflection_stream_events,
             )
             for event_name, payload in reflection_stream_events:
@@ -531,12 +543,20 @@ class AgentLoop:
             self.db.commit()
             self.db.refresh(chat_session)
 
+        step_result, tool_result = self._close_pending_tool_loop(
+            request,
+            chat_session,
+            active_skill,
+            tools,
+            step_result,
+            tool_result,
+        )
         (
             active_skill,
             router_decision,
             step_result,
             tool_result,
-        ) = self._reflect_and_retry(
+        ) = self._run_reflection_rounds(
             request,
             chat_session,
             skills,
@@ -546,14 +566,7 @@ class AgentLoop:
             router_decision,
             step_result,
             tool_result,
-        )
-        step_result, tool_result = self._close_pending_tool_loop(
-            request,
-            chat_session,
-            active_skill,
-            tools,
-            step_result,
-            tool_result,
+            self._get_reflection_max_rounds(request.tenant_id),
         )
 
         return PreparedTurn(
@@ -565,6 +578,58 @@ class AgentLoop:
             tool_result=tool_result,
             memory_context=memory_context,
         )
+
+    def _run_reflection_rounds(
+        self,
+        request: ChatTurnRequest,
+        chat_session: ChatSession,
+        skills: list[Skill],
+        tools: list[Tool],
+        model_config: ModelConfig,
+        active_skill: Skill | None,
+        router_decision: RouterDecision,
+        step_result: StepAgentResult,
+        tool_result: ToolResult | None,
+        max_rounds: int,
+        stream_events: list[tuple[str, dict[str, object]]] | None = None,
+    ) -> tuple[Skill | None, RouterDecision, StepAgentResult, ToolResult | None]:
+        rounds = max(0, min(max_rounds, REFLECTION_MAX_ROUNDS_LIMIT))
+        for round_index in range(rounds):
+            if not self._should_try_reflection(router_decision, step_result, tool_result):
+                break
+            if stream_events is not None and round_index > 0:
+                stream_events.append(
+                    (
+                        "status",
+                        {
+                            "phase": "reflecting",
+                            "text": "正在反思",
+                            "reflection_round": round_index + 1,
+                            "reflection_max_rounds": rounds,
+                        },
+                    )
+                )
+            (
+                active_skill,
+                router_decision,
+                step_result,
+                tool_result,
+                retried,
+            ) = self._reflect_and_retry(
+                request,
+                chat_session,
+                skills,
+                tools,
+                model_config,
+                active_skill,
+                router_decision,
+                step_result,
+                tool_result,
+                stream_events,
+            )
+            if not retried:
+                break
+        return active_skill, router_decision, step_result, tool_result
 
     def _reflect_and_retry(
         self,
@@ -578,9 +643,9 @@ class AgentLoop:
         step_result: StepAgentResult,
         tool_result: ToolResult | None,
         stream_events: list[tuple[str, dict[str, object]]] | None = None,
-    ) -> tuple[Skill | None, RouterDecision, StepAgentResult, ToolResult | None]:
+    ) -> tuple[Skill | None, RouterDecision, StepAgentResult, ToolResult | None, bool]:
         if not self._should_try_reflection(router_decision, step_result, tool_result):
-            return active_skill, router_decision, step_result, tool_result
+            return active_skill, router_decision, step_result, tool_result, False
 
         try:
             reflection = self.reflection_agent.review(
@@ -614,7 +679,7 @@ class AgentLoop:
                         },
                     )
                 )
-            return active_skill, router_decision, step_result, tool_result
+            return active_skill, router_decision, step_result, tool_result, False
 
         self.events.record(
             request.tenant_id,
@@ -625,13 +690,13 @@ class AgentLoop:
         if stream_events is not None:
             stream_events.append(("reflection_decision", reflection.model_dump(mode="json")))
         if not reflection.needs_retry:
-            return active_skill, router_decision, step_result, tool_result
+            return active_skill, router_decision, step_result, tool_result, False
 
         retry_tool_call = self._tool_call_from_reflection(reflection, chat_session, tools)
         if retry_tool_call and self._reflection_tool_retry_targets_current_skill(
             reflection, chat_session
         ):
-            return self._retry_with_reflection_tool_call(
+            retry_result = self._retry_with_reflection_tool_call(
                 request,
                 chat_session,
                 active_skill,
@@ -640,12 +705,13 @@ class AgentLoop:
                 reflection.reason,
                 stream_events,
             )
+            return (*retry_result, True)
 
         retry_router_decision = self._router_decision_from_reflection(
             reflection, chat_session, skills, router_decision
         )
         if retry_router_decision:
-            return self._retry_with_router_decision(
+            retry_result = self._retry_with_router_decision(
                 request,
                 chat_session,
                 skills,
@@ -654,9 +720,10 @@ class AgentLoop:
                 model_config,
                 stream_events,
             )
+            return (*retry_result, True)
 
         if retry_tool_call:
-            return self._retry_with_reflection_tool_call(
+            retry_result = self._retry_with_reflection_tool_call(
                 request,
                 chat_session,
                 active_skill,
@@ -665,6 +732,7 @@ class AgentLoop:
                 reflection.reason,
                 stream_events,
             )
+            return (*retry_result, True)
 
         self.events.record(
             request.tenant_id,
@@ -676,7 +744,7 @@ class AgentLoop:
                 "target_tool_name": reflection.target_tool_name,
             },
         )
-        return active_skill, router_decision, step_result, tool_result
+        return active_skill, router_decision, step_result, tool_result, False
 
     def _retry_with_reflection_tool_call(
         self,
@@ -1318,6 +1386,11 @@ class AgentLoop:
     def _get_persona_prompt(self, tenant_id: str) -> str | None:
         row = self.db.get(PersonaConfig, tenant_id)
         return row.system_prompt if row else None
+
+    def _get_reflection_max_rounds(self, tenant_id: str) -> int:
+        row = self.db.get(UIConfig, tenant_id)
+        value = row.reflection_max_rounds if row else DEFAULT_REFLECTION_MAX_ROUNDS
+        return max(0, min(int(value), REFLECTION_MAX_ROUNDS_LIMIT))
 
     def _list_published_skills(self, tenant_id: str) -> list[Skill]:
         return list(

@@ -1,7 +1,7 @@
 from app.core.agent_loop import AgentLoop
 from app.core.reflection_agent import ReflectionDecision
-from app.db.models import ChatSession, Skill, Tool
-from app.session.session_schema import ChatTurnRequest, RouterDecision, ToolCall
+from app.db.models import ChatSession, ModelConfig, Skill, Tool
+from app.session.session_schema import ChatTurnRequest, RouterDecision, StepAgentResult, ToolCall
 from app.tools.tool_schema import ToolResult
 
 
@@ -138,6 +138,30 @@ def test_reflection_tool_retry_preserves_router_decision_and_streams_tool_events
     assert stream_events[1][0] == "tool_result"
 
 
+def test_zero_reflection_rounds_skips_reflection_agent() -> None:
+    loop = object.__new__(AgentLoop)
+    loop.reflection_agent = _RaisingReflectionAgent()
+    session = ChatSession(id="session_test", tenant_id="tenant_demo")
+    decision = RouterDecision(decision="continue_current_skill", user_intent="申请退款")
+    step_result = StepAgentResult(is_step_completed=True)
+    tool_result = ToolResult(tool_name="order.query", success=True, data={"found": False})
+
+    returned = loop._run_reflection_rounds(
+        ChatTurnRequest(tenant_id="tenant_demo", message="我要退款"),
+        session,
+        [],
+        [],
+        ModelConfig(tenant_id="tenant_demo", name="demo", api_key_encrypted="", model="demo"),
+        None,
+        decision,
+        step_result,
+        tool_result,
+        0,
+    )
+
+    assert returned == (None, decision, step_result, tool_result)
+
+
 class _FakeDb:
     def commit(self) -> None:
         pass
@@ -161,6 +185,11 @@ class _FakeToolExecutor:
             success=True,
             data={"source": "archive_order_center", "found": True},
         )
+
+
+class _RaisingReflectionAgent:
+    def review(self, *args: object, **kwargs: object) -> ReflectionDecision:
+        raise AssertionError("reflection agent should not be called")
 
 
 def _skill(skill_id: str) -> Skill:
