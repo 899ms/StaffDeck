@@ -238,6 +238,65 @@ body {
   max-width: 100%;
 }
 
+.muted-cell {
+  color: var(--text-secondary);
+}
+
+.memory-detail {
+  display: grid;
+  gap: 16px;
+}
+
+.memory-records {
+  display: grid;
+  gap: 12px;
+}
+
+.memory-record-card .ant-card-head {
+  min-height: 40px;
+}
+
+.memory-record-meta {
+  margin-bottom: 10px;
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.memory-content {
+  max-height: 48vh;
+  margin-bottom: 0 !important;
+  padding: 12px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.memory-metadata {
+  margin-top: 10px;
+  color: var(--text-secondary);
+}
+
+.memory-metadata summary {
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.memory-metadata pre {
+  margin: 8px 0 0;
+  padding: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
 .ant-table {
   color: var(--text-primary);
 }
