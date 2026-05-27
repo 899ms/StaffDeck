@@ -51,24 +51,24 @@ def test_reflection_builds_tool_call_from_slots() -> None:
     assert tool_call.arguments["issue"] == "无法启动"
 
 
-def test_reflection_builds_backup_search_tool_call_from_query_slot() -> None:
+def test_reflection_builds_archive_order_tool_call_from_order_slot() -> None:
     loop = object.__new__(AgentLoop)
     session = ChatSession(
         id="session_test",
         tenant_id="tenant_demo",
-        active_skill_id="reflection_lookup_test",
-        slots_json={"query": "影子文档"},
+        active_skill_id="after_sales_refund",
+        slots_json={"order_id": "HIS20240527001"},
     )
 
     tool_call = loop._tool_call_from_reflection(
-        ReflectionDecision(needs_retry=True, target_tool_name="reflection.backup_search"),
+        ReflectionDecision(needs_retry=True, target_tool_name="order.archive_query"),
         session,
-        [_backup_search_tool()],
+        [_archive_order_tool()],
     )
 
     assert tool_call is not None
-    assert tool_call.name == "reflection.backup_search"
-    assert tool_call.arguments == {"query": "影子文档"}
+    assert tool_call.name == "order.archive_query"
+    assert tool_call.arguments == {"order_id": "HIS20240527001"}
 
 
 def test_reflection_tool_retry_is_preferred_for_current_skill_target() -> None:
@@ -76,14 +76,14 @@ def test_reflection_tool_retry_is_preferred_for_current_skill_target() -> None:
     session = ChatSession(
         id="session_test",
         tenant_id="tenant_demo",
-        active_skill_id="reflection_lookup_test",
+        active_skill_id="after_sales_refund",
     )
 
     assert loop._reflection_tool_retry_targets_current_skill(
         ReflectionDecision(
             needs_retry=True,
-            target_skill_id="reflection_lookup_test",
-            target_tool_name="reflection.backup_search",
+            target_skill_id="after_sales_refund",
+            target_tool_name="order.archive_query",
         ),
         session,
     )
@@ -124,18 +124,18 @@ def _ticket_tool() -> Tool:
     )
 
 
-def _backup_search_tool() -> Tool:
+def _archive_order_tool() -> Tool:
     return Tool(
         tenant_id="tenant_demo",
-        name="reflection.backup_search",
-        display_name="反思测试备用查询",
+        name="order.archive_query",
+        display_name="历史订单查询",
         method="POST",
-        url="http://localhost:8000/api/mock/reflection/backup-search",
+        url="http://localhost:8000/api/mock/order/archive-query",
         input_schema={
             "type": "object",
-            "properties": {"query": {"type": "string"}},
-            "required": ["query"],
+            "properties": {"order_id": {"type": "string"}},
+            "required": ["order_id"],
         },
-        allowed_skills_json=["reflection_lookup_test"],
+        allowed_skills_json=["after_sales_refund", "after_sales_exchange"],
         enabled=True,
     )

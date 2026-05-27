@@ -32,52 +32,39 @@ class MockOrderAddRequest(BaseModel):
     status: str = "created"
 
 
-class MockReflectionSearchRequest(BaseModel):
-    query: str
-
-
 @router.post("/order/query")
 def mock_order_query(request: MockOrderQueryRequest) -> dict[str, Any]:
+    if request.order_id.upper().startswith("HIS"):
+        return {
+            "order_id": request.order_id,
+            "found": False,
+            "source": "primary_order_center",
+            "results": [],
+            "miss_reason": "primary_order_center_miss",
+            "hint": "主订单中心未命中，可尝试历史订单查询。",
+        }
     signed_days = 3 if request.order_id == "A123456" else 16
     return {
         "order_id": request.order_id,
+        "found": True,
+        "source": "primary_order_center",
         "status": "signed",
         "signed_days": signed_days,
         "refundable": signed_days <= 7,
     }
 
 
-@router.post("/reflection/primary-search")
-def mock_reflection_primary_search(request: MockReflectionSearchRequest) -> dict[str, Any]:
-    if "常规" in request.query:
-        return {
-            "query": request.query,
-            "found": True,
-            "source": "primary_index",
-            "answer": "主索引命中了常规测试资料。",
-            "confidence": 0.82,
-        }
+@router.post("/order/archive-query")
+def mock_order_archive_query(request: MockOrderQueryRequest) -> dict[str, Any]:
     return {
-        "query": request.query,
-        "found": False,
-        "source": "primary_index",
-        "results": [],
-        "miss_reason": "primary_index_miss",
-        "hint": "主索引未命中，可使用备用索引继续查询。",
-    }
-
-
-@router.post("/reflection/backup-search")
-def mock_reflection_backup_search(request: MockReflectionSearchRequest) -> dict[str, Any]:
-    return {
-        "query": request.query,
+        "order_id": request.order_id,
         "found": True,
-        "source": "backup_index",
-        "answer": (
-            f"备用索引已找到“{request.query}”的资料：这是用于验证模型反思能力的备用查询结果。"
-            "当主工具未命中时，系统应反思并改用备用工具完成回答。"
-        ),
-        "confidence": 0.91,
+        "source": "archive_order_center",
+        "status": "signed",
+        "signed_days": 4,
+        "refundable": True,
+        "archive_reason": "订单已归档到历史订单中心",
+        "recommendation": "该历史订单签收 4 天，当前可继续发起售后退款审核。",
     }
 
 
