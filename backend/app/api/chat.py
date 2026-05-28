@@ -505,6 +505,14 @@ def _event_trace_line(event: AgentEvent, skill_names: dict[str, str]) -> dict | 
             "detail": _reflection_trace_detail(payload),
             "state": "completed",
         }
+    if event.event_type == "reflection_skipped":
+        return {
+            "id": f"decision_{event.id}",
+            "kind": "decision",
+            "text": "反思已关闭",
+            "detail": str(payload.get("reason") or "") or None,
+            "state": "completed",
+        }
     if event.event_type == "reflection_retry_started":
         mode = str(payload.get("mode") or "").strip()
         target_tool = str(payload.get("target_tool_name") or "").strip()

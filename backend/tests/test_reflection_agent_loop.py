@@ -140,6 +140,7 @@ def test_reflection_tool_retry_preserves_router_decision_and_streams_tool_events
 
 def test_zero_reflection_rounds_skips_reflection_agent() -> None:
     loop = object.__new__(AgentLoop)
+    loop.events = _FakeEvents()
     loop.reflection_agent = _RaisingReflectionAgent()
     session = ChatSession(id="session_test", tenant_id="tenant_demo")
     decision = RouterDecision(decision="continue_current_skill", user_intent="申请退款")
@@ -160,6 +161,8 @@ def test_zero_reflection_rounds_skips_reflection_agent() -> None:
     )
 
     assert returned == (None, decision, step_result, tool_result)
+    assert loop.events.records[-1][2] == "reflection_skipped"
+    assert loop.events.records[-1][3]["skip_reason"] == "reflection_disabled"
 
 
 class _FakeDb:

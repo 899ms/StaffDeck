@@ -530,6 +530,23 @@ class AgentLoop:
         stream_events: list[tuple[str, dict[str, object]]] | None = None,
     ) -> tuple[Skill | None, RouterDecision, StepAgentResult, ToolResult | None]:
         rounds = max(0, min(max_rounds, REFLECTION_MAX_ROUNDS_LIMIT))
+        if rounds <= 0:
+            if self._should_try_reflection(router_decision, step_result, tool_result):
+                payload = {
+                    "needs_retry": False,
+                    "reason": "企业端反思轮数配置为 0，已跳过反思。",
+                    "target_skill_id": None,
+                    "target_step_id": None,
+                    "target_tool_name": None,
+                    "skipped": True,
+                    "skip_reason": "reflection_disabled",
+                }
+                events = getattr(self, "events", None)
+                if events is not None:
+                    events.record(request.tenant_id, chat_session.id, "reflection_skipped", payload)
+                if stream_events is not None:
+                    stream_events.append(("reflection_decision", payload))
+            return active_skill, router_decision, step_result, tool_result
         for round_index in range(rounds):
             if not self._should_try_reflection(router_decision, step_result, tool_result):
                 break

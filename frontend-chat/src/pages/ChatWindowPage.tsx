@@ -751,10 +751,11 @@ export default function ChatWindowPage() {
         }
         if (item.event === 'reflection_decision') {
           const needsRetry = item.data.needs_retry === true;
+          const skipped = item.data.skipped === true;
           upsertTraceLine(turnId, {
             id: 'reflection',
             kind: 'decision',
-            text: needsRetry ? '反思后继续尝试' : '反思通过',
+            text: skipped ? '反思已关闭' : needsRetry ? '反思后继续尝试' : '反思通过',
             detail: reflectionTraceDetail(item.data),
             state: 'completed',
           });
