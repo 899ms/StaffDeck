@@ -14,6 +14,7 @@ from app.core.skill_runtime import SkillRuntime
 from app.core.step_agent import StepAgent
 from app.db.models import ChatSession, Message, ModelConfig, PersonaConfig, Skill, Tool, UIConfig, new_id, utc_now
 from app.llm import LLMError
+from app.memory.jobs import enqueue_memory_capture
 from app.memory.service import MemoryService, memory_read
 from app.observability import EventLog
 from app.session.helpers import public_session
@@ -63,9 +64,11 @@ class AgentLoop:
         step_result = StepAgentResult()
         tool_result: ToolResult | None = None
         chat_session: ChatSession | None = None
+        memory_model_config: ModelConfig | None = None
         try:
             prepared = self._prepare_turn(request)
             chat_session = prepared.chat_session
+            memory_model_config = prepared.model_config
             router_decision = prepared.router_decision
             step_result = prepared.step_result
             tool_result = prepared.tool_result
@@ -88,7 +91,6 @@ class AgentLoop:
                 self._complete_active_skill(
                     request.tenant_id, chat_session, prepared.active_skill, "step_completed"
                 )
-            self._capture_memory(request, chat_session, reply, step_result, tool_result, prepared.model_config)
 
         except AgentLoopPreconditionError as exc:
             chat_session = chat_session or self._get_or_create_session(request)
@@ -114,9 +116,20 @@ class AgentLoop:
 
         if not chat_session:
             chat_session = self._get_or_create_session(request)
+        memory_recent_messages = self._recent_messages(chat_session) if memory_model_config else []
         self._finalize_turn(chat_session, request.tenant_id, reply)
         self.db.commit()
         self.db.refresh(chat_session)
+        if memory_model_config:
+            self._enqueue_memory_capture(
+                request,
+                chat_session,
+                reply,
+                step_result,
+                tool_result,
+                memory_model_config,
+                memory_recent_messages,
+            )
         return ChatTurnResponse(
             reply=reply,
             session_id=chat_session.id,
@@ -132,6 +145,7 @@ class AgentLoop:
         tool_result: ToolResult | None = None
         chat_session: ChatSession | None = None
         reply = ""
+        memory_model_config: ModelConfig | None = None
 
         try:
             chat_session = self._get_or_create_session(request)
@@ -155,6 +169,7 @@ class AgentLoop:
             persona_prompt = self._get_persona_prompt(request.tenant_id)
             if not model_config:
                 raise AgentLoopPreconditionError("missing_model_config", "没有默认模型配置。")
+            memory_model_config = model_config
             if not skills:
                 raise AgentLoopPreconditionError("missing_published_skill", "没有已发布技能。")
             self._finish_stale_completed_skill(request.tenant_id, chat_session, skills)
@@ -295,7 +310,6 @@ class AgentLoop:
                 chat_session.status = "handoff"
             elif self._should_complete_skill(active_skill, chat_session, step_result, tool_result):
                 self._complete_active_skill(request.tenant_id, chat_session, active_skill, "step_completed")
-            self._capture_memory(request, chat_session, reply, step_result, tool_result, model_config)
 
         except AgentLoopPreconditionError as exc:
             chat_session = chat_session or self._get_or_create_session(request)
@@ -342,9 +356,20 @@ class AgentLoop:
 
         if not chat_session:
             chat_session = self._get_or_create_session(request)
+        memory_recent_messages = self._recent_messages(chat_session) if memory_model_config else []
         self._finalize_turn(chat_session, request.tenant_id, reply)
         self.db.commit()
         self.db.refresh(chat_session)
+        if memory_model_config:
+            self._enqueue_memory_capture(
+                request,
+                chat_session,
+                reply,
+                step_result,
+                tool_result,
+                memory_model_config,
+                memory_recent_messages,
+            )
         result = ChatTurnResponse(
             reply=reply,
             session_id=chat_session.id,
@@ -1651,7 +1676,7 @@ class AgentLoop:
             "success": tool_result.success,
         }
 
-    def _capture_memory(
+    def _enqueue_memory_capture(
         self,
         request: ChatTurnRequest,
         chat_session: ChatSession,
@@ -1659,16 +1684,17 @@ class AgentLoop:
         step_result: StepAgentResult,
         tool_result: ToolResult | None,
         model_config: ModelConfig,
+        recent_messages: list[dict[str, str]],
     ) -> list[dict[str, object]]:
         try:
-            rows = self.memory.capture_turn(
+            job = enqueue_memory_capture(
                 request,
-                chat_session,
+                chat_session.id,
                 reply,
                 step_result,
                 tool_result,
-                model_config,
-                self._recent_messages(chat_session),
+                model_config.id,
+                recent_messages,
             )
         except Exception as exc:
             self.events.record(
@@ -1678,15 +1704,14 @@ class AgentLoop:
                 {"message": str(exc)},
             )
             return []
-        saved = [memory_read(row) for row in rows]
-        if saved:
-            self.events.record(
-                request.tenant_id,
-                chat_session.id,
-                "memory_saved",
-                {"memories": saved},
-            )
-        return saved
+        self.events.record(
+            request.tenant_id,
+            chat_session.id,
+            "async_job_enqueued",
+            {"job_id": job.id, "job_name": job.name, "feature": "memory"},
+        )
+        self.db.commit()
+        return [{"job_id": job.id, "job_name": job.name}]
 
     def _finish_with_error(
         self, chat_session: ChatSession, code: str, message: str

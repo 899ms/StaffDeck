@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 
 from app.api import auth, chat, feedback, memories, mock, model_configs, persona, sessions, skills, tools, traces, ui_config
+from app.async_jobs import shutdown_async_jobs
 from app.config import get_settings
 from app.db import engine, init_db
 from app.db.seed import seed_demo_data
@@ -27,6 +28,11 @@ def on_startup() -> None:
     init_db()
     with Session(engine) as db:
         seed_demo_data(db)
+
+
+@app.on_event("shutdown")
+def on_shutdown() -> None:
+    shutdown_async_jobs()
 
 
 @app.get("/api/health", tags=["health"])
