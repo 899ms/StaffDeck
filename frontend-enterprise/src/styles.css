@@ -992,7 +992,7 @@ select,
   gap: 8px;
 }
 
-.skill-ranking-item span {
+.skill-ranking-index {
   width: 22px;
   height: 22px;
   display: inline-grid;
@@ -1001,6 +1001,17 @@ select,
   background: var(--surface-subtle);
   border-radius: 999px;
   font-size: 12px;
+}
+
+.skill-ranking-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 620;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .skill-flow-node:hover,

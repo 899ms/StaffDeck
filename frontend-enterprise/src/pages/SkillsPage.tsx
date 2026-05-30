@@ -227,8 +227,8 @@ function RankingCard({
       ) : (
         rows.map((row, index) => (
           <div className="skill-ranking-item" key={`${title}_${row.skill_id}`}>
-            <span>{index + 1}</span>
-            <Typography.Text ellipsis>{row.name}</Typography.Text>
+            <span className="skill-ranking-index">{index + 1}</span>
+            <span className="skill-ranking-name" title={row.name}>{row.name}</span>
             <strong>{value(row)}</strong>
           </div>
         ))
