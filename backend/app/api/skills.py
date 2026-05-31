@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import base64
 import json
+import re
+import zipfile
 from collections.abc import Iterator
+from io import BytesIO
+from xml.etree import ElementTree
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -17,6 +22,8 @@ from app.skills.skill_schema import (
     SkillCreateRequest,
     SkillDistillRequest,
     SkillDistillResponse,
+    SkillFileExtractRequest,
+    SkillFileExtractResponse,
     SkillRead,
     SkillRewriteRequest,
     SkillRewriteResponse,
@@ -282,6 +289,20 @@ def rollback_skill_version(
     return skill_read(row, stats, _recent_skill_stats(db, tenant_id, stats))
 
 
+@router.post("/files/extract", response_model=SkillFileExtractResponse)
+def extract_skill_file(request: SkillFileExtractRequest) -> SkillFileExtractResponse:
+    try:
+        data = base64.b64decode(request.content_base64, validate=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid file content") from exc
+    if len(data) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File is too large")
+    text = _extract_uploaded_skill_file(request.filename, data)
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="No readable text found in file")
+    return SkillFileExtractResponse(filename=request.filename, text=text)
+
+
 @router.post("/distill", response_model=SkillDistillResponse)
 def distill_skill(request: SkillDistillRequest, db: Session = Depends(get_session)) -> SkillDistillResponse:
     ensure_tenant(db, request.tenant_id)
@@ -375,6 +396,61 @@ def _with_available_tools(db: Session, request: SkillDistillRequest) -> SkillDis
 def _sse(event: object, data: object) -> str:
     payload = json.dumps(data, ensure_ascii=False)
     return f"event: {event}\ndata: {payload}\n\n"
+
+
+def _extract_uploaded_skill_file(filename: str, data: bytes) -> str:
+    suffix = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+    if suffix in {"md", "txt"}:
+        return _decode_text_bytes(data)
+    if suffix == "docx":
+        return _extract_docx_text(data)
+    if suffix == "doc":
+        return _decode_legacy_doc_text(data)
+    raise HTTPException(status_code=400, detail="Unsupported file type")
+
+
+def _decode_text_bytes(data: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "gb18030"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="ignore")
+
+
+def _decode_legacy_doc_text(data: bytes) -> str:
+    text = _decode_text_bytes(data)
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]+", " ", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return "\n".join(line.strip() for line in text.splitlines() if line.strip())
+
+
+def _extract_docx_text(data: bytes) -> str:
+    try:
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            document_xml = archive.read("word/document.xml")
+    except (KeyError, zipfile.BadZipFile) as exc:
+        raise HTTPException(status_code=400, detail="Invalid docx file") from exc
+
+    namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    try:
+        root = ElementTree.fromstring(document_xml)
+    except ElementTree.ParseError as exc:
+        raise HTTPException(status_code=400, detail="Invalid docx xml") from exc
+    paragraphs: list[str] = []
+    for paragraph in root.iter(f"{namespace}p"):
+        parts: list[str] = []
+        for element in paragraph.iter():
+            if element.tag == f"{namespace}t" and element.text:
+                parts.append(element.text)
+            elif element.tag == f"{namespace}tab":
+                parts.append("\t")
+            elif element.tag in {f"{namespace}br", f"{namespace}cr"}:
+                parts.append("\n")
+        text = "".join(parts).strip()
+        if text:
+            paragraphs.append(text)
+    return "\n".join(paragraphs)
 
 
 def _skill_stats(db: Session, tenant_id: str) -> dict[str, dict[str, float | int]]:

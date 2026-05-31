@@ -8,9 +8,11 @@ import {
   SaveOutlined,
   SendOutlined,
   StopOutlined,
+  UploadOutlined,
+  WarningOutlined,
 } from '@ant-design/icons';
-import { Button, Card, Empty, Input, Modal, Space, Typography, message } from 'antd';
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { Button, Card, Empty, Input, Modal, Space, Typography, Upload, message } from 'antd';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, streamPost, TENANT_ID } from '../api/client';
 import type { SkillCard, SkillRead } from '../types';
@@ -22,6 +24,7 @@ type ChatItem = {
   thinking?: 'running' | 'done';
   thinkingDetails?: string[];
   thinkingOpen?: boolean;
+  warnings?: string[];
   actionState?: 'pending' | 'confirmed' | 'rejected';
 };
 
@@ -79,9 +82,11 @@ export default function DistillPage() {
   const [saveVersion, setSaveVersion] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('source');
   const [loading, setLoading] = useState(false);
+  const [uploadingFile, setUploadingFile] = useState(false);
   const [streamStatus, setStreamStatus] = useState('');
   const abortRef = useRef<AbortController | null>(null);
   const animationTimersRef = useRef<number[]>([]);
+  const sourceScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!skillId) {
@@ -125,6 +130,11 @@ export default function DistillPage() {
     abortRef.current?.abort();
     clearAnimationTimers();
   }, []);
+
+  useEffect(() => {
+    if (!loading || !sourceScrollRef.current) return;
+    sourceScrollRef.current.scrollTop = sourceScrollRef.current.scrollHeight;
+  }, [draft, loading, textDiffs, viewMode]);
 
   const allPaths = useMemo(() => (draft ? allTargetPaths(draft) : DEFAULT_TARGET_PATHS), [draft]);
   const allSelected = draft ? selectedPaths.length > 0 && allPaths.every((path) => selectedPaths.includes(path)) : false;
@@ -205,16 +215,16 @@ export default function DistillPage() {
             const draftSkill = item.data.draft_skill as SkillCard;
             const nextWarnings = Array.isArray(item.data.warnings) ? item.data.warnings.map(String) : [];
             appendThinkingDetail(assistantId, `已生成技能草稿：${draftSkill.name}`);
-            const changedPaths = diffTargetPaths(latestPreview, draftSkill, allTargetPaths(draftSkill));
-            animateDraftChange(latestPreview, draftSkill, changedPaths.length > 0 ? changedPaths : allTargetPaths(draftSkill), 120);
+            clearAnimationTimers();
+            setDraft(draftSkill);
+            setHighlightedPaths([]);
+            setUpdatingPaths([]);
+            setTextDiffs([]);
             setSelectedPaths(DEFAULT_TARGET_PATHS);
             updateMessage(
               assistantId,
-              withModelWarnings(
-                `已生成「${draftSkill.name}」草稿。你可以在右侧选择一个或多个区域继续改写。`,
-                nextWarnings,
-              ),
-              { thinking: 'done' },
+              `已生成「${draftSkill.name}」草稿。你可以在右侧选择一个或多个区域继续改写。`,
+              { thinking: 'done', warnings: nextWarnings },
             );
             setStreamStatus('生成完成');
           }
@@ -288,16 +298,15 @@ export default function DistillPage() {
             if (!receivedMessageChunk) {
               updateMessage(
                 assistantId,
-                withModelWarnings(String(item.data.assistant_message || '已完成局部改写。'), nextWarnings),
+                String(item.data.assistant_message || '已完成局部改写。'),
                 {
                   thinking: 'done',
+                  warnings: nextWarnings,
                   actionState: 'pending',
                 },
               );
             } else {
-              const warningText = formatModelWarnings(nextWarnings);
-              if (warningText) appendMessage(assistantId, warningText);
-              updateMessage(assistantId, undefined, { thinking: 'done', actionState: 'pending' });
+              updateMessage(assistantId, undefined, { thinking: 'done', warnings: nextWarnings, actionState: 'pending' });
             }
           }
         },
@@ -367,6 +376,36 @@ export default function DistillPage() {
     abortRef.current = null;
     setLoading(false);
     setStreamStatus('已停止');
+  }
+
+  async function handleFileUpload(file: File) {
+    if (loading || uploadingFile) return;
+    const suffix = file.name.toLowerCase().split('.').pop() || '';
+    if (!['md', 'txt', 'doc', 'docx'].includes(suffix)) {
+      message.error('仅支持 .md、.doc、.docx、.txt 文件');
+      return;
+    }
+    setUploadingFile(true);
+    try {
+      const contentBase64 = await fileToBase64(file);
+      const result = await api.post<{ filename: string; text: string }>('/api/enterprise/skills/files/extract', {
+        filename: file.name,
+        content_base64: contentBase64,
+      });
+      const title = filenameTitle(result.filename);
+      const filePrompt = `标题：${title}\n原始技能文本：\n${result.text}`;
+      if (!draft) {
+        pushMessage('user', `上传文件：${result.filename}`);
+        await createDraftFromText(filePrompt);
+      } else {
+        setInput((current) => `${current ? `${current}\n\n` : ''}以下是上传文件「${result.filename}」的内容：\n${result.text}`);
+        message.success('已读取文件内容');
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '读取文件失败');
+    } finally {
+      setUploadingFile(false);
+    }
   }
 
   function closeSaveReview() {
@@ -543,7 +582,20 @@ export default function DistillPage() {
                         )}
                       </div>
                     )}
-                    {item.content ? <div>{item.content}</div> : item.thinking === 'running' ? null : '正在处理...'}
+                    {item.content ? <div className="skill-chat-content">{item.content}</div> : item.thinking === 'running' ? null : '正在处理...'}
+                    {item.warnings && item.warnings.length > 0 && (
+                      <div className="skill-chat-warning">
+                        <div className="skill-chat-warning-title">
+                          <WarningOutlined />
+                          <span>模型提示</span>
+                        </div>
+                        {item.warnings.map((warning, index) => (
+                          <div key={`${item.id}_warning_${index}`} className="skill-chat-warning-item">
+                            {warning}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {item.actionState === 'pending' && (
                       <div className="skill-chat-confirm">
                         <Button size="small" type="primary" onClick={() => confirmPendingChange()}>
@@ -580,6 +632,18 @@ export default function DistillPage() {
               <div className="skill-chat-actions">
                 <Typography.Text type="secondary">{streamStatus}</Typography.Text>
                 <Space>
+                  <Upload
+                    accept=".md,.txt,.doc,.docx"
+                    showUploadList={false}
+                    beforeUpload={(file) => {
+                      void handleFileUpload(file as File);
+                      return false;
+                    }}
+                  >
+                    <Button icon={<UploadOutlined />} loading={uploadingFile} disabled={loading}>
+                      上传文件
+                    </Button>
+                  </Upload>
                   {loading && (
                     <Button icon={<StopOutlined />} onClick={stopStream}>
                       停止
@@ -625,6 +689,7 @@ export default function DistillPage() {
               updatingPaths={updatingPaths}
               dirtyPaths={dirtyPaths}
               textDiffs={textDiffs}
+              containerRef={sourceScrollRef}
               onToggle={toggleTarget}
             />
           ) : (
@@ -635,6 +700,7 @@ export default function DistillPage() {
               updatingPaths={updatingPaths}
               dirtyPaths={dirtyPaths}
               textDiffs={textDiffs}
+              containerRef={sourceScrollRef}
               onToggle={toggleTarget}
             />
           )}
@@ -689,6 +755,7 @@ function SkillSource({
   updatingPaths,
   dirtyPaths,
   textDiffs,
+  containerRef,
   onToggle,
 }: {
   skill: SkillCard;
@@ -697,10 +764,11 @@ function SkillSource({
   updatingPaths: string[];
   dirtyPaths: string[];
   textDiffs: TextDiffAnimation[];
+  containerRef: RefObject<HTMLDivElement>;
   onToggle: (target: TargetSelection) => void;
 }) {
   return (
-    <div className="skill-source-md">
+    <div className="skill-source-md" ref={containerRef}>
       <div className="skill-source-group-title">基础信息</div>
       <SelectableTarget
         className={targetClass('skill-source-section', 'basic', selectedPaths, highlightedPaths, updatingPaths, dirtyPaths)}
@@ -708,17 +776,19 @@ function SkillSource({
         onToggle={onToggle}
       >
         {selectedPaths.includes('basic') && <span className="selection-mark"><CheckOutlined /></span>}
-        <div className="skill-source-code">
-          <div className="skill-source-line"># <InlineDiffText path="basic" field="name" value={skill.name} diffs={textDiffs} /></div>
-          <SourceTextLine path="basic" field="skill_id" label="- skill_id: `" value={skill.skill_id} suffix="`" diffs={textDiffs} />
-          <SourceTextLine path="basic" field="version" label="- version: `" value={skill.version} suffix="`" diffs={textDiffs} />
-          <SourceTextLine path="basic" field="business_domain" label="- business_domain: " value={skill.business_domain || '-'} diffs={textDiffs} />
-          <SourceTextLine path="basic" field="description" label="- description: " value={skill.description || '-'} diffs={textDiffs} />
-          <SourceListLine path="basic" field="trigger_intents" label="- trigger_intents: " values={skill.trigger_intents} diffs={textDiffs} />
-          <SourceListLine path="basic" field="user_utterance_examples" label="- user_utterance_examples: " values={skill.user_utterance_examples} diffs={textDiffs} />
-          <SourceListLine path="basic" field="goal" label="- goal: " values={skill.goal} diffs={textDiffs} />
-          <SourceListLine path="basic" field="required_info" label="- required_info: " values={skill.required_info} diffs={textDiffs} />
-          <SourceListLine path="basic" field="response_rules" label="- response_rules: " values={skill.response_rules} diffs={textDiffs} />
+        <div className="skill-source-rendered">
+          <h2><InlineDiffText path="basic" field="name" value={skill.name} diffs={textDiffs} /></h2>
+          <div className="skill-source-meta-list">
+            <SourceTextLine path="basic" field="skill_id" label="skill_id" value={skill.skill_id} diffs={textDiffs} />
+            <SourceTextLine path="basic" field="version" label="version" value={skill.version} diffs={textDiffs} />
+            <SourceTextLine path="basic" field="business_domain" label="business_domain" value={skill.business_domain || '-'} diffs={textDiffs} />
+            <SourceTextLine path="basic" field="description" label="description" value={skill.description || '-'} diffs={textDiffs} />
+            <SourceListLine path="basic" field="trigger_intents" label="trigger_intents" values={skill.trigger_intents} diffs={textDiffs} />
+            <SourceListLine path="basic" field="user_utterance_examples" label="user_utterance_examples" values={skill.user_utterance_examples} diffs={textDiffs} />
+            <SourceListLine path="basic" field="goal" label="goal" values={skill.goal} diffs={textDiffs} />
+            <SourceListLine path="basic" field="required_info" label="required_info" values={skill.required_info} diffs={textDiffs} />
+            <SourceListLine path="basic" field="response_rules" label="response_rules" values={skill.response_rules} diffs={textDiffs} />
+          </div>
         </div>
       </SelectableTarget>
       <div className="skill-source-group-title">详细步骤</div>
@@ -734,14 +804,14 @@ function SkillSource({
               onToggle={onToggle}
             >
               {selectedPaths.includes(path) && <span className="selection-mark"><CheckOutlined /></span>}
-              <div className="skill-source-code">
-                <div className="skill-source-line">
-                  ### Step {index + 1}: <InlineDiffText path={path} field="name" value={String(step.name || '-')} diffs={textDiffs} />
+              <div className="skill-source-rendered">
+                <h3>Step {index + 1}: <InlineDiffText path={path} field="name" value={String(step.name || '-')} diffs={textDiffs} /></h3>
+                <div className="skill-source-meta-list">
+                  <SourceTextLine path={path} field="step_id" label="step_id" value={stepId} diffs={textDiffs} />
+                  <SourceTextLine path={path} field="instruction" label="instruction" value={String(step.instruction || '-')} diffs={textDiffs} />
+                  <SourceListLine path={path} field="expected_user_info" label="expected_user_info" values={asStringList(step.expected_user_info)} diffs={textDiffs} />
+                  <SourceListLine path={path} field="allowed_actions" label="allowed_actions" values={asStringList(step.allowed_actions)} diffs={textDiffs} />
                 </div>
-                <SourceTextLine path={path} field="step_id" label="- step_id: `" value={stepId} suffix="`" diffs={textDiffs} />
-                <SourceTextLine path={path} field="instruction" label="- instruction: " value={String(step.instruction || '-')} diffs={textDiffs} />
-                <SourceListLine path={path} field="expected_user_info" label="- expected_user_info: " values={asStringList(step.expected_user_info)} diffs={textDiffs} />
-                <SourceListLine path={path} field="allowed_actions" label="- allowed_actions: " values={asStringList(step.allowed_actions)} diffs={textDiffs} />
               </div>
             </SelectableTarget>
           );
@@ -758,6 +828,7 @@ function SkillFlow({
   updatingPaths,
   dirtyPaths,
   textDiffs,
+  containerRef,
   onToggle,
 }: {
   skill: SkillCard;
@@ -766,10 +837,11 @@ function SkillFlow({
   updatingPaths: string[];
   dirtyPaths: string[];
   textDiffs: TextDiffAnimation[];
+  containerRef: RefObject<HTMLDivElement>;
   onToggle: (target: TargetSelection) => void;
 }) {
   return (
-    <div className="skill-flow">
+    <div className="skill-flow" ref={containerRef}>
       <SelectableTarget
         className={targetClass('skill-flow-node root', 'basic', selectedPaths, highlightedPaths, updatingPaths, dirtyPaths)}
         target={{ path: 'basic', label: '基础信息' }}
@@ -831,21 +903,20 @@ function SourceTextLine({
   field,
   label,
   value,
-  suffix = '',
   diffs,
 }: {
   path: string;
   field: string;
   label: string;
   value: string;
-  suffix?: string;
   diffs: TextDiffAnimation[];
 }) {
   return (
     <div className="skill-source-line">
-      <span>{label}</span>
-      <InlineDiffText path={path} field={field} value={value} diffs={diffs} />
-      <span>{suffix}</span>
+      <span className="skill-source-key">{label}</span>
+      <span className="skill-source-value">
+        <InlineDiffText path={path} field={field} value={value} diffs={diffs} />
+      </span>
     </div>
   );
 }
@@ -897,8 +968,10 @@ function SourceListLine({
 }) {
   return (
     <div className="skill-source-line">
-      <span>{label}</span>
-      <InlineDiffText path={path} field={field} value={joinList(values)} diffs={diffs} />
+      <span className="skill-source-key">{label}</span>
+      <span className="skill-source-value">
+        <InlineDiffText path={path} field={field} value={joinPlain(values)} diffs={diffs} />
+      </span>
     </div>
   );
 }
@@ -1262,14 +1335,19 @@ function hasSelectedText(): boolean {
   return Boolean(window.getSelection()?.toString().trim());
 }
 
-function withModelWarnings(content: string, warnings: string[]): string {
-  return `${content}${formatModelWarnings(warnings)}`;
+async function fileToBase64(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return window.btoa(binary);
 }
 
-function formatModelWarnings(warnings: string[]): string {
-  const items = warnings.map((warning) => warning.trim()).filter(Boolean);
-  if (items.length === 0) return '';
-  return `\n\n模型提示：\n${items.map((warning) => `- ${warning}`).join('\n')}`;
+function filenameTitle(filename: string): string {
+  return filename.replace(/\.[^.]+$/, '').trim() || '新技能';
 }
 
 function allTargetPaths(skill: SkillCard): string[] {

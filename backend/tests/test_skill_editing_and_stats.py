@@ -1,8 +1,18 @@
+from io import BytesIO
+from zipfile import ZipFile
+
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.api.chat import _active_skill_for_assistant_message
-from app.api.skills import _skill_stats, list_skill_versions, list_skills, rollback_skill_version, skill_read
+from app.api.skills import (
+    _extract_uploaded_skill_file,
+    _skill_stats,
+    list_skill_versions,
+    list_skills,
+    rollback_skill_version,
+    skill_read,
+)
 from app.db.models import AgentEvent, Message, Skill, SkillFeedback, SkillVersion, Tenant
 from app.db.models import ModelConfig
 from app.skills.skill_distiller import SkillDistiller
@@ -620,6 +630,27 @@ def test_skill_distiller_stream_uses_generation_status(monkeypatch) -> None:
     assert "模型正在规划技能结构" in status_texts
     assert "正在校验模型输出结构" in status_texts
     assert "已完成 Skill Card 结构化" in status_texts
+
+
+def test_extract_uploaded_skill_file_reads_docx_text() -> None:
+    buffer = BytesIO()
+    with ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            "word/document.xml",
+            """
+            <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+              <w:body>
+                <w:p><w:r><w:t>标题：商品比价</w:t></w:r></w:p>
+                <w:p><w:r><w:t>用户提供两个商品名称后进行比价。</w:t></w:r></w:p>
+              </w:body>
+            </w:document>
+            """,
+        )
+
+    text = _extract_uploaded_skill_file("skill.docx", buffer.getvalue())
+
+    assert "标题：商品比价" in text
+    assert "用户提供两个商品名称后进行比价。" in text
 
 
 def _skill_card() -> SkillCard:

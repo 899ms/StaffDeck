@@ -122,3 +122,13 @@ class SkillRewriteResponse(BaseModel):
     assistant_message: str
     changed_paths: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+class SkillFileExtractRequest(BaseModel):
+    filename: str
+    content_base64: str
+
+
+class SkillFileExtractResponse(BaseModel):
+    filename: str
+    text: str
