@@ -154,12 +154,12 @@ class SkillDistiller:
         tool_suggestions = _normalize_tool_suggestions(raw.get("tool_suggestions"), request, missing_tool_names)
         response = SkillDistillResponse(
             draft_skill=draft_skill,
-            warnings=_unique_warnings(warnings),
+            warnings=_compact_warnings(warnings),
             tool_suggestions=tool_suggestions,
         )
         if not response.draft_skill.steps:
             response.draft_skill.steps = fallback.steps
-            response.warnings.append("模型未生成步骤，已使用规则生成默认步骤。")
+            response.warnings = _compact_warnings([*response.warnings, "模型未生成步骤，已使用规则生成默认步骤。"])
         return response
 
     def _ensure_closed_loop_steps(
@@ -254,7 +254,7 @@ class SkillDistiller:
         return steps or [step.model_dump() for step in fallback_steps]
 
     def _fallback_response(self, request: SkillDistillRequest, warning: str) -> SkillDistillResponse:
-        return SkillDistillResponse(draft_skill=self._fallback_card(request), warnings=[warning])
+        return SkillDistillResponse(draft_skill=self._fallback_card(request), warnings=_compact_warnings([warning]))
 
     def _fallback_card(self, request: SkillDistillRequest) -> SkillCard:
         title = request.title.strip() or "新技能"
@@ -443,6 +443,48 @@ def _unique_warnings(warnings: list[str]) -> list[str]:
         if text and text not in deduped:
             deduped.append(text)
     return deduped
+
+
+def _compact_warnings(warnings: list[str]) -> list[str]:
+    return _unique_warnings([_compact_warning(str(warning)) for warning in warnings if str(warning).strip()])
+
+
+def _compact_warning(warning: str) -> str:
+    text = warning.strip()
+    tool_name = _warning_tool_name(text)
+    if tool_name and (
+        "未配置工具" in text
+        or "available_tools" in text
+        or "tool_suggestions" in text
+        or "allowed_actions" in text
+    ):
+        return f"未配置工具 {tool_name}，已生成新增建议。"
+    if "没有任何工具支持" in text or ("available_tools" in text and "工具" in text):
+        return "缺少可用工具，需先新增工具后再执行该流程。"
+    replacements = (
+        ("原始改写未包含工具步骤，已按可用工具补充闭环执行步骤。", "已补充工具执行步骤。"),
+        ("原始改写缺少执行前确认步骤，已补充确认步骤。", "已补充执行前确认步骤。"),
+        ("原始改写缺少最终回复步骤，已补充闭环反馈步骤。", "已补充最终回复步骤。"),
+        ("模型未生成步骤，已使用规则生成默认步骤。", "已生成默认步骤。"),
+    )
+    for source, target in replacements:
+        if text == source:
+            return target
+    return text
+
+
+def _warning_tool_name(text: str) -> str:
+    patterns = (
+        r"未配置工具\s+`?([A-Za-z0-9_.:-]+)`?",
+        r"工具\s+`?([A-Za-z0-9_.:-]+)`?\s+不在",
+        r"引用了未配置工具\s+`?([A-Za-z0-9_.:-]+)`?",
+        r"提到了工具\s+`?([A-Za-z0-9_.:-]+)`?",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1).strip("`，。,. ")
+    return ""
 
 
 def _needs_confirmation(raw: str) -> bool:

@@ -914,11 +914,11 @@ export default function DistillPage() {
                       <div className="skill-chat-warning">
                         <div className="skill-chat-warning-title">
                           <WarningOutlined />
-                          <span>模型提示</span>
+                          <span>提示</span>
                         </div>
-                        {item.warnings.map((warning, index) => (
-                          <div key={`${item.id}_warning_${index}`} className="skill-chat-warning-item">
-                            {warning}
+                        {compactWarningItems(item.warnings).map((warning, index) => (
+                          <div key={`${item.id}_warning_${index}`} className="skill-chat-warning-item" title={warning.title}>
+                            {warning.text}
                           </div>
                         ))}
                       </div>
@@ -1942,6 +1942,60 @@ function normalizeToolSuggestions(value: unknown): ToolSuggestionItem[] {
       status: 'pending' as const,
     }))
     .filter((item) => item.name);
+}
+
+function compactWarning(warning: string): string {
+  const text = warning.trim();
+  const toolName = warningToolName(text);
+  if (
+    toolName &&
+    (text.includes('未配置工具') ||
+      text.includes('available_tools') ||
+      text.includes('tool_suggestions') ||
+      text.includes('allowed_actions'))
+  ) {
+    return `未配置工具 ${toolName}，已生成新增建议。`;
+  }
+  if (text.includes('没有任何工具支持') || (text.includes('available_tools') && text.includes('工具'))) {
+    return '缺少可用工具，需先新增工具后再执行该流程。';
+  }
+  const replacements: Array<[string, string]> = [
+    ['原始改写未包含工具步骤，已按可用工具补充闭环执行步骤。', '已补充工具执行步骤。'],
+    ['原始改写缺少执行前确认步骤，已补充确认步骤。', '已补充执行前确认步骤。'],
+    ['原始改写缺少最终回复步骤，已补充闭环反馈步骤。', '已补充最终回复步骤。'],
+    ['模型未生成步骤，已使用规则生成默认步骤。', '已生成默认步骤。'],
+  ];
+  const matched = replacements.find(([source]) => source === text);
+  if (matched) return matched[1];
+  return text.length > 82 ? `${text.slice(0, 82)}...` : text;
+}
+
+function compactWarningItems(warnings: string[]): Array<{ text: string; title: string }> {
+  const items: Array<{ text: string; title: string }> = [];
+  for (const warning of warnings) {
+    const text = compactWarning(warning);
+    const existing = items.find((item) => item.text === text);
+    if (existing) {
+      existing.title = `${existing.title}\n${warning}`;
+      continue;
+    }
+    items.push({ text, title: warning });
+  }
+  return items;
+}
+
+function warningToolName(text: string): string {
+  const patterns = [
+    /未配置工具\s+`?([A-Za-z0-9_.:-]+)`?/,
+    /工具\s+`?([A-Za-z0-9_.:-]+)`?\s+不在/,
+    /引用了未配置工具\s+`?([A-Za-z0-9_.:-]+)`?/,
+    /提到了工具\s+`?([A-Za-z0-9_.:-]+)`?/,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1].replace(/[`，。,.]+$/g, '');
+  }
+  return '';
 }
 
 function readDistillCache(key: string): DistillCacheSnapshot | null {

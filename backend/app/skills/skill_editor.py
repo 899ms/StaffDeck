@@ -9,7 +9,7 @@ from typing import Any, Iterator
 from app.db.models import ModelConfig
 from app.llm import LLMClient, LLMError
 from app.skills.skill_schema import SkillCard, SkillRewriteRequest, SkillRewriteResponse
-from app.skills.skill_distiller import _normalize_tool_suggestions, _remove_unknown_tool_actions
+from app.skills.skill_distiller import _compact_warnings, _normalize_tool_suggestions, _remove_unknown_tool_actions
 from app.skills.step_ids import skill_card_with_unique_step_ids
 
 
@@ -96,6 +96,7 @@ class SkillEditor:
             warning = f"改写结果引用了未配置工具 {tool_name}，已移出 allowed_actions 并生成新增工具建议。"
             if warning not in warnings:
                 warnings.append(warning)
+        warnings = _compact_warnings(warnings)
         changed_paths = [str(item) for item in raw.get("changed_paths", []) if str(item).strip()]
         if not changed_paths and merged.model_dump() != request.current_skill.model_dump():
             changed_paths = _changed_paths(request.current_skill, merged)

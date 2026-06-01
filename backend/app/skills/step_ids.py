@@ -29,11 +29,9 @@ def ensure_unique_step_ids(steps: list[Any]) -> tuple[list[dict[str, Any]], list
             suffix += 1
         if candidate != original:
             if original:
-                warnings.append(
-                    f"步骤 {index + 1} 的 step_id 从 `{original}` 自动修正为 `{candidate}`，避免重复。"
-                )
+                warnings.append(f"步骤 {index + 1} 的 step_id 已修正为 `{candidate}`。")
             else:
-                warnings.append(f"步骤 {index + 1} 的 step_id 为空，已自动修正为 `{candidate}`。")
+                warnings.append(f"步骤 {index + 1} 的 step_id 已补全为 `{candidate}`。")
             step["step_id"] = candidate
         else:
             step["step_id"] = original
