@@ -27,31 +27,23 @@ class LLMClient:
     def generate_text(self, system_prompt: str, user_payload: dict[str, Any]) -> str:
         serialized = json.dumps(user_payload, ensure_ascii=False)
         try:
-            response = self.client.responses.create(
+            completion = self.client.chat.completions.create(
                 model=self.model,
-                instructions=system_prompt,
-                input=serialized,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": serialized},
+                ],
                 temperature=self.temperature,
-                max_output_tokens=self.max_output_tokens,
+                max_tokens=self.max_output_tokens,
             )
-            return response.output_text
-        except Exception as first_exc:
-            try:
-                completion = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": serialized},
-                    ],
-                    temperature=self.temperature,
-                    max_tokens=self.max_output_tokens,
-                )
-                content = completion.choices[0].message.content
-                if not content:
-                    raise LLMError("Model returned an empty response")
-                return content
-            except Exception as second_exc:
-                raise LLMError(str(second_exc)) from first_exc
+            content = completion.choices[0].message.content
+            if not content:
+                raise LLMError("Model returned an empty response")
+            return content
+        except Exception as exc:
+            if isinstance(exc, LLMError):
+                raise
+            raise LLMError(str(exc)) from exc
 
     def generate_text_stream(self, system_prompt: str, user_payload: dict[str, Any]) -> Iterator[str]:
         serialized = json.dumps(user_payload, ensure_ascii=False)
