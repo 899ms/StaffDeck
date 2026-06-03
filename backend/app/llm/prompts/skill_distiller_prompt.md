@@ -34,7 +34,7 @@ draft_skill 必须包含 slot_filling_policy，且 enabled=true、multi_slot_per
 最后一个步骤必须允许 answer_user，并要求给用户明确结果；如果工具失败或文档缺失无法闭环，应说明转人工或缺失信息，而不是承诺稍后继续。
 response_rules 必须包含闭环约束：不得只回复请稍候；需要外部事实时必须调用工具或转人工；工具成功后必须给出最终业务结果。
 response_rules 必须包含自适应推进约束：步骤是目标不是脚本；已满足的信息不得重复追问；模型应推进到下一缺失信息、工具调用或最终回复。
-如果原始流程描述了工具、接口或系统能力，但 available_tools 中不存在能覆盖该能力的工具，不要把不存在的工具写入 allowed_actions；请在 tool_suggestions 中给出建议新增工具，包括 name、display_name、description、method、url、input_schema、output_schema、reason。
+如果原始流程描述了工具、接口或系统能力，但 available_tools 中不存在能覆盖该能力的工具，不要把不存在的工具写入 allowed_actions；请由你根据原始文档语义在 tool_suggestions 中给出建议新增工具，包括 name、display_name、description、method、url、input_schema、output_schema、reason。服务端不会从原始文本用规则抽取工具名，也不会替你补默认工具建议。
 输出字段顺序必须将 response_rules 放在 steps 之前，便于前端流式展示基础约束后再展示流程步骤。
 
 如果用户 payload 中包含 generation_mode，请按以下模式输出：

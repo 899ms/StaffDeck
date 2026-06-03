@@ -256,7 +256,7 @@ def test_fallback_card_uses_conservative_adaptive_steps() -> None:
     assert any("目标而不是固定话术" in step.instruction for step in card.steps)
 
 
-def test_normalize_response_suggests_missing_tools_and_removes_unknown_actions() -> None:
+def test_normalize_response_removes_unknown_actions_without_default_tool_suggestion() -> None:
     request = SkillDistillRequest(
         tenant_id="tenant_demo",
         title="商品比价",
@@ -294,7 +294,72 @@ def test_normalize_response_suggests_missing_tools_and_removes_unknown_actions()
         "call_tool:product.compare" not in step.allowed_actions
         for step in response.draft_skill.steps
     )
-    assert any(item.name == "product.compare" for item in response.tool_suggestions)
+    assert response.tool_suggestions == []
+    assert any("未配置工具 product.compare" in warning for warning in response.warnings)
+
+
+def test_normalize_response_preserves_model_tool_suggestions() -> None:
+    request = SkillDistillRequest(
+        tenant_id="tenant_demo",
+        title="商品比价",
+        raw_content="用户提供两个商品名称，调用商品比价接口查询价格并反馈比价结果",
+        available_tools=[],
+    )
+    raw = {
+        "draft_skill": {
+            "skill_id": "compare_products",
+            "name": "商品比价",
+            "required_info": ["product_name_1", "product_name_2"],
+            "steps": [
+                {
+                    "step_id": "compare",
+                    "name": "查询比价",
+                    "instruction": "调用工具查询两个商品价格。",
+                    "expected_user_info": ["product_name_1", "product_name_2"],
+                    "allowed_actions": ["continue_flow", "call_tool:product.compare"],
+                },
+                {
+                    "step_id": "reply_result",
+                    "name": "反馈结果",
+                    "instruction": "反馈比价结果。",
+                    "expected_user_info": [],
+                    "allowed_actions": ["answer_user"],
+                },
+            ],
+            "response_rules": [],
+        },
+        "tool_suggestions": [
+            {
+                "name": "product.compare",
+                "display_name": "商品比价查询",
+                "description": "根据两个商品名称查询价格并返回对比信息。",
+                "method": "POST",
+                "url": "/api/mock/product/compare",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "product_name_1": {"type": "string"},
+                        "product_name_2": {"type": "string"},
+                    },
+                    "required": ["product_name_1", "product_name_2"],
+                },
+                "output_schema": {
+                    "type": "object",
+                    "properties": {"success": {"type": "boolean"}, "data": {"type": "object"}},
+                },
+                "reason": "原始流程需要商品比价能力，但当前没有对应工具。",
+            }
+        ],
+    }
+
+    response = SkillDistiller()._normalize_response(raw, request)  # noqa: SLF001
+
+    assert all(
+        "call_tool:product.compare" not in step.allowed_actions
+        for step in response.draft_skill.steps
+    )
+    assert [item.name for item in response.tool_suggestions] == ["product.compare"]
+    assert response.tool_suggestions[0].input_schema["required"] == ["product_name_1", "product_name_2"]
     assert any("未配置工具 product.compare" in warning for warning in response.warnings)
 
 

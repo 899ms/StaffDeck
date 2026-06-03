@@ -125,7 +125,10 @@ class SkillEditor:
         warnings = [str(item) for item in raw.get("warnings", []) if str(item).strip()]
         warnings.extend(warning for warning in id_warnings if warning not in warnings)
         for tool_name in missing_tool_names:
-            warning = f"改写结果引用了未配置工具 {tool_name}，已移出 allowed_actions 并生成新增工具建议。"
+            warning = (
+                f"改写结果引用了未配置工具 {tool_name}，已移出 allowed_actions；"
+                "如确需该工具，模型必须在 tool_suggestions 中提供完整工具定义。"
+            )
             if warning not in warnings:
                 warnings.append(warning)
         warnings = _compact_warnings(warnings)

@@ -224,7 +224,10 @@ class SkillDistiller:
         warnings.extend(unique_step_warnings)
         steps, missing_tool_names = _remove_unknown_tool_actions(steps, request.available_tools)
         for tool_name in missing_tool_names:
-            warnings.append(f"技能草稿引用了未配置工具 {tool_name}，已移出 allowed_actions 并生成新增工具建议。")
+            warnings.append(
+                f"技能草稿引用了未配置工具 {tool_name}，已移出 allowed_actions；"
+                "如确需该工具，模型必须在 tool_suggestions 中提供完整工具定义。"
+            )
         response_rules = _string_list(draft.get("response_rules"), fallback.response_rules)
         if CLOSED_LOOP_RESPONSE_RULE not in response_rules:
             response_rules.append(CLOSED_LOOP_RESPONSE_RULE)
@@ -480,7 +483,7 @@ def _compact_warning(warning: str) -> str:
         or "tool_suggestions" in text
         or "allowed_actions" in text
     ):
-        return f"未配置工具 {tool_name}，已生成新增建议。"
+        return f"未配置工具 {tool_name}，已移出调用动作；需由模型提供工具定义。"
     if "没有任何工具支持" in text or ("available_tools" in text and "工具" in text):
         return "缺少可用工具，需先新增工具后再执行该流程。"
     replacements = (
@@ -684,25 +687,20 @@ def _normalize_tool_suggestions(
             if not isinstance(item, dict):
                 continue
             suggestion = _tool_suggestion_from_dict(item, request)
+            if suggestion is None:
+                continue
             if suggestion.name in seen:
                 continue
             suggestions.append(suggestion)
             seen.add(suggestion.name)
 
-    for name in missing_tool_names:
-        if name in seen:
-            continue
-        suggestion = _default_tool_suggestion(name, request, f"模型草稿引用了未配置工具 {name}。")
-        suggestions.append(suggestion)
-        seen.add(name)
-
     return suggestions
 
 
-def _tool_suggestion_from_dict(item: dict[str, Any], request: Any) -> ToolSuggestion:
+def _tool_suggestion_from_dict(item: dict[str, Any], request: Any) -> ToolSuggestion | None:
     name = _string(item.get("name"), "")
     if not name:
-        name = f"{_slugify(_request_title(request), _request_raw_content(request))}.execute"
+        return None
     default = _default_tool_suggestion(name, request, _string(item.get("reason"), "模型建议新增该工具。"))
     return ToolSuggestion(
         name=name,
