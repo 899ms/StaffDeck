@@ -16,7 +16,7 @@ import {
   StopOutlined,
   ToolOutlined,
 } from '@ant-design/icons';
-import { Button, Empty, Input, Modal, Typography, message } from 'antd';
+import { Button, Input, Modal, Typography, message } from 'antd';
 import type { MouseEvent, ReactNode } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -1152,7 +1152,7 @@ export default function ChatWindowPage() {
           </div>
         </div>
         <div className="chat-messages" ref={chatMessagesRef}>
-          {displayedMessages.length === 0 && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无消息" />}
+          {displayedMessages.length === 0 && <div className="chat-empty-state">暂无消息，发送一句开始</div>}
           <div className="message-stack">
             {displayedMessages.map((item) => {
               const turnId = item.turnId || item.id;

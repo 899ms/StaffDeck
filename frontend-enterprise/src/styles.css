@@ -607,8 +607,8 @@ body.skill-distill-fixed .content {
 
 .skill-workbench {
   display: grid;
-  grid-template-columns: minmax(430px, 0.92fr) minmax(640px, 1.08fr);
-  gap: 18px;
+  grid-template-columns: minmax(360px, 0.92fr) minmax(0, 1.08fr);
+  gap: 16px;
   align-items: stretch;
   min-height: calc(100vh - 136px);
 }
@@ -634,6 +634,37 @@ body.skill-distill-fixed .content {
   border-radius: 10px !important;
   box-shadow: none;
   overflow: hidden;
+}
+
+.skill-source-card .ant-card-head {
+  min-height: 54px;
+  padding: 0 16px;
+}
+
+.skill-source-card .ant-card-head-wrapper {
+  min-width: 0;
+  gap: 12px;
+}
+
+.skill-source-card .ant-card-head-title {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.skill-source-card .ant-card-extra {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.skill-source-card .ant-card-extra .ant-space {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.skill-source-card .ant-card-extra .ant-btn {
+  white-space: nowrap;
 }
 
 .skill-chat-card .ant-card-body,

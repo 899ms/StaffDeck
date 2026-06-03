@@ -29,12 +29,12 @@ function Shell() {
     <Layout className="app-shell">
       <Sider width={232} theme="light" className="sidebar">
         <div className="brand">
-            <span className="brand-mark">UR</span>
-            <div>
+          <span className="brand-mark">UR</span>
+          <div>
             <div className="brand-title">UltraRAG4</div>
             <div className="brand-subtitle">Skill Studio</div>
-            </div>
           </div>
+        </div>
         <div className="nav-label">Workspace</div>
         <Menu
           className="nav-menu"
@@ -95,13 +95,14 @@ function Shell() {
 export default function App() {
   return (
     <ConfigProvider
+      button={{ autoInsertSpace: false }}
       theme={{
         token: {
-          colorPrimary: '#171717',
+          colorPrimary: '#04756f',
           borderRadius: 8,
-          colorText: '#171717',
+          colorText: '#1d1d1b',
           colorTextSecondary: '#737373',
-          colorBorder: '#e5e5e5',
+          colorBorder: '#e7e1d8',
           fontFamily:
             '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
         },

@@ -9,13 +9,14 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ConfigProvider
       locale={zhCN}
+      button={{ autoInsertSpace: false }}
       theme={{
         token: {
           borderRadius: 8,
-          colorPrimary: '#171717',
-          colorText: '#171717',
+          colorPrimary: '#04756f',
+          colorText: '#1d1d1b',
           colorTextSecondary: '#737373',
-          colorBorder: '#e5e5e5',
+          colorBorder: '#e7e1d8',
           fontFamily:
             '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
         },
