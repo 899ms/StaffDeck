@@ -3,52 +3,52 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_DIR="$ROOT_DIR/.dev"
-LABEL_PREFIX="com.skill-agent-loop"
-OLD_LABEL_PREFIX="com.so""p-agent-loop"
 
-remove_label() {
-  local name="$1"
-  launchctl remove "$OLD_LABEL_PREFIX.$name" >/dev/null 2>&1 || true
-  if launchctl remove "$LABEL_PREFIX.$name" >/dev/null 2>&1; then
-    echo "Stopped launchctl service $name"
-  fi
+remove_legacy_launchctl_labels() {
+  for prefix in com.ultrarag4.dev com.skill-agent-loop; do
+    for name in backend enterprise chat; do
+      launchctl remove "$prefix.$name" >/dev/null 2>&1 || true
+    done
+  done
 }
 
-kill_pid_file() {
+stop_pid_file() {
   local name="$1"
   local pid_file="$RUN_DIR/$name.pid"
-  if [[ -f "$pid_file" ]]; then
-    local pid
-    pid="$(cat "$pid_file" 2>/dev/null || true)"
-    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-      echo "Stopped $name ($pid)"
-    else
-      echo "$name pid was stale"
-    fi
-    rm -f "$pid_file"
-  else
-    echo "$name was not running"
+  if [[ ! -f "$pid_file" ]]; then
+    echo "$name was not started by scripts/dev_up.sh"
+    return 0
   fi
+
+  local pid
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
+  rm -f "$pid_file"
+
+  if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+    echo "$name pid file was stale"
+    return 0
+  fi
+
+  if ! kill -0 "$pid" 2>/dev/null; then
+    echo "$name was not running"
+    return 0
+  fi
+
+  kill "$pid" 2>/dev/null || true
+  for _ in {1..20}; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "Stopped $name ($pid)"
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  kill -9 "$pid" 2>/dev/null || true
+  echo "Force-stopped $name ($pid)"
 }
 
-kill_port() {
-  local port="$1"
-  local pids
-  pids="$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
-  if [[ -n "$pids" ]]; then
-    while read -r pid; do
-      [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
-    done <<< "$pids"
-    echo "Released port $port"
-  fi
-}
+remove_legacy_launchctl_labels
 
 for name in backend enterprise chat; do
-  remove_label "$name"
-  kill_pid_file "$name"
-done
-
-for port in 8000 5173 5174; do
-  kill_port "$port"
+  stop_pid_file "$name"
 done

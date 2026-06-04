@@ -9,6 +9,7 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import { Button, ConfigProvider, Layout, Menu, Typography } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import DashboardPage from './pages/DashboardPage';
 import DistillPage from './pages/DistillPage';
@@ -25,6 +26,17 @@ function Shell() {
   const navigate = useNavigate();
   const location = useLocation();
   const selected = location.pathname === '/enterprise' ? '/enterprise/dashboard' : location.pathname;
+  const isDistillRoute = location.pathname === '/enterprise/skills/distill';
+  const [lastDistillSearch, setLastDistillSearch] = useState(() => (isDistillRoute ? location.search : ''));
+  const distillSearch = isDistillRoute ? location.search : lastDistillSearch;
+  const distillSearchParams = useMemo(() => new URLSearchParams(distillSearch), [distillSearch]);
+
+  useEffect(() => {
+    if (isDistillRoute) {
+      setLastDistillSearch(location.search);
+    }
+  }, [isDistillRoute, location.search]);
+
   return (
     <Layout className="app-shell">
       <Sider width={232} theme="light" className="sidebar">
@@ -74,18 +86,22 @@ function Shell() {
           </div>
         </Header>
         <Content className="content">
-          <Routes>
-            <Route path="/enterprise" element={<Navigate to="/enterprise/dashboard" replace />} />
-            <Route path="/enterprise/dashboard" element={<DashboardPage />} />
-            <Route path="/enterprise/memories" element={<MemoriesPage />} />
-            <Route path="/enterprise/feedback" element={<FeedbackPage />} />
-            <Route path="/enterprise/skills" element={<SkillsPage />} />
-            <Route path="/enterprise/skills/distill" element={<DistillPage />} />
-            <Route path="/enterprise/models" element={<ModelsPage />} />
-            <Route path="/enterprise/tools" element={<ToolsPage />} />
-            <Route path="/enterprise/persona" element={<PersonaPage />} />
-            <Route path="*" element={<Navigate to="/enterprise/dashboard" replace />} />
-          </Routes>
+          <div className={isDistillRoute ? 'persistent-distill active' : 'persistent-distill hidden'}>
+            <DistillPage active={isDistillRoute} searchParamsOverride={distillSearchParams} />
+          </div>
+          {!isDistillRoute && (
+            <Routes>
+              <Route path="/enterprise" element={<Navigate to="/enterprise/dashboard" replace />} />
+              <Route path="/enterprise/dashboard" element={<DashboardPage />} />
+              <Route path="/enterprise/memories" element={<MemoriesPage />} />
+              <Route path="/enterprise/feedback" element={<FeedbackPage />} />
+              <Route path="/enterprise/skills" element={<SkillsPage />} />
+              <Route path="/enterprise/models" element={<ModelsPage />} />
+              <Route path="/enterprise/tools" element={<ToolsPage />} />
+              <Route path="/enterprise/persona" element={<PersonaPage />} />
+              <Route path="*" element={<Navigate to="/enterprise/dashboard" replace />} />
+            </Routes>
+          )}
         </Content>
       </Layout>
     </Layout>

@@ -6,60 +6,103 @@ BACKEND_DIR="$ROOT_DIR/backend"
 ENTERPRISE_DIR="$ROOT_DIR/frontend-enterprise"
 CHAT_DIR="$ROOT_DIR/frontend-chat"
 RUN_DIR="$ROOT_DIR/.dev"
-LABEL_PREFIX="com.skill-agent-loop"
-OLD_LABEL_PREFIX="com.so""p-agent-loop"
+LOG_DIR="$RUN_DIR/logs"
 
-API_BASE_URL="${VITE_API_BASE_URL:-http://127.0.0.1:8000}"
+BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
+BACKEND_PORT="${BACKEND_PORT:-8000}"
+ENTERPRISE_HOST="${ENTERPRISE_HOST:-127.0.0.1}"
+ENTERPRISE_PORT="${ENTERPRISE_PORT:-5173}"
+CHAT_HOST="${CHAT_HOST:-127.0.0.1}"
+CHAT_PORT="${CHAT_PORT:-5174}"
+FORCE_PORTS="${FORCE_PORTS:-0}"
+DETACH="${DETACH:-0}"
 
-mkdir -p "$RUN_DIR"
+api_default_host="$BACKEND_HOST"
+if [[ "$api_default_host" == "0.0.0.0" ]]; then
+  api_default_host="127.0.0.1"
+fi
+API_BASE_URL="${VITE_API_BASE_URL:-${API_BASE_URL:-http://$api_default_host:$BACKEND_PORT}}"
 
-remove_label() {
-  local name="$1"
-  launchctl remove "$OLD_LABEL_PREFIX.$name" >/dev/null 2>&1 || true
-  launchctl remove "$LABEL_PREFIX.$name" >/dev/null 2>&1 || true
+DEFAULT_CORS_ORIGINS="http://localhost:$ENTERPRISE_PORT,http://localhost:$CHAT_PORT,http://127.0.0.1:$ENTERPRISE_PORT,http://127.0.0.1:$CHAT_PORT"
+if [[ -n "${PUBLIC_ENTERPRISE_ORIGIN:-}" ]]; then
+  DEFAULT_CORS_ORIGINS="$DEFAULT_CORS_ORIGINS,$PUBLIC_ENTERPRISE_ORIGIN"
+fi
+if [[ -n "${PUBLIC_CHAT_ORIGIN:-}" ]]; then
+  DEFAULT_CORS_ORIGINS="$DEFAULT_CORS_ORIGINS,$PUBLIC_CHAT_ORIGIN"
+fi
+CORS_ORIGINS="${CORS_ORIGINS:-$DEFAULT_CORS_ORIGINS}"
+
+mkdir -p "$RUN_DIR" "$LOG_DIR"
+
+remove_legacy_launchctl_labels() {
+  for prefix in com.ultrarag4.dev com.skill-agent-loop; do
+    for name in backend enterprise chat; do
+      launchctl remove "$prefix.$name" >/dev/null 2>&1 || true
+    done
+  done
 }
 
-kill_pid_file() {
+stop_pid_file() {
   local name="$1"
   local pid_file="$RUN_DIR/$name.pid"
-  if [[ -f "$pid_file" ]]; then
-    local pid
-    pid="$(cat "$pid_file" 2>/dev/null || true)"
-    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-      sleep 0.2
-    fi
-    rm -f "$pid_file"
+  [[ -f "$pid_file" ]] || return 0
+
+  local pid
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
+  rm -f "$pid_file"
+
+  if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
   fi
 }
 
-kill_port() {
+port_pids() {
+  local port="$1"
+  lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true
+}
+
+ensure_port_free() {
   local port="$1"
   local pids
-  pids="$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
-  if [[ -n "$pids" ]]; then
+  pids="$(port_pids "$port")"
+  [[ -n "$pids" ]] || return 0
+
+  if [[ "$FORCE_PORTS" == "1" ]]; then
     while read -r pid; do
       [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
     done <<< "$pids"
+    sleep 0.3
+    return 0
   fi
+
+  echo "Port $port is already in use by PID(s): $pids" >&2
+  echo "Run scripts/dev_down.sh first, or use FORCE_PORTS=1 scripts/dev_up.sh to release unmanaged listeners." >&2
+  exit 1
 }
 
 start_service() {
   local name="$1"
   local cwd="$2"
   local command="$3"
-  local log_file="/tmp/skill-agent-$name.log"
-  local err_file="/tmp/skill-agent-$name.err.log"
+  local log_file="$LOG_DIR/$name.log"
+  local err_file="$LOG_DIR/$name.err.log"
   local pid_file="$RUN_DIR/$name.pid"
 
   : > "$log_file"
   : > "$err_file"
-  launchctl submit \
-    -l "$LABEL_PREFIX.$name" \
-    -o "$log_file" \
-    -e "$err_file" \
-    -- /bin/zsh -lc "cd '$cwd' && $command"
-  echo "launchctl:$LABEL_PREFIX.$name" > "$pid_file"
+  /bin/zsh -lc "cd '$cwd' && $command" >"$log_file" 2>"$err_file" &
+  local pid="$!"
+  echo "$pid" > "$pid_file"
+  echo "$pid"
+}
+
+url_host() {
+  local host="$1"
+  if [[ "$host" == "0.0.0.0" ]]; then
+    echo "127.0.0.1"
+  else
+    echo "$host"
+  fi
 }
 
 wait_url() {
@@ -78,33 +121,65 @@ wait_url() {
   exit 1
 }
 
+cleanup() {
+  for name in backend enterprise chat; do
+    stop_pid_file "$name"
+  done
+}
+
+remove_legacy_launchctl_labels
+
 for name in backend enterprise chat; do
-  remove_label "$name"
-  kill_pid_file "$name"
+  stop_pid_file "$name"
 done
 
-sleep 0.5
+ensure_port_free "$BACKEND_PORT"
+ensure_port_free "$ENTERPRISE_PORT"
+ensure_port_free "$CHAT_PORT"
 
-for port in 8000 5173 5174; do
-  kill_port "$port"
-done
+backend_pid="$(start_service "backend" "$BACKEND_DIR" "export CORS_ORIGINS='$CORS_ORIGINS'; exec .venv/bin/uvicorn app.main:app --host '$BACKEND_HOST' --port '$BACKEND_PORT'")"
+enterprise_pid="$(start_service "enterprise" "$ENTERPRISE_DIR" "export VITE_API_BASE_URL='$API_BASE_URL'; exec ./node_modules/.bin/vite --host '$ENTERPRISE_HOST' --port '$ENTERPRISE_PORT' --strictPort")"
+chat_pid="$(start_service "chat" "$CHAT_DIR" "export VITE_API_BASE_URL='$API_BASE_URL'; exec ./node_modules/.bin/vite --host '$CHAT_HOST' --port '$CHAT_PORT' --strictPort")"
 
-sleep 0.5
+backend_url_host="$(url_host "$BACKEND_HOST")"
+enterprise_url_host="$(url_host "$ENTERPRISE_HOST")"
+chat_url_host="$(url_host "$CHAT_HOST")"
 
-start_service "backend" "$BACKEND_DIR" "exec .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000"
-start_service "enterprise" "$ENTERPRISE_DIR" "export VITE_API_BASE_URL='$API_BASE_URL'; exec ./node_modules/.bin/vite --host 127.0.0.1 --port 5173 --strictPort"
-start_service "chat" "$CHAT_DIR" "export VITE_API_BASE_URL='$API_BASE_URL'; exec ./node_modules/.bin/vite --host 127.0.0.1 --port 5174 --strictPort"
-
-wait_url "backend" "http://127.0.0.1:8000/api/health" "/tmp/skill-agent-backend.log"
-wait_url "enterprise" "http://127.0.0.1:5173/enterprise/dashboard" "/tmp/skill-agent-enterprise.log"
-wait_url "chat" "http://127.0.0.1:5174/chat" "/tmp/skill-agent-chat.log"
+wait_url "backend" "http://$backend_url_host:$BACKEND_PORT/api/health" "$LOG_DIR/backend.log"
+wait_url "enterprise" "http://$enterprise_url_host:$ENTERPRISE_PORT/enterprise/dashboard" "$LOG_DIR/enterprise.log"
+wait_url "chat" "http://$chat_url_host:$CHAT_PORT/chat" "$LOG_DIR/chat.log"
 
 echo "Started:"
-echo "  backend    http://127.0.0.1:8000/docs"
-echo "  enterprise http://127.0.0.1:5173/enterprise/dashboard"
-echo "  chat       http://127.0.0.1:5174/chat"
+echo "  backend    http://$backend_url_host:$BACKEND_PORT/docs ($backend_pid)"
+echo "  enterprise http://$enterprise_url_host:$ENTERPRISE_PORT/enterprise/dashboard ($enterprise_pid)"
+echo "  chat       http://$chat_url_host:$CHAT_PORT/chat ($chat_pid)"
+echo
+echo "Frontend API base:"
+echo "  $API_BASE_URL"
+echo
+echo "Backend CORS origins:"
+echo "  $CORS_ORIGINS"
 echo
 echo "Logs:"
-echo "  /tmp/skill-agent-backend.log"
-echo "  /tmp/skill-agent-enterprise.log"
-echo "  /tmp/skill-agent-chat.log"
+echo "  $LOG_DIR/backend.log"
+echo "  $LOG_DIR/enterprise.log"
+echo "  $LOG_DIR/chat.log"
+
+if [[ "$DETACH" == "1" ]]; then
+  echo
+  echo "Detached. Use scripts/dev_down.sh to stop."
+  exit 0
+fi
+
+trap cleanup INT TERM EXIT
+echo
+echo "Supervisor running. Press Ctrl-C to stop all services."
+while true; do
+  for pid in "$backend_pid" "$enterprise_pid" "$chat_pid"; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "Service process $pid exited; stopping remaining services." >&2
+      exit 1
+    fi
+  done
+  sleep 1
+done

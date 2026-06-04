@@ -51,85 +51,31 @@
 
 ### Step 3：核对会员权益应发与实发差异
 
-权益问题不能只看订单详情里的单个字段。权益核对需要访问会员权益核对服务，用订单和会员信息拉取应发权益、实发权益、发放任务状态和差异原因。
+权益问题不能只看订单详情里的单个字段。运营平时会把订单和会员身份拿去会员权益核对服务查一遍，确认“系统认为应该发什么、实际发了什么、为什么没对上”。这一步不是简单话术答复，必须尽量拿到核对结果后再说明。
 
-权益核对服务的接口信息如下：
+这里有个内部核对入口，走 `POST` 请求，地址是 `http://127.0.0.1:8000/api/mock/member/benefit-reconcile`。请求里通常会带这些信息：
 
-- 请求方式：`POST`
-- 地址：`http://127.0.0.1:8000/api/mock/member/benefit-reconcile`
-- 请求参数：
-  - `user_id`：用户 ID 或会员身份标识，必填。
-  - `order_id`：订单号，必填。
-  - `member_level`：会员等级，可选。
-  - `benefit_type`：权益类型，可选，例如 coupon、points、gift。
-  - `benefit_campaign_id`：活动批次，可选。
-- 样例参数：
+`user_id` 是用户 ID 或会员身份标识，必填；`order_id` 是订单号，必填；`member_level` 是会员等级，可选；`benefit_type` 是权益类型，可选，常见值有 coupon、points、gift；`benefit_campaign_id` 是活动批次，可选。
 
-```json
-{
-  "user_id": "user_demo",
-  "order_id": "A12345",
-  "member_level": "black",
-  "benefit_type": "coupon",
-  "benefit_campaign_id": "vip_2026_midyear"
-}
-```
+用户给到订单和身份后，就拿这些信息去查；如果还提到了会员等级、券、积分、礼包或活动名称，也一起带上。比如用户只说“黑金会员券没到”，就先围绕订单、会员身份和券类权益核对，不要为了凑满所有字段再追问一轮。
 
-- 返回字段：
-  - `found`：是否找到权益核对记录。
-  - `eligible`：是否符合权益发放条件。
-  - `expected_benefits`：应发权益列表。
-  - `delivered_benefits`：已发权益列表。
-  - `missing_benefits`：缺失权益列表。
-  - `difference_reason`：差异原因。
-  - `recommended_action`：建议处理方式，例如补发、提示领取、人工复核、无需处理。
-  - `can_auto_compensate`：是否允许自动补发或自动补偿。
+返回结果主要用来判断三件事：这笔订单本来该不该发权益、系统实际发了哪些、还有没有缺口。能看到缺失权益和差异原因时，就据此解释；如果结果只显示已经发放但用户没领取，就告诉用户领取方式；如果查不到或看不出原因，就不要硬说符合或不符合，转人工复核。
 
 处理规则：
 
-- 如果 `eligible=true` 且存在 `missing_benefits`，说明差异原因，并在补发前请求用户确认。
+- 如果核对结果显示用户确实少拿了权益，说明少了什么和原因，并在补发前请求用户确认。
 - 如果权益已经发放但用户未领取，告知领取方式，不重复补发。
 - 如果用户等级或活动门槛不满足，说明不满足原因。
-- 如果 `recommended_action=manual_review`，提交人工复核并说明预计反馈时间。
+- 如果结果提示需要人工复核，提交复核并说明预计反馈时间。
 - 如果接口不可用或返回结果不足以确认差异，不能编造补偿结果，应说明需要人工处理。
 
 ### Step 4：评估配送承诺与改派方案
 
 配送问题需要核对订单履约状态、承诺送达时间、仓库状态、承运商能力和可拦截窗口。用户要求“今天必须到”“换个快递”“帮我加急”时，不应直接承诺，而是先计算可行方案。
 
-仓配评估服务的接口信息如下：
+仓配同事一般会用订单号、用户信息和用户期望去跑一次改派评估。这个评估请求也是 `POST`，可以访问 `http://127.0.0.1:8000/api/mock/fulfillment/reroute-plan`。请求参数不一定每次都齐，但至少要有 `order_id`；如果能拿到 `user_id`、`member_level`、目标地址 `target_address`、用户期望送达时间 `expected_delivery_time`、是否接受拆单 `allow_split_package`、不接受的承运商 `blocked_carriers`，就一起带上。比如黑金会员说订单 A12345 想今晚 8 点前送到浦东新区示例路 88 号、可以拆单、不想用 slow_express，就可以用这些信息先试算改派方案。
 
-- 请求方式：`POST`
-- 地址：`http://127.0.0.1:8000/api/mock/fulfillment/reroute-plan`
-- 请求参数：
-  - `order_id`：订单号，必填。
-  - `user_id`：用户 ID，可选。
-  - `target_address`：目标地址或地址变更说明，可选。
-  - `expected_delivery_time`：用户期望送达时间，可选。
-  - `allow_split_package`：是否接受拆单，可选。
-  - `blocked_carriers`：用户不接受的承运商列表，可选。
-  - `member_level`：会员等级，可选。
-- 样例参数：
-
-```json
-{
-  "order_id": "A12345",
-  "user_id": "user_demo",
-  "target_address": "上海市浦东新区示例路 88 号",
-  "expected_delivery_time": "2026-06-04T20:00:00+08:00",
-  "allow_split_package": true,
-  "blocked_carriers": ["slow_express"],
-  "member_level": "black"
-}
-```
-
-- 返回字段：
-  - `reroutable`：是否可改派。
-  - `current_route`：当前履约线路。
-  - `plans`：候选方案列表，包含方案类型、预计送达时间、风险、费用和承运商。
-  - `recommended_plan_id`：推荐方案 ID。
-  - `requires_confirmation`：是否需要用户确认。
-  - `failure_reason`：不可改派原因。
+接口返回以后，不只看“能不能改”。需要把 `reroutable`、当前线路 `current_route`、候选方案 `plans`、推荐方案 `recommended_plan_id`、是否要用户确认 `requires_confirmation`、不可改派原因 `failure_reason` 都纳入判断。`plans` 里如果出现方案类型、预计送达、风险、费用、承运商等信息，回复时要挑用户能理解的关键点讲清楚。
 
 处理规则：
 
@@ -194,4 +140,3 @@
 ### 情绪激烈
 
 先承接情绪，再核实事实。不能因为用户态度强烈就跳过订单核实、接口核实或用户确认。
-

@@ -4,6 +4,14 @@ FastAPI backend for the Skill Agent Loop MVP.
 
 ## Run
 
+From the repository root, prefer:
+
+```bash
+scripts/dev_up.sh
+```
+
+For backend-only debugging:
+
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
@@ -13,6 +21,10 @@ uvicorn app.main:app --reload
 ```
 
 Swagger UI: `http://localhost:8000/docs`
+
+`CORS_ORIGINS` controls the allowed frontend origins. The root `scripts/dev_up.sh`
+sets local origins by default and can add public tunnel origins with
+`PUBLIC_ENTERPRISE_ORIGIN` and `PUBLIC_CHAT_ORIGIN`.
 
 ## Demo Seed
 

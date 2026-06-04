@@ -143,8 +143,14 @@ type EditingMessage = {
   text: string;
 };
 
-export default function DistillPage() {
-  const [searchParams] = useSearchParams();
+type DistillPageProps = {
+  active?: boolean;
+  searchParamsOverride?: URLSearchParams;
+};
+
+export default function DistillPage({ active = true, searchParamsOverride }: DistillPageProps = {}) {
+  const [routerSearchParams] = useSearchParams();
+  const searchParams = searchParamsOverride || routerSearchParams;
   const skillId = searchParams.get('skill_id');
   const mode = searchParams.get('mode') || '';
   const cacheKey = `skill-distill:${TENANT_ID}:${skillId || mode || 'new'}`;
@@ -303,14 +309,23 @@ export default function DistillPage() {
   ]);
 
   useEffect(() => {
-    document.body.classList.add('skill-distill-fixed');
     return () => {
-      document.body.classList.remove('skill-distill-fixed');
       abortRef.current?.abort();
       Object.values(uploadControllersRef.current).forEach((controller) => controller.abort());
       clearAnimationTimers();
     };
   }, []);
+
+  useEffect(() => {
+    if (!active) {
+      document.body.classList.remove('skill-distill-fixed');
+      return;
+    }
+    document.body.classList.add('skill-distill-fixed');
+    return () => {
+      document.body.classList.remove('skill-distill-fixed');
+    };
+  }, [active]);
 
   useEffect(() => {
     api

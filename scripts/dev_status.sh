@@ -3,41 +3,61 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_DIR="$ROOT_DIR/.dev"
-LABEL_PREFIX="com.skill-agent-loop"
-OLD_LABEL_PREFIX="com.so""p-agent-loop"
+
+BACKEND_PORT="${BACKEND_PORT:-8000}"
+ENTERPRISE_PORT="${ENTERPRISE_PORT:-5173}"
+CHAT_PORT="${CHAT_PORT:-5174}"
+
+label_present() {
+  local label="$1"
+  launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1
+}
+
+print_service() {
+  local name="$1"
+  local pid_file="$RUN_DIR/$name.pid"
+
+  if label_present "com.ultrarag4.dev.$name" || label_present "com.skill-agent-loop.$name"; then
+    echo "  $name has legacy launchctl label; run scripts/dev_down.sh"
+    return 0
+  fi
+
+  if [[ ! -f "$pid_file" ]]; then
+    echo "  $name not started by scripts/dev_up.sh"
+    return 0
+  fi
+
+  local pid
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
+  if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+    echo "  $name running ($pid)"
+  else
+    echo "  $name stale pid"
+  fi
+}
+
+print_port() {
+  local port="$1"
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "  $port listening"
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | sed 's/^/    /'
+  else
+    echo "  $port not listening"
+  fi
+}
 
 echo "Processes:"
 for name in backend enterprise chat; do
-  if launchctl list "$LABEL_PREFIX.$name" >/dev/null 2>&1; then
-    echo "  $name launchctl registered"
-  elif launchctl list "$OLD_LABEL_PREFIX.$name" >/dev/null 2>&1; then
-    echo "  $name old launchctl registered"
-  else
-    pid_file="$RUN_DIR/$name.pid"
-    if [[ -f "$pid_file" ]]; then
-      pid="$(cat "$pid_file" 2>/dev/null || true)"
-      if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-        echo "  $name running ($pid)"
-      else
-        echo "  $name stale pid"
-      fi
-    else
-      echo "  $name not started"
-    fi
-  fi
+  print_service "$name"
 done
 echo
 
 echo "Ports:"
-for port in 8000 5173 5174; do
-  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "  $port listening"
-  else
-    echo "  $port not listening"
-  fi
-done
+print_port "$BACKEND_PORT"
+print_port "$ENTERPRISE_PORT"
+print_port "$CHAT_PORT"
 echo
 
 echo "Health:"
-curl -sS http://127.0.0.1:8000/api/health || true
+curl -fsS "http://127.0.0.1:$BACKEND_PORT/api/health" || true
 echo
