@@ -24,18 +24,22 @@ class MemoryService:
         self.db = db
 
     def recall(self, tenant_id: str, user_id: str, query: str, limit: int = 5) -> list[MemoryRecord]:
-        rows = self._list_user_memories(tenant_id, user_id, limit=80)
+        rows = [
+            row
+            for row in self._list_user_memories(tenant_id, user_id, limit=80)
+            if row.kind in ALLOWED_MEMORY_KINDS
+        ]
         query_terms = _terms(query)
         scored = sorted(
             rows,
             key=lambda row: (_score(row.content, query_terms), row.importance, row.updated_at),
             reverse=True,
         )
-        profile_and_summary = [
-            row for row in rows if row.kind in {"profile", "summary"} and row not in scored[:limit]
+        stable_profile = [
+            row for row in rows if row.kind == "profile" and row not in scored[:limit]
         ][:2]
         recalled = [row for row in scored if _score(row.content, query_terms) > 0][:limit]
-        return recalled or [*profile_and_summary, *rows[: min(3, len(rows))]][:limit]
+        return recalled or [*stable_profile, *rows[: min(3, len(rows))]][:limit]
 
     def capture_turn(
         self,
@@ -87,23 +91,6 @@ class MemoryService:
                 )
             )
 
-        updated_summary = _normalize_summary(raw_delta)
-        if updated_summary:
-            records.append(
-                self._upsert_summary(
-                    tenant_id=request.tenant_id,
-                    user_id=request.user_id,
-                    username=username,
-                    session_id=session.id,
-                    summary=updated_summary,
-                    metadata={
-                        "source": MEMORY_SOURCE,
-                        "active_skill_id": session.active_skill_id,
-                        "active_step_id": session.active_step_id,
-                        "tool_name": tool_result.tool_name if tool_result else None,
-                    },
-                )
-            )
         return records
 
     def _list_user_memories(

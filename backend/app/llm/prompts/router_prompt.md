@@ -7,7 +7,7 @@
 clarification_question 是给终端用户看的澄清问题，必须像客服一样自然表达。
 禁止在 clarification_question 中要求用户提供“当前用户消息、会话状态、技能进度、可用技能列表、路由信息、JSON、decision”等内部系统信息。
 
-conversation_context.messages 是按时间顺序投影的 user/assistant 历史消息；在未超过上下文预算时应视为完整会话历史，超过预算时会包含 compacted_summary 和最新消息。判断复合意图、指代、省略信息时必须优先参考 conversation_context，不要只看 current_session.summary 或 last_agent_question。
+conversation_context.messages 是按时间顺序投影的最近几轮 user/assistant 消息，用于判断当前用户请求和上一轮追问的关系。router 只需要判断当前请求应该走哪个技能/步骤，不要被更早的历史意图过度牵引；如果 current_session 与最近几轮上下文冲突，以当前用户消息和当前技能状态为准。
 
 可选 decision：
 - start_skill

@@ -30,6 +30,7 @@ STREAM_CHUNK_INTERVAL_SECONDS = 0.045
 DEFAULT_REFLECTION_MAX_ROUNDS = 1
 REFLECTION_MAX_ROUNDS_LIMIT = 5
 MAX_TOOL_ACTIONS_PER_TURN = 6
+ROUTER_CONTEXT_MESSAGES = 8
 TOOL_CALL_HISTORY_SLOT = "_tool_call_history"
 TOOL_RESULTS_SLOT = "_tool_results"
 
@@ -231,10 +232,11 @@ class AgentLoop:
             self.db.commit()
             self.db.refresh(chat_session)
             conversation_context = self._conversation_context(chat_session)
+            router_context = self._conversation_context(chat_session, max_messages=ROUTER_CONTEXT_MESSAGES)
 
             yield self._stream_status(chat_session, "routing", "正在判断用户意图")
             router_decision = self.router.decide(
-                request.message, chat_session, skills, model_config, conversation_context
+                request.message, chat_session, skills, model_config, router_context
             )
             self.events.record(
                 request.tenant_id,
@@ -525,10 +527,11 @@ class AgentLoop:
         self.db.commit()
         self.db.refresh(chat_session)
         conversation_context = self._conversation_context(chat_session)
+        router_context = self._conversation_context(chat_session, max_messages=ROUTER_CONTEXT_MESSAGES)
 
         status("routing")
         router_decision = self.router.decide(
-            request.message, chat_session, skills, model_config, conversation_context
+            request.message, chat_session, skills, model_config, router_context
         )
         self.events.record(
             request.tenant_id,
@@ -2252,7 +2255,9 @@ class AgentLoop:
         rows.reverse()
         return [{"role": row.role, "content": row.content} for row in rows]
 
-    def _conversation_context(self, chat_session: ChatSession) -> dict[str, object]:
+    def _conversation_context(
+        self, chat_session: ChatSession, max_messages: int | None = None
+    ) -> dict[str, object]:
         if not hasattr(self, "db") or not hasattr(self.db, "exec"):
             return build_conversation_context([])
         rows = list(
@@ -2262,6 +2267,8 @@ class AgentLoop:
                 .order_by(Message.created_at.asc())
             ).all()
         )
+        if max_messages is not None and max_messages > 0:
+            rows = rows[-max_messages:]
         return build_conversation_context([{"role": row.role, "content": row.content} for row in rows])
 
     def _append_message(self, tenant_id: str, session_id: str, role: str, content: str) -> None:

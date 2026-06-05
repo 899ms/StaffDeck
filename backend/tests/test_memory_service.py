@@ -65,14 +65,12 @@ def test_memory_capture_uses_model_updates_and_deduplicates_profile_name(monkeyp
     assert len(profile_rows) == 1
     assert profile_rows[0].content == "用户姓名/称呼：xyq"
     assert profile_rows[0].metadata_json["key"] == "preferred_name"
-    assert len(summary_rows) == 1
-    assert "用户本轮诉求" not in summary_rows[0].content
-    assert "测试客服购买和售后流程" in summary_rows[0].content
+    assert summary_rows == []
     assert saved
     assert captured_payload["existing_memories"][0]["content"] == "用户姓名/称呼：hm我想买一个东西"
 
 
-def test_memory_capture_updates_existing_summary_instead_of_appending_transcript(monkeypatch) -> None:
+def test_memory_capture_ignores_summary_updates(monkeypatch) -> None:
     def fake_init(self, model_config):  # noqa: ANN001
         return None
 
@@ -115,8 +113,41 @@ def test_memory_capture_updates_existing_summary_instead_of_appending_transcript
         rows = list(db.exec(select(MemoryRecord).where(MemoryRecord.kind == "summary")).all())
 
     assert len(rows) == 1
-    assert rows[0].content == "用户希望客服回复简洁，并正在验证多轮下单流程。"
-    assert rows[0].metadata_json["turn_count"] == 4
+    assert rows[0].content == "用户长期摘要\n- 用户本轮诉求：我要买东西；最近处理结果：请问数量"
+    assert rows[0].metadata_json["turn_count"] == 3
+
+
+def test_memory_recall_excludes_summary_history() -> None:
+    with _test_session() as db:
+        db.add(
+            MemoryRecord(
+                tenant_id="tenant_demo",
+                user_id="user_demo",
+                username="user_demo",
+                session_id="old_session",
+                kind="summary",
+                content="用户正在测试客服购买和售后流程。",
+                importance=0.9,
+            )
+        )
+        db.add(
+            MemoryRecord(
+                tenant_id="tenant_demo",
+                user_id="user_demo",
+                username="user_demo",
+                session_id="old_session",
+                kind="preference",
+                content="用户偏好客服回复简洁。",
+                importance=0.85,
+                metadata_json={"key": "communication_style"},
+            )
+        )
+        db.commit()
+
+        rows = MemoryService(db).recall("tenant_demo", "user_demo", "客服回复")
+
+    assert [row.kind for row in rows] == ["preference"]
+    assert rows[0].content == "用户偏好客服回复简洁。"
 
 
 def test_memory_rows_for_read_hides_legacy_duplicate_profile_and_raw_summary() -> None:

@@ -453,6 +453,28 @@ def test_step_agent_receives_full_conversation_context_within_budget() -> None:
     assert conversation_context["metadata"]["total_messages"] == 16
 
 
+def test_router_context_uses_recent_messages_only() -> None:
+    rows = [
+        Message(
+            tenant_id="tenant_demo",
+            session_id="session_test",
+            role="user" if index % 2 == 0 else "assistant",
+            content=f"message {index}",
+        )
+        for index in range(16)
+    ]
+    loop = object.__new__(AgentLoop)
+    loop.db = FakeMessageDb(rows)
+    session = ChatSession(id="session_test", tenant_id="tenant_demo")
+
+    context = loop._conversation_context(session, max_messages=8)
+
+    assert len(context["messages"]) == 8
+    assert context["messages"][0]["content"] == "message 8"
+    assert context["messages"][-1]["content"] == "message 15"
+    assert context["metadata"]["total_messages"] == 8
+
+
 def test_model_slot_validation_retry_does_not_fill_without_model_progress() -> None:
     loop = object.__new__(AgentLoop)
     loop.events = FakeEvents()
