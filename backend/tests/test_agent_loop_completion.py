@@ -142,6 +142,27 @@ def test_apply_step_result_records_skill_context_for_step_change() -> None:
     assert payload["to_step_id"] == "confirm_purchase"
 
 
+def test_apply_step_result_ignores_next_step_outside_active_skill() -> None:
+    loop = object.__new__(AgentLoop)
+    loop.events = FakeEvents()
+    session = ChatSession(
+        id="session_test",
+        tenant_id="tenant_demo",
+        active_skill_id="refund",
+        active_step_id="check_refund",
+    )
+    step_result = StepAgentResult(next_step_id="collect_user_name", is_step_completed=True)
+
+    loop._apply_step_result("tenant_demo", session, step_result, _refund_skill())
+
+    assert session.active_step_id == "check_refund"
+    assert step_result.next_step_id is None
+    event_type, payload = loop.events.records[0][2], loop.events.records[0][3]
+    assert event_type == "step_agent_result_repaired"
+    assert payload["mode"] == "invalid_next_step_ignored"
+    assert payload["invalid_next_step_id"] == "collect_user_name"
+
+
 def test_apply_step_result_does_not_create_step_without_active_skill() -> None:
     loop = object.__new__(AgentLoop)
     loop.events = FakeEvents()

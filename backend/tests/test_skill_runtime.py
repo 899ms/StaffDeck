@@ -245,6 +245,119 @@ def test_pending_tasks_are_queued_and_popped_without_using_skill_stack():
     assert session.slots_json == {"product_id": "A3"}
 
 
+def test_pending_task_is_claimed_when_router_continues_same_skill():
+    session = ChatSession(
+        id="session_test",
+        tenant_id="tenant_demo",
+        active_skill_id="purchase",
+        active_step_id="confirm_purchase",
+        slots_json={"product_id": "A1", "quantity": 1},
+        pending_tasks_json=[
+            {
+                "decision": "start_skill",
+                "target_skill_id": "purchase",
+                "target_step_id": "collect_user_name",
+                "user_intent": "退款完成后购买 A1",
+                "source_message": "退完再买 A1",
+                "slot_hints": {"user_name": "hm", "product_id": "A1"},
+            }
+        ],
+    )
+    runtime = SkillRuntime()
+
+    runtime.apply_decision(
+        session,
+        RouterDecision(
+            decision="continue_current_skill",
+            target_skill_id="purchase",
+            target_step_id="confirm_purchase",
+            slot_hints={"purchase_confirmed": True},
+        ),
+    )
+
+    assert session.pending_tasks_json == []
+    assert session.slots_json == {
+        "product_id": "A1",
+        "quantity": 1,
+        "user_name": "hm",
+        "purchase_confirmed": True,
+    }
+
+
+def test_claimed_pending_task_switch_does_not_suspend_completed_current_skill():
+    session = ChatSession(
+        id="session_test",
+        tenant_id="tenant_demo",
+        active_skill_id="refund",
+        active_step_id="final_reply",
+        slots_json={"order_id": "ORDER-1", "refund_reason": "买贵了"},
+        pending_tasks_json=[
+            {
+                "decision": "start_skill",
+                "target_skill_id": "purchase",
+                "target_step_id": "collect_user_name",
+                "user_intent": "退款完成后购买 A1",
+                "source_message": "退完再买 A1",
+                "slot_hints": {"product_id": "A1"},
+            }
+        ],
+    )
+    runtime = SkillRuntime()
+
+    runtime.apply_decision(
+        session,
+        RouterDecision(
+            decision="suspend_current_and_start_new_skill",
+            target_skill_id="purchase",
+            target_step_id="collect_user_name",
+            slot_hints={"quantity": 1},
+        ),
+    )
+
+    assert session.active_skill_id == "purchase"
+    assert session.active_step_id == "collect_user_name"
+    assert session.slots_json == {"product_id": "A1", "quantity": 1}
+    assert session.skill_stack_json == []
+    assert session.pending_tasks_json == []
+
+
+def test_ambiguous_same_skill_pending_tasks_are_not_claimed_by_target_only():
+    session = ChatSession(
+        id="session_test",
+        tenant_id="tenant_demo",
+        active_skill_id="refund",
+        active_step_id="final_reply",
+        pending_tasks_json=[
+            {
+                "decision": "start_skill",
+                "target_skill_id": "purchase",
+                "target_step_id": "collect_user_name",
+                "slot_hints": {"product_id": "A1"},
+            },
+            {
+                "decision": "start_skill",
+                "target_skill_id": "purchase",
+                "target_step_id": "collect_user_name",
+                "slot_hints": {"product_id": "A3"},
+            },
+        ],
+    )
+    runtime = SkillRuntime()
+
+    runtime.apply_decision(
+        session,
+        RouterDecision(
+            decision="suspend_current_and_start_new_skill",
+            target_skill_id="purchase",
+            target_step_id="collect_user_name",
+            slot_hints={"quantity": 1},
+        ),
+    )
+
+    assert len(session.pending_tasks_json) == 2
+    assert session.skill_stack_json
+
+
 def test_continue_current_skill_can_reattach_missing_active_skill():
     session = ChatSession(
         id="session_test",

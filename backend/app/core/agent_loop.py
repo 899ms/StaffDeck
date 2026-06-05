@@ -1314,7 +1314,7 @@ class AgentLoop:
                     iteration + 1,
                 ),
             )
-            self._apply_step_result(request.tenant_id, chat_session, continuation_result)
+            self._apply_step_result(request.tenant_id, chat_session, continuation_result, active_skill)
             self.db.commit()
             self.db.refresh(chat_session)
             step_result = continuation_result
@@ -1444,7 +1444,7 @@ class AgentLoop:
             memory_context=memory_context,
             conversation_context=conversation_context,
         )
-        self._apply_step_result(request.tenant_id, chat_session, step_result)
+        self._apply_step_result(request.tenant_id, chat_session, step_result, active_skill)
         step_result = self._retry_slot_validation_if_needed(
             request,
             chat_session,
@@ -1485,7 +1485,7 @@ class AgentLoop:
                 memory_context=memory_context,
                 conversation_context=conversation_context,
             )
-            self._apply_step_result(request.tenant_id, chat_session, step_result)
+            self._apply_step_result(request.tenant_id, chat_session, step_result, active_skill)
             self._advance_past_satisfied_collection_steps(
                 request.tenant_id, chat_session, active_skill
             )
@@ -1555,7 +1555,7 @@ class AgentLoop:
             return step_result
         if not validation_result.reply and step_result.reply:
             validation_result.reply = step_result.reply
-        self._apply_step_result(request.tenant_id, chat_session, validation_result)
+        self._apply_step_result(request.tenant_id, chat_session, validation_result, active_skill)
         self.events.record(
             request.tenant_id,
             chat_session.id,
@@ -1659,7 +1659,11 @@ class AgentLoop:
         return step_result
 
     def _apply_step_result(
-        self, tenant_id: str, chat_session: ChatSession, step_result: StepAgentResult
+        self,
+        tenant_id: str,
+        chat_session: ChatSession,
+        step_result: StepAgentResult,
+        active_skill: Skill | None = None,
     ) -> None:
         if step_result.slot_updates:
             chat_session.slots_json = {**(chat_session.slots_json or {}), **step_result.slot_updates}
@@ -1671,6 +1675,21 @@ class AgentLoop:
             )
 
         if step_result.next_step_id and chat_session.active_skill_id:
+            if active_skill and active_skill.skill_id == chat_session.active_skill_id:
+                if not self._skill_has_step(active_skill, step_result.next_step_id):
+                    self.events.record(
+                        tenant_id,
+                        chat_session.id,
+                        "step_agent_result_repaired",
+                        {
+                            "mode": "invalid_next_step_ignored",
+                            "active_skill_id": chat_session.active_skill_id,
+                            "active_step_id": chat_session.active_step_id,
+                            "invalid_next_step_id": step_result.next_step_id,
+                        },
+                    )
+                    step_result.next_step_id = None
+                    return
             previous_step = chat_session.active_step_id
             chat_session.active_step_id = step_result.next_step_id
             if previous_step != step_result.next_step_id:
@@ -1685,6 +1704,11 @@ class AgentLoop:
                         "to_step_id": step_result.next_step_id,
                     },
                 )
+
+    def _skill_has_step(self, skill: Skill, step_id: str | None) -> bool:
+        if not step_id:
+            return False
+        return any(step.get("step_id") == step_id for step in self._skill_steps(skill))
 
     def _advance_past_satisfied_collection_steps(
         self, tenant_id: str, chat_session: ChatSession, skill: Skill | None

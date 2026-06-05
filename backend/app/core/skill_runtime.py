@@ -6,6 +6,7 @@ from app.session.session_schema import RouterDecision
 
 class SkillRuntime:
     def apply_decision(self, session: ChatSession, decision: RouterDecision) -> ChatSession:
+        claimed_pending_task = self._claim_pending_task(session, decision)
         self._append_pending_tasks(session, decision)
         current_frame = {
             "skill_id": session.active_skill_id,
@@ -68,7 +69,7 @@ class SkillRuntime:
                 session.skill_stack_json, decision.target_skill_id
             )
             current_skill_id = current_frame["skill_id"]
-            if current_skill_id and current_skill_id != decision.target_skill_id:
+            if current_skill_id and current_skill_id != decision.target_skill_id and not claimed_pending_task:
                 stack = _without_skill(stack, str(current_skill_id))
                 stack.append(current_frame)
             session.skill_stack_json = stack
@@ -122,6 +123,62 @@ class SkillRuntime:
             )
         session.pending_tasks_json = []
         return None
+
+    def _claim_pending_task(self, session: ChatSession, decision: RouterDecision) -> bool:
+        if decision.decision not in {
+            "start_skill",
+            "continue_current_skill",
+            "jump_within_current_skill",
+            "suspend_current_and_start_new_skill",
+        }:
+            return False
+        if not decision.target_skill_id:
+            return False
+        tasks = list(session.pending_tasks_json or [])
+        candidates: list[tuple[int, dict]] = [
+            (index, task)
+            for index, task in enumerate(tasks)
+            if isinstance(task, dict) and task.get("target_skill_id") == decision.target_skill_id
+        ]
+        if not candidates:
+            return False
+
+        claimed_index: int | None = None
+        claimed_task: dict | None = None
+        if len(candidates) == 1:
+            claimed_index, claimed_task = candidates[0]
+        else:
+            compatible = [
+                (index, task)
+                for index, task in candidates
+                if _slot_hints_compatible(
+                    task.get("slot_hints") if isinstance(task.get("slot_hints"), dict) else {},
+                    decision.slot_hints or {},
+                )
+            ]
+            if len(compatible) == 1:
+                claimed_index, claimed_task = compatible[0]
+        if claimed_index is None or claimed_task is None:
+            return False
+
+        kept: list[dict] = []
+        for index, task in enumerate(tasks):
+            if index == claimed_index:
+                continue
+            if isinstance(task, dict):
+                kept.append(task)
+        task_slot_hints = (
+            claimed_task.get("slot_hints") if isinstance(claimed_task.get("slot_hints"), dict) else {}
+        )
+        if task_slot_hints:
+            merged_hints = {**dict(task_slot_hints), **dict(decision.slot_hints or {})}
+            decision.slot_hints = merged_hints
+        if not decision.source_message:
+            decision.source_message = claimed_task.get("source_message")
+        if not decision.user_intent:
+            decision.user_intent = claimed_task.get("user_intent")
+        session.pending_tasks_json = kept
+        return True
 
     def _append_pending_tasks(self, session: ChatSession, decision: RouterDecision) -> None:
         if not decision.pending_tasks:
@@ -200,3 +257,10 @@ def _frame_with_slot_hints(frame: dict, slot_hints: dict | None) -> dict:
     next_frame = dict(frame)
     next_frame["slots"] = {**(next_frame.get("slots") or {}), **dict(slot_hints)}
     return next_frame
+
+
+def _slot_hints_compatible(left: dict, right: dict) -> bool:
+    for key, value in left.items():
+        if key in right and right[key] != value:
+            return False
+    return True
