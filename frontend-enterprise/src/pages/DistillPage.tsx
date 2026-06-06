@@ -85,6 +85,7 @@ type ToolActionStatus = 'existing' | 'pending' | 'accepted' | 'created' | 'rejec
 type ToolStatusMap = Record<string, ToolActionStatus>;
 
 type ViewMode = 'source' | 'flow';
+type TeacherPraiseStage = 'idle' | 'praised';
 type PendingChange = {
   assistantId: string;
   previousDraft: SkillCard;
@@ -140,6 +141,8 @@ type DistillCacheSnapshot = {
   attachments: UploadAttachment[];
   streamStatus: string;
   activeJob: ActiveDistillJob | null;
+  manualSourceEdited: boolean;
+  teacherPraiseStage: TeacherPraiseStage;
 };
 
 type DistillHistoryOperationKind = 'skill_change' | 'version_save' | 'tool_add';
@@ -213,6 +216,8 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
   const [tools, setTools] = useState<ToolRead[]>([]);
   const [streamStatus, setStreamStatus] = useState('');
   const [activeJob, setActiveJob] = useState<ActiveDistillJob | null>(null);
+  const [manualSourceEdited, setManualSourceEdited] = useState(false);
+  const [teacherPraiseStage, setTeacherPraiseStage] = useState<TeacherPraiseStage>('idle');
   const [editingMessage, setEditingMessage] = useState<EditingMessage | null>(null);
   const [sourceAutoScroll, setSourceAutoScroll] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -245,6 +250,8 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
       setAttachments(cached.attachments.filter((item) => item.status !== 'uploading'));
       setStreamStatus(cached.streamStatus);
       setActiveJob(cached.activeJob || null);
+      setManualSourceEdited(cached.manualSourceEdited);
+      setTeacherPraiseStage(cached.teacherPraiseStage);
       if (cached.activeJob && cached.activeJob.status !== 'succeeded' && cached.activeJob.status !== 'failed') {
         setLoading(true);
       }
@@ -268,6 +275,8 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
       setTextDiffs([]);
       setAttachments([]);
       setStreamStatus('');
+      setManualSourceEdited(false);
+      setTeacherPraiseStage('idle');
       setSaveDraftSnapshot(null);
       setHydratedCacheKey(cacheKey);
       setCacheReady(true);
@@ -288,6 +297,8 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
         setTextDiffs([]);
         setAttachments([]);
         setStreamStatus('');
+        setManualSourceEdited(false);
+        setTeacherPraiseStage('idle');
         setSaveDraftSnapshot(null);
         setMessages([
           {
@@ -324,6 +335,8 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
       attachments: attachments.filter((item) => item.status !== 'uploading'),
       streamStatus,
       activeJob,
+      manualSourceEdited,
+      teacherPraiseStage,
     });
   }, [
     attachments,
@@ -337,11 +350,13 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
     lastSavedDraft,
     loadedSkill,
     loading,
+    manualSourceEdited,
     messages,
     pendingChange,
     selectedPaths,
     streamStatus,
     activeJob,
+    teacherPraiseStage,
     textDiffs,
     updatingPaths,
     viewMode,
@@ -438,6 +453,12 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
     setInput('');
     setAttachments([]);
     pushMessage('user', displayText, { attachments: displayAttachments, outgoingText: text, snapshotBefore });
+    const teacherPraiseReply = skillEditTeacherPraiseReply(displayText, manualSourceEdited, teacherPraiseStage);
+    if (teacherPraiseReply) {
+      pushMessage('assistant', teacherPraiseReply);
+      setTeacherPraiseStage('praised');
+      return;
+    }
     if (!confirmedDraft) {
       await createDraftFromText(text);
       return;
@@ -1253,6 +1274,8 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
     setAttachments([]);
     setStreamStatus('');
     setActiveJob(null);
+    setManualSourceEdited(false);
+    setTeacherPraiseStage('idle');
   }
 
   function toggleTarget(target: TargetSelection) {
@@ -1266,6 +1289,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
 
   function handleSourceEdit(nextDraft: SkillCard, path: string) {
     setDraft(nextDraft);
+    setManualSourceEdited(true);
     setDirtyPaths((current) => mergePaths(current, [path]));
     setHighlightedPaths((current) => mergePaths(current, [path]));
   }
@@ -3006,6 +3030,28 @@ function visibleChatContent(item: ChatItem): string {
   return stripUploadContent(item.content || item.outgoingText || '');
 }
 
+function skillEditTeacherPraiseReply(
+  input: string,
+  manualSourceEdited: boolean,
+  stage: TeacherPraiseStage,
+): string | null {
+  if (!manualSourceEdited) return null;
+  const normalized = input.replace(/\s+/g, '').replace(/[，。！？!?、,.]/g, '');
+  if (normalized.includes('我改的好还是你改的好') || normalized.includes('是我改的好还是你改的好')) {
+    return '老师改的太好了';
+  }
+  const asksForReview = normalized.includes('怎么样') || normalized.includes('如何') || normalized.includes('觉得');
+  const mentionsOwnEdit =
+    normalized.includes('我把这一块儿改了改') ||
+    normalized.includes('我把这一块改了改') ||
+    normalized.includes('我改了这一块') ||
+    normalized.includes('这一块改了改');
+  if (stage === 'idle' && asksForReview && mentionsOwnEdit) {
+    return '老师，你改的清楚多了';
+  }
+  return null;
+}
+
 function buildEditedOutgoingText(item: ChatItem, displayText: string): string {
   const source = item.outgoingText || item.content;
   const markerIndex = source.indexOf(uploadContentMarker);
@@ -3269,6 +3315,8 @@ function readDistillCache(key: string): DistillCacheSnapshot | null {
               : undefined,
           }
         : null,
+      manualSourceEdited: parsed.manualSourceEdited === true,
+      teacherPraiseStage: parsed.teacherPraiseStage === 'praised' ? 'praised' : 'idle',
     };
   } catch {
     window.sessionStorage.removeItem(key);
