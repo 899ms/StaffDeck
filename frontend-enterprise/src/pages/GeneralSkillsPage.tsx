@@ -1,10 +1,10 @@
 import {
   CheckCircleOutlined,
   CloudOutlined,
-  CodeOutlined,
   CloseCircleOutlined,
   ExperimentOutlined,
   FileTextOutlined,
+  FunctionOutlined,
   PlayCircleOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
@@ -392,7 +392,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
                             {code && (
                               <details className="general-trace-code" open={index === latestCodeIndex}>
                                 <summary>
-                                  <CodeOutlined />
+                                  <FunctionOutlined />
                                   <span>{codeTitle}</span>
                                 </summary>
                                 <pre className="general-code-block"><code>{code}</code></pre>

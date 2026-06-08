@@ -5,6 +5,7 @@ import {
   DislikeOutlined,
   DownOutlined,
   EditOutlined,
+  FunctionOutlined,
   LikeOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
@@ -1252,7 +1253,7 @@ export default function ChatWindowPage() {
                                       {line.detail && <span className="turn-trace-detail">{line.detail}</span>}
                                       {line.code && (
                                         <details className="turn-trace-code-wrap" open>
-                                          <summary>查看代码</summary>
+                                          <summary><FunctionOutlined />查看代码</summary>
                                           <pre className="turn-trace-code">
                                             <code data-language={line.language || undefined}>{line.code}</code>
                                           </pre>

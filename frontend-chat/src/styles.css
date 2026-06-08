@@ -726,6 +726,7 @@ textarea,
 .turn-trace-code-wrap > summary {
   display: flex;
   align-items: center;
+  gap: 8px;
   min-height: 34px;
   padding: 8px 12px;
   color: var(--muted);
