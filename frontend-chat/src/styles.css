@@ -809,16 +809,17 @@ textarea,
   background: linear-gradient(
     90deg,
     transparent 0%,
-    transparent 34%,
-    rgba(31, 31, 31, 0.92) 48%,
-    transparent 66%,
+    rgba(126, 139, 134, 0.04) 28%,
+    rgba(88, 101, 95, 0.42) 50%,
+    rgba(126, 139, 134, 0.04) 72%,
     transparent 100%
   );
   background-repeat: no-repeat;
-  background-size: 58% 100%;
+  background-size: 150% 100%;
   -webkit-background-clip: text;
   background-clip: text;
   animation: trace-text-flow 3s linear infinite;
+  opacity: 0.72;
   pointer-events: none;
 }
 
@@ -925,16 +926,17 @@ textarea,
   background: linear-gradient(
     90deg,
     transparent 0%,
-    transparent 34%,
-    rgba(31, 31, 31, 0.92) 48%,
-    transparent 66%,
+    rgba(126, 139, 134, 0.04) 28%,
+    rgba(88, 101, 95, 0.42) 50%,
+    rgba(126, 139, 134, 0.04) 72%,
     transparent 100%
   );
   background-repeat: no-repeat;
-  background-size: 58% 100%;
+  background-size: 150% 100%;
   -webkit-background-clip: text;
   background-clip: text;
   animation: trace-text-flow 3s linear infinite;
+  opacity: 0.72;
   pointer-events: none;
 }
 
@@ -946,13 +948,13 @@ textarea,
 
 @keyframes trace-text-flow {
   0% {
-    background-position: -95% 0;
+    background-position: -180% 0;
   }
   33.333% {
-    background-position: 195% 0;
+    background-position: 180% 0;
   }
   100% {
-    background-position: 195% 0;
+    background-position: 180% 0;
   }
 }
 
