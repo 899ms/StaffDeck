@@ -10,6 +10,7 @@
   --surface-subtle: #fbfaf6;
   --border: #ded7cc;
   --border-strong: #cfc5b7;
+  --line: #e7dfd3;
   --muted: #6d726e;
   --muted-soft: #9a9b95;
   --accent: #0f766e;
@@ -49,31 +50,32 @@
 }
 
 :root[data-theme='dark'] {
-  --background: #111315;
-  --foreground: #e8e2d8;
-  --surface: #181b1a;
-  --surface-muted: #222725;
-  --surface-subtle: #151817;
-  --border: #303634;
-  --border-strong: #46504b;
-  --muted: #a7aaa5;
-  --muted-soft: #7f8581;
-  --accent: #48c7b0;
-  --accent-soft: rgba(72, 199, 176, 0.14);
-  --accent-foreground: #061312;
+  --background: #101310;
+  --foreground: #f0ebe1;
+  --surface: #191d19;
+  --surface-muted: #252b26;
+  --surface-subtle: #141713;
+  --border: rgba(181, 171, 150, 0.2);
+  --border-strong: rgba(204, 193, 168, 0.38);
+  --line: rgba(181, 171, 150, 0.18);
+  --muted: #aaa69c;
+  --muted-soft: #7f837c;
+  --accent: #67d4bb;
+  --accent-soft: rgba(103, 212, 187, 0.14);
+  --accent-foreground: #07110f;
   --danger: #f87171;
   --warning: #f4a261;
-  --success: #56d68f;
+  --success: #6ee7a0;
   --ink-soft: #d4d4d4;
   --copper: #d19a66;
-  --olive: #9fbd72;
-  --shadow-float: 0 20px 54px rgba(0, 0, 0, 0.28);
-  --shadow-soft: 0 10px 30px rgba(0, 0, 0, 0.2);
-  --page-gradient-a: rgba(72, 199, 176, 0.05);
-  --page-gradient-top: #141715;
-  --page-gradient-bottom: #0f1110;
-  --header-bg: rgba(20, 23, 21, 0.86);
-  --panel-bg: rgba(22, 25, 23, 0.86);
+  --olive: #a4bc77;
+  --shadow-float: 0 26px 72px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(238, 230, 211, 0.035);
+  --shadow-soft: 0 14px 42px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  --page-gradient-a: rgba(103, 212, 187, 0.07);
+  --page-gradient-top: #171a16;
+  --page-gradient-bottom: #0c0f0c;
+  --header-bg: rgba(18, 21, 18, 0.86);
+  --panel-bg: rgba(18, 21, 18, 0.84);
   --code-bg: #1e1e1e;
   --code-fg: #d4d4d4;
   --code-border: #333333;
@@ -105,6 +107,7 @@ body {
   color: var(--foreground);
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
+  transition: background-color 260ms ease, color 260ms ease;
 }
 
 button,
@@ -119,11 +122,19 @@ input,
 textarea,
 [role="button"] {
   transition:
-    background-color 140ms ease,
-    border-color 140ms ease,
-    color 140ms ease,
-    box-shadow 140ms ease,
-    opacity 140ms ease;
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease,
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+
+:root.theme-switching *,
+:root.theme-switching *::before,
+:root.theme-switching *::after {
+  transition-duration: 260ms !important;
+  transition-timing-function: cubic-bezier(0.2, 0.72, 0.22, 1) !important;
 }
 
 .login-page {
@@ -477,6 +488,8 @@ textarea,
   border: 1px solid var(--border);
   border-radius: 10px;
   background: color-mix(in srgb, var(--surface) 72%, transparent);
+  overflow: hidden;
+  transform: translateZ(0);
 }
 
 .theme-toggle-button:hover,
@@ -484,6 +497,75 @@ textarea,
   color: var(--foreground) !important;
   border-color: var(--border-strong) !important;
   background: var(--surface-muted) !important;
+  transform: translateY(-1px) scale(1.035);
+}
+
+.theme-toggle-button:active,
+.ant-btn.theme-toggle-button:active {
+  transform: translateY(0) scale(0.965);
+}
+
+.theme-toggle-button::after,
+.ant-btn.theme-toggle-button::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  opacity: 0;
+  background:
+    linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, 0.32) 46%, transparent 68%);
+  transform: translateX(-120%);
+  pointer-events: none;
+}
+
+.theme-toggle-button:hover::after,
+.ant-btn.theme-toggle-button:hover::after {
+  opacity: 1;
+  animation: theme-toggle-sheen 820ms cubic-bezier(0.22, 0.72, 0.16, 1) both;
+}
+
+.theme-toggle-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 1em;
+  height: 1em;
+  transform-origin: center;
+  animation: theme-icon-enter 300ms cubic-bezier(0.2, 0.8, 0.22, 1) both;
+}
+
+:root[data-theme='dark'] .theme-toggle-button,
+:root[data-theme='dark'] .ant-btn.theme-toggle-button {
+  color: #b6b9b0;
+  background: rgba(30, 35, 31, 0.86);
+  border-color: rgba(181, 171, 150, 0.26);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 8px 20px rgba(0, 0, 0, 0.24);
+}
+
+:root[data-theme='dark'] .theme-toggle-button:hover,
+:root[data-theme='dark'] .ant-btn.theme-toggle-button:hover {
+  color: var(--foreground) !important;
+  background: rgba(43, 50, 44, 0.94) !important;
+  border-color: rgba(204, 193, 168, 0.4) !important;
+}
+
+@keyframes theme-icon-enter {
+  from {
+    opacity: 0;
+    transform: rotate(-160deg) scale(0.72);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(0deg) scale(1);
+  }
+}
+
+@keyframes theme-toggle-sheen {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(120%);
+  }
 }
 
 .chat-messages {
@@ -1281,8 +1363,9 @@ textarea,
 .code-token.boolean { color: var(--code-boolean); }
 
 :root[data-theme='dark'] .message-row.user .bubble {
-  background: #232725;
-  border-color: rgba(70, 80, 75, 0.8);
+  background: linear-gradient(180deg, rgba(39, 44, 40, 0.98), rgba(33, 38, 34, 0.98));
+  border-color: rgba(181, 171, 150, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), 0 10px 28px rgba(0, 0, 0, 0.2);
 }
 
 :root[data-theme='dark'] .message-row.assistant .bubble,
@@ -1290,13 +1373,73 @@ textarea,
 :root[data-theme='dark'] .turn-trace-code-wrap,
 :root[data-theme='dark'] .login-shell,
 :root[data-theme='dark'] .session-card {
-  background: #181b1a;
+  background:
+    linear-gradient(180deg, rgba(28, 32, 28, 0.98), rgba(20, 23, 20, 0.98)),
+    var(--surface);
   border-color: var(--border);
+  box-shadow: var(--shadow-soft);
 }
 
 :root[data-theme='dark'] .turn-trace-line.tool {
   background: rgba(72, 199, 176, 0.12);
   border-color: rgba(72, 199, 176, 0.24);
+}
+
+:root[data-theme='dark'] .chat-layout {
+  background:
+    linear-gradient(90deg, rgba(240, 235, 225, 0.028) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(240, 235, 225, 0.02) 1px, transparent 1px),
+    linear-gradient(180deg, #151813 0%, var(--background) 52%, #0c0f0c 100%);
+  background-size: 30px 30px, 30px 30px, auto;
+}
+
+:root[data-theme='dark'] .session-pane,
+:root[data-theme='dark'] .chat-header,
+:root[data-theme='dark'] .chat-input {
+  background: rgba(16, 19, 16, 0.86);
+  border-color: var(--border);
+}
+
+:root[data-theme='dark'] .session-card:hover,
+:root[data-theme='dark'] .session-card.active {
+  background: rgba(103, 212, 187, 0.11);
+  border-color: rgba(103, 212, 187, 0.28);
+}
+
+:root[data-theme='dark'] .composer-v2,
+:root[data-theme='dark'] .chat-empty-state {
+  background:
+    linear-gradient(180deg, rgba(27, 31, 27, 0.92), rgba(19, 22, 19, 0.96)),
+    var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow-soft);
+}
+
+:root[data-theme='dark'] .assistant-trace {
+  background:
+    linear-gradient(180deg, rgba(25, 29, 25, 0.94), rgba(17, 20, 17, 0.96)),
+    var(--surface-subtle);
+}
+
+:root[data-theme='dark'] .ant-input,
+:root[data-theme='dark'] .ant-input-password,
+:root[data-theme='dark'] .ant-modal-content,
+:root[data-theme='dark'] .ant-dropdown-menu {
+  color: var(--foreground);
+  background: var(--surface) !important;
+  border-color: var(--border) !important;
+}
+
+:root[data-theme='dark'] .icon-button:hover,
+:root[data-theme='dark'] .ant-btn.icon-button:hover,
+:root[data-theme='dark'] .session-action:hover {
+  color: var(--foreground) !important;
+  background: var(--surface-muted) !important;
+  border-color: var(--border-strong) !important;
+}
+
+:root[data-theme='dark'] .brand-mark {
+  background: linear-gradient(145deg, #27302b, #1a8c7d);
 }
 
 @media (max-width: 860px) {
