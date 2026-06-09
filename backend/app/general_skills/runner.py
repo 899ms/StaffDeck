@@ -88,7 +88,14 @@ class GeneralSkillRunner:
         max_attempts = max(1, min(max_attempts, GENERAL_SKILL_MAX_ATTEMPTS))
         _emit(trace, {"phase": "skill_loaded", "message": f"已加载通用技能 {skill.name}", "slug": skill.slug}, event_sink)
         try:
-            plan = self._generate_plan(skill, query, model_config, trace, event_sink)
+            plan, planning_attempts = self._generate_plan_with_reflection(
+                skill,
+                query,
+                model_config,
+                trace,
+                event_sink,
+                max_attempts,
+            )
         except LLMError as exc:
             _emit(trace, {"phase": "plan_failed", "message": "模型生成 Python runner 失败", "error": str(exc)}, event_sink)
             return GeneralSkillRunResponse(
@@ -101,7 +108,7 @@ class GeneralSkillRunner:
                 reply="抱歉，当前通用技能执行代码生成失败，暂时无法完成这次运行。",
             )
 
-        attempts: list[dict[str, Any]] = []
+        attempts: list[dict[str, Any]] = planning_attempts
         stdout = ""
         stderr = ""
         structured_result: dict[str, Any] = {}
@@ -256,6 +263,80 @@ class GeneralSkillRunner:
             event_sink,
         )
         return plan
+
+    def _generate_plan_with_reflection(
+        self,
+        skill: GeneralSkill,
+        query: str,
+        model_config: ModelConfig,
+        trace: list[dict[str, Any]],
+        event_sink: TraceSink | None,
+        max_attempts: int,
+    ) -> tuple[GeneralSkillExecutionPlan, list[dict[str, Any]]]:
+        planning_failures: list[dict[str, Any]] = []
+        last_error: LLMError | None = None
+        for plan_attempt in range(1, max_attempts + 1):
+            try:
+                if plan_attempt == 1:
+                    return self._generate_plan(skill, query, model_config, trace, event_sink), planning_failures
+                return (
+                    self._repair_plan(
+                        skill,
+                        query,
+                        model_config,
+                        trace,
+                        planning_failures,
+                        event_sink,
+                        plan_attempt,
+                    ),
+                    planning_failures,
+                )
+            except LLMError as exc:
+                last_error = exc
+                failure = {
+                    "attempt": f"planning-{plan_attempt}",
+                    "code": "",
+                    "stdout": "",
+                    "stderr": str(exc),
+                    "structured_result": {
+                        "success": False,
+                        "error": "plan_generation_failed",
+                        "message": str(exc),
+                        "retryable": True,
+                    },
+                    "execution_review": {
+                        "result_sufficient": False,
+                        "needs_retry": plan_attempt < max_attempts,
+                        "terminal": False,
+                        "reason": "模型未能生成可执行 runner 计划，需要重新输出合法 JSON 和完整 Python 代码。",
+                        "repair_hint": "保留原始 skill 与 query，重新输出包含 code、rationale、expected_output 的合法 JSON。",
+                    },
+                }
+                planning_failures.append(failure)
+                _emit(
+                    trace,
+                    {
+                        "phase": "plan_failed",
+                        "message": f"第 {plan_attempt} 次 Python runner 计划生成失败",
+                        "attempt": plan_attempt,
+                        "error": str(exc),
+                    },
+                    event_sink,
+                )
+                if plan_attempt >= max_attempts:
+                    break
+                _emit(
+                    trace,
+                    {
+                        "phase": "reflection_retrying",
+                        "message": f"第 {plan_attempt} 次计划生成失败，模型正在反思并重新输出代码",
+                        "attempt": plan_attempt,
+                        "structured_result": failure["structured_result"],
+                        "review": failure["execution_review"],
+                    },
+                    event_sink,
+                )
+        raise LLMError(str(last_error) if last_error else "General skill runner plan generation failed")
 
     def _repair_plan(
         self,

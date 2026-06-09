@@ -6,7 +6,7 @@ from app.core import AgentLoop
 from app.db.models import GeneralSkill, ModelConfig, Tenant, User
 from app.general_skills.runner import GeneralSkillRunner
 from app.general_skills.schema import GeneralSkillImportRequest
-from app.llm import LLMClient
+from app.llm import LLMClient, LLMError
 from app.security.auth import hash_password
 from app.security.encryption import encrypt_secret
 from app.session.session_schema import ChatTurnRequest
@@ -178,6 +178,64 @@ def test_general_skill_runner_repairs_failed_code(monkeypatch) -> None:
     assert calls == ["runner", "repair", "reply"]
     assert any(item["phase"] == "reflection_retrying" for item in response.execution_trace)
     assert any(item["phase"] == "stdout_chunk" and "first_fail" in item["text"] for item in events)
+
+
+def test_general_skill_runner_reflects_failed_initial_plan(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_init(self, model_config):  # noqa: ANN001
+        return None
+
+    def fake_generate_json(self, system_prompt, payload):  # noqa: ANN001
+        prompt_text = str(system_prompt)
+        if "代码修复器" in prompt_text:
+            calls.append("repair")
+            assert payload["previous_attempts"][0]["structured_result"]["error"] == "plan_generation_failed"
+            return {
+                "code": (
+                    "import json\n"
+                    "payload=json.loads(input())\n"
+                    "print(json.dumps({'success': True, 'city': '廊坊', 'weather': '多云', 'query': payload['query']}, ensure_ascii=False))\n"
+                ),
+                "rationale": "重新输出合法 runner JSON",
+            }
+        if "通用技能执行器" in prompt_text:
+            calls.append("runner_failed")
+            raise LLMError("Model did not return valid JSON after retry")
+        if "通用技能结果回复器" in prompt_text:
+            calls.append("reply")
+            assert payload["structured_result"]["success"] is True
+            return {"reply": "廊坊今天多云。"}
+        raise AssertionError("unexpected prompt")
+
+    monkeypatch.setattr(LLMClient, "__init__", fake_init)
+    monkeypatch.setattr(LLMClient, "generate_json", fake_generate_json)
+
+    skill = GeneralSkill(
+        tenant_id="tenant_demo",
+        slug="weather-zh",
+        name="中国城市天气",
+        description="中国城市天气查询工具",
+        homepage="https://www.weather.com.cn/",
+        skill_markdown=WEATHER_SKILL_MD,
+        status="published",
+    )
+    model_config = ModelConfig(
+        tenant_id="tenant_demo",
+        name="Fake model",
+        api_key_encrypted=encrypt_secret("test-key"),
+        model="fake",
+        is_default=True,
+        enabled=True,
+    )
+
+    response = GeneralSkillRunner().run(skill, "廊坊天气", model_config, max_attempts=2)
+
+    assert response.reply == "廊坊今天多云。"
+    assert response.structured_result["success"] is True
+    assert calls == ["runner_failed", "repair", "reply"]
+    assert any(item["phase"] == "plan_failed" for item in response.execution_trace)
+    assert any(item["phase"] == "reflection_retrying" for item in response.execution_trace)
 
 
 def test_general_skill_runner_stops_on_non_retryable_failure(monkeypatch) -> None:

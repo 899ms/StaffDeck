@@ -78,15 +78,19 @@ class LLMClient:
         try:
             return json.loads(_extract_json(text))
         except json.JSONDecodeError:
-            retry_payload = {
-                "previous_output": text,
-                "instruction": "请将上一次输出修正为合法 JSON，不要输出任何解释。",
+            retry_payload = copy.deepcopy(user_payload)
+            retry_payload["_json_repair"] = {
+                "previous_output": _preview(text),
+                "instruction": "请基于原始任务上下文，将上一次输出修正为合法 JSON，不要输出任何解释。",
             }
             retry_text = self.generate_text(system_prompt, retry_payload)
             try:
                 return json.loads(_extract_json(retry_text))
             except json.JSONDecodeError as exc:
-                raise LLMError("Model did not return valid JSON") from exc
+                raise LLMError(
+                    "Model did not return valid JSON after retry; "
+                    f"first_output_preview={_preview(text)!r}; retry_output_preview={_preview(retry_text)!r}"
+                ) from exc
 
 
 def _extract_json(text: str) -> str:
@@ -100,6 +104,12 @@ def _extract_json(text: str) -> str:
     if start >= 0 and end >= start:
         return stripped[start : end + 1]
     return stripped
+
+
+def _preview(text: str, limit: int = 1200) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n...<truncated>"
 
 
 def _project_context_messages(user_payload: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any]]:

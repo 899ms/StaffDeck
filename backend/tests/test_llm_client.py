@@ -102,3 +102,20 @@ def test_generate_json_retries_invalid_json(monkeypatch):
     monkeypatch.setattr(client, "generate_text", fake_generate_text)
 
     assert client.generate_json("prompt", {}) == {"ok": True}
+
+
+def test_generate_json_retry_keeps_original_payload(monkeypatch):
+    client = object.__new__(LLMClient)
+    payloads = []
+    calls = iter(["not json", '{"ok": true}'])
+
+    def fake_generate_text(_system_prompt, payload):
+        payloads.append(payload)
+        return next(calls)
+
+    monkeypatch.setattr(client, "generate_text", fake_generate_text)
+
+    assert client.generate_json("prompt", {"query": "廊坊天气", "skill": {"slug": "weather-zh"}}) == {"ok": True}
+    assert payloads[1]["query"] == "廊坊天气"
+    assert payloads[1]["skill"]["slug"] == "weather-zh"
+    assert payloads[1]["_json_repair"]["previous_output"] == "not json"
