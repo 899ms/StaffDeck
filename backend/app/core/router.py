@@ -10,6 +10,9 @@ from app.session.session_schema import RouterDecision, RouterDecisionValue
 
 
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "llm" / "prompts" / "router_prompt.md"
+PENDING_CONTINUATION_PROMPT_PATH = (
+    Path(__file__).resolve().parents[1] / "llm" / "prompts" / "pending_continuation_router_prompt.md"
+)
 ALLOWED_DECISIONS = set(get_args(RouterDecisionValue))
 
 
@@ -60,6 +63,67 @@ class Router:
                 raise
             raise LLMError(f"Router returned invalid JSON schema: {exc}") from exc
         return self._normalize_decision(decision, session, available_skills)
+
+    def decide_pending_continuation(
+        self,
+        message: str,
+        session: ChatSession,
+        available_skills: list[Skill],
+        model_config: ModelConfig,
+        conversation_context: dict[str, object] | None = None,
+        memory_context: list[dict[str, object]] | None = None,
+        completed_reply: str | None = None,
+    ) -> RouterDecision:
+        payload = {
+            "user_message": message,
+            "completed_reply": completed_reply or "",
+            "conversation_context": conversation_context or {},
+            "memory_context": memory_context or [],
+            "current_session": public_session(session).model_dump(),
+            "available_skills": [
+                {
+                    "skill_id": skill.skill_id,
+                    "name": skill.name,
+                    "description": skill.description,
+                    "business_domain": skill.content_json.get("business_domain"),
+                    "trigger_intents": skill.content_json.get("trigger_intents", []),
+                    "required_info": skill.content_json.get("required_info", []),
+                    "steps": [
+                        {
+                            "step_id": step.get("step_id"),
+                            "name": step.get("name"),
+                            "instruction": step.get("instruction"),
+                            "expected_user_info": step.get("expected_user_info", []),
+                            "allowed_actions": step.get("allowed_actions", []),
+                        }
+                        for step in skill.content_json.get("steps", [])
+                        if isinstance(step, dict)
+                    ],
+                }
+                for skill in available_skills
+            ],
+        }
+        try:
+            raw = LLMClient(model_config).generate_json(
+                PENDING_CONTINUATION_PROMPT_PATH.read_text(encoding="utf-8"),
+                payload,
+            )
+            raw = self._coerce_raw_decision(raw)
+            decision = RouterDecision.model_validate(raw)
+        except Exception as exc:
+            if isinstance(exc, LLMError):
+                raise
+            raise LLMError(f"Pending continuation router returned invalid JSON schema: {exc}") from exc
+        decision = self._normalize_decision(decision, session, available_skills)
+        if decision.decision != "switch_to_pending":
+            return RouterDecision(
+                decision="answer_only",
+                confidence=decision.confidence,
+                user_intent=decision.user_intent,
+                reason=decision.reason or "Pending continuation router chose not to continue a pending task",
+                source_message=decision.source_message,
+            )
+        return decision
 
     def _coerce_raw_decision(self, raw: object) -> object:
         if not isinstance(raw, dict):

@@ -42,6 +42,7 @@
   - 不得把“请稍候/正在处理/稍后反馈”作为完成状态；需要继续执行时必须输出 tool_call，需要结束时必须给出可见业务结果。
 - 不要依赖任何平台内置业务规则；所有字段、步骤、工具选择都必须来自 active_skill 和 available_tools。
 - 如果决定调用工具，tool_call.name 必须来自 available_tools，arguments 必须符合对应 input_schema。
+- available_tools 可能包含 `general_skill.<slug>` 形式的通用技能能力。它不是普通 HTTP 工具，而是系统维护的通用 Skill runner；当当前场景技能目标需要该通用能力辅助完成，且没有更合适的场景工具时，可以像工具一样显式输出对应 tool_call，并在 arguments.query 中写清要交给通用技能处理的自然语言任务。
 
 你只能输出 JSON，不要输出其他内容。
 

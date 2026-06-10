@@ -107,6 +107,55 @@ def test_router_accepts_ordered_pending_tasks(monkeypatch):
     assert decision.pending_tasks[0].target_step_id == "collect_user_name"
 
 
+def test_pending_continuation_router_requires_selected_pending_task(monkeypatch):
+    def fake_init(self, model_config):  # noqa: ANN001
+        return None
+
+    def fake_generate_json(self, system_prompt, payload):  # noqa: ANN001
+        assert "pending task 继续推进路由器" in system_prompt
+        assert payload["current_session"]["pending_tasks"][0]["task_id"] == "task_purchase_a3"
+        return {
+            "decision": "switch_to_pending",
+            "selected_task_id": "task_purchase_a3",
+            "target_skill_id": "purchase",
+            "target_step_id": "collect_user_name",
+            "confidence": 0.91,
+            "user_intent": "继续购买 A3",
+            "reason": "当前任务完成后，用户原始消息包含后续购买 A3。",
+            "source_message": "退完帮我买一个 A3",
+            "slot_hints": {"product_id": "A3", "quantity": 1},
+        }
+
+    monkeypatch.setattr(LLMClient, "__init__", fake_init)
+    monkeypatch.setattr(LLMClient, "generate_json", fake_generate_json)
+
+    decision = Router().decide_pending_continuation(
+        "退完帮我买一个 A3",
+        ChatSession(
+            id="session_test",
+            tenant_id="tenant_demo",
+            pending_tasks_json=[
+                {
+                    "task_id": "task_purchase_a3",
+                    "skill_id": "purchase",
+                    "target_skill_id": "purchase",
+                    "step_id": "collect_user_name",
+                    "target_step_id": "collect_user_name",
+                    "slots": {"product_id": "A3", "quantity": 1},
+                }
+            ],
+        ),
+        [_purchase_skill()],
+        model_config=None,  # type: ignore[arg-type]
+        completed_reply="退款已完成。",
+    )
+
+    assert decision.decision == "switch_to_pending"
+    assert decision.selected_task_id == "task_purchase_a3"
+    assert decision.target_skill_id == "purchase"
+    assert decision.slot_hints["product_id"] == "A3"
+
+
 def test_router_coerces_answer_alias_before_schema_validation(monkeypatch):
     def fake_init(self, model_config):  # noqa: ANN001
         return None
