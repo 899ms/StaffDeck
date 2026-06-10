@@ -228,6 +228,45 @@ textarea,
   gap: 6px;
 }
 
+.sidebar-actions .ant-btn.icon-button {
+  inline-size: var(--sidebar-head-control-size) !important;
+  block-size: var(--sidebar-head-control-size) !important;
+  min-inline-size: var(--sidebar-head-control-size) !important;
+  max-inline-size: var(--sidebar-head-control-size) !important;
+  flex: 0 0 var(--sidebar-head-control-size);
+  display: grid !important;
+  place-items: center !important;
+  padding: 0 !important;
+  line-height: 0 !important;
+  overflow: hidden;
+}
+
+.sidebar-actions .ant-btn.icon-button .ant-btn-icon {
+  width: 100%;
+  height: 100%;
+  display: grid !important;
+  place-items: center !important;
+  line-height: 0 !important;
+}
+
+.sidebar-actions .ant-btn.icon-button .anticon {
+  width: 100%;
+  height: 100%;
+  display: grid !important;
+  place-items: center !important;
+  line-height: 0 !important;
+  color: inherit !important;
+}
+
+.sidebar-actions .ant-btn.icon-button .anticon svg {
+  width: 19px;
+  height: 19px;
+}
+
+.sidebar-actions .sidebar-logout {
+  display: none !important;
+}
+
 .chat-layout.sidebar-collapsed .sidebar-actions,
 .chat-layout.sidebar-collapsed .sidebar-head .ant-space {
   flex-direction: column;
