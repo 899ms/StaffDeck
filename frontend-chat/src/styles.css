@@ -180,6 +180,8 @@ textarea,
 }
 
 .session-pane {
+  --sidebar-head-control-size: 32px;
+  container-type: inline-size;
   min-width: 0;
   height: 100vh;
   padding: 14px 12px;
@@ -199,26 +201,30 @@ textarea,
 }
 
 .sidebar-head {
-  min-height: 48px;
+  width: 100%;
+  min-height: calc(var(--sidebar-head-control-size) + 16px);
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) auto;
+  grid-template-columns: var(--sidebar-head-control-size) minmax(0, 1fr) max-content;
   align-items: center;
   gap: 10px;
   margin-bottom: 4px;
+  box-sizing: border-box;
 }
 
 .chat-layout.sidebar-collapsed .sidebar-head {
   min-height: 0;
-  grid-template-columns: 32px;
+  grid-template-columns: var(--sidebar-head-control-size);
   justify-content: center;
   justify-items: center;
   gap: 8px;
 }
 
 .sidebar-actions {
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
+  flex: 0 0 auto;
   gap: 6px;
 }
 
@@ -234,16 +240,20 @@ textarea,
 
 .brand-block {
   min-width: 0;
+  height: var(--sidebar-head-control-size);
   display: flex;
   align-items: center;
   gap: 10px;
+  overflow: hidden;
 }
 
 .brand-block > div {
   min-width: 0;
+  max-width: 100%;
   display: grid;
   align-content: center;
   gap: 1px;
+  overflow: hidden;
 }
 
 .chat-layout.sidebar-collapsed .brand-block {
@@ -258,9 +268,9 @@ textarea,
 }
 
 .brand-mark {
-  width: 32px;
-  height: 32px;
-  flex: 0 0 32px;
+  width: var(--sidebar-head-control-size);
+  height: var(--sidebar-head-control-size);
+  flex: 0 0 var(--sidebar-head-control-size);
   display: grid;
   place-items: center;
   border-radius: 9px;
@@ -272,17 +282,22 @@ textarea,
 }
 
 .brand-title {
+  min-width: 0;
   color: var(--foreground);
   font-size: 14px;
   font-weight: 760;
-  line-height: 1.15;
+  line-height: 1.05;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .brand-subtitle,
 .header-subtitle {
+  min-width: 0;
   color: var(--muted);
   font-size: 12px;
-  line-height: 1.35;
+  line-height: 1.2;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -290,8 +305,8 @@ textarea,
 
 .icon-button,
 .ant-btn.icon-button {
-  width: 32px;
-  height: 32px;
+  width: var(--sidebar-head-control-size);
+  height: var(--sidebar-head-control-size);
   padding: 0;
   border-radius: 8px;
   display: inline-grid;
@@ -1680,6 +1695,12 @@ textarea,
   .turn-trace-code {
     font-size: 11px;
     line-height: 1.58;
+  }
+}
+
+@container (max-width: 300px) {
+  .sidebar-logout {
+    display: none;
   }
 }
 
