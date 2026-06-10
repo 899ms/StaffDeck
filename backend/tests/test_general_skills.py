@@ -56,7 +56,9 @@ def test_import_general_skill_uses_user_supplied_metadata() -> None:
         assert rows[0].skill_markdown.startswith("# 天气 demo")
 
 
-def test_chat_turn_treats_unmatched_scene_request_as_chat_not_general_skill(monkeypatch) -> None:
+def test_chat_turn_uses_general_skill_after_scene_router_skips_unmatched_scene(
+    monkeypatch,
+) -> None:
     calls: list[str] = []
 
     def fake_init(self, model_config):  # noqa: ANN001
@@ -75,24 +77,31 @@ def test_chat_turn_treats_unmatched_scene_request_as_chat_not_general_skill(monk
                 "reason": "模型错误地假设存在天气流程。",
             }
         if "通用技能选择器" in prompt_text:
-            raise AssertionError("general skill selector should not run after unmatched scene routing")
-        if "通用技能执行器" in prompt_text or "通用技能结果回复器" in prompt_text:
-            raise AssertionError("general skill runner should not run after unmatched scene routing")
+            calls.append("selector")
+            return {
+                "use_general_skill": True,
+                "selected_slug": "weather-zh",
+                "confidence": 0.96,
+                "reason": "用户询问天气。",
+            }
+        if "通用技能执行器" in prompt_text:
+            calls.append("runner")
+            code = (
+                "import json\n"
+                "payload=json.loads(input())\n"
+                "print(json.dumps({'success': True, 'city': '海淀区', 'weather': '晴', 'query': payload['query']}, ensure_ascii=False))\n"
+            )
+            return {"code": code, "rationale": "天气查询 demo"}
+        if "通用技能结果回复器" in prompt_text:
+            calls.append("reply")
+            assert payload["structured_result"]["weather"] == "晴"
+            return {"reply": "海淀区今天晴。"}
         if "企业技能执行助手" in prompt_text:
             raise AssertionError("step agent should not run without an active scene skill")
         raise AssertionError("unexpected JSON prompt")
 
-    def fake_generate_text(self, system_prompt, payload):  # noqa: ANN001
-        calls.append("response")
-        assert payload["active_skill"] is None
-        assert payload["router_decision"]["decision"] == "clarify"
-        assert payload["router_decision"]["target_skill_id"] is None
-        assert payload["tool_result"] is None
-        return "我这里没有天气查询流程，无法为你实时查询天气。"
-
     monkeypatch.setattr(LLMClient, "__init__", fake_init)
     monkeypatch.setattr(LLMClient, "generate_json", fake_generate_json)
-    monkeypatch.setattr(LLMClient, "generate_text", fake_generate_text)
 
     with _test_session() as db:
         _seed_minimal_tenant(db)
@@ -118,10 +127,84 @@ def test_chat_turn_treats_unmatched_scene_request_as_chat_not_general_skill(monk
             )
         )
 
-        assert response.reply == "我这里没有天气查询流程，无法为你实时查询天气。"
-        assert calls == ["router", "response"]
+        assert response.reply == "海淀区今天晴。"
+        assert calls == ["router", "selector", "runner", "reply"]
         assert response.router_decision is not None
         assert response.router_decision.target_skill_id is None
+        events = db.exec(select(AgentEvent).where(AgentEvent.session_id == response.session_id)).all()
+        event_types = {event.event_type for event in events}
+        assert "general_skill_selected" in event_types
+        assert "tool_call_started" not in event_types
+        assert "step_agent_result_created" not in event_types
+
+
+def test_chat_turn_treats_unmatched_scene_as_chat_when_general_skill_not_selected(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_init(self, model_config):  # noqa: ANN001
+        return None
+
+    def fake_generate_json(self, system_prompt, payload):  # noqa: ANN001
+        prompt_text = str(system_prompt)
+        if "企业技能路由器" in prompt_text:
+            calls.append("router")
+            return {
+                "decision": "answer_only",
+                "confidence": 0.95,
+                "user_intent": "普通闲聊",
+                "reason": "用户没有匹配任何业务流程。",
+            }
+        if "通用技能选择器" in prompt_text:
+            calls.append("selector")
+            return {
+                "use_general_skill": False,
+                "selected_slug": None,
+                "confidence": 0.2,
+                "reason": "没有匹配的通用技能。",
+            }
+        if "企业技能执行助手" in prompt_text:
+            raise AssertionError("step agent should not run without an active scene skill")
+        raise AssertionError("unexpected JSON prompt")
+
+    def fake_generate_text(self, system_prompt, payload):  # noqa: ANN001
+        calls.append("response")
+        assert payload["active_skill"] is None
+        assert payload["router_decision"]["decision"] == "answer_only"
+        assert payload["tool_result"] is None
+        return "你好，有什么业务需要我帮忙？"
+
+    monkeypatch.setattr(LLMClient, "__init__", fake_init)
+    monkeypatch.setattr(LLMClient, "generate_json", fake_generate_json)
+    monkeypatch.setattr(LLMClient, "generate_text", fake_generate_text)
+
+    with _test_session() as db:
+        _seed_minimal_tenant(db)
+        db.add(_purchase_scene_skill())
+        db.add(
+            GeneralSkill(
+                tenant_id="tenant_demo",
+                slug="weather-zh",
+                name="中国城市天气",
+                description="中国城市天气查询工具",
+                homepage="https://www.weather.com.cn/",
+                skill_markdown=WEATHER_SKILL_MD,
+                status="published",
+            )
+        )
+        db.commit()
+
+        response = AgentLoop(db).handle_turn(
+            ChatTurnRequest(
+                tenant_id="tenant_demo",
+                user_id="user_demo",
+                message="你好",
+            )
+        )
+
+        assert response.reply == "你好，有什么业务需要我帮忙？"
+        assert calls == ["router", "selector", "response"]
         events = db.exec(select(AgentEvent).where(AgentEvent.session_id == response.session_id)).all()
         event_types = {event.event_type for event in events}
         assert "general_skill_selected" not in event_types

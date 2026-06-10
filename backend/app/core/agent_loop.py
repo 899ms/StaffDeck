@@ -314,7 +314,16 @@ class AgentLoop:
         )
 
     def _scene_router_deferred_to_general(self, router_decision: RouterDecision) -> bool:
-        return False
+        if router_decision.selected_task_id:
+            return False
+        if router_decision.pending_tasks or router_decision.created_tasks or router_decision.task_updates:
+            return False
+        return router_decision.decision in {
+            "answer_only",
+            "clarify",
+            "answer_related_question_then_resume",
+            "answer_chitchat_then_resume",
+        }
 
     def _should_run_step_agent(
         self, router_decision: RouterDecision, active_skill: Skill | None
@@ -687,6 +696,12 @@ class AgentLoop:
             )
             persona_prompt = self._get_persona_prompt(request.tenant_id)
             if not skills:
+                selected_general_skill = self._select_general_skill(request.message, model_config)
+                if selected_general_skill:
+                    yield from self._stream_general_skill_response(
+                        request, chat_session, model_config, selected_general_skill
+                    )
+                    return
                 router_decision = RouterDecision(
                     decision="answer_only",
                     reason="No published scene skills are available; answer as chat.",
@@ -1060,6 +1075,25 @@ class AgentLoop:
         if not model_config:
             raise AgentLoopPreconditionError("missing_model_config", "没有默认模型配置。")
         if not skills:
+            router_decision = RouterDecision(
+                decision="answer_only",
+                reason="No published scene skills are available; try general skills, then answer as chat.",
+            )
+            general_response = self._try_handle_general_skill_after_scene_router(
+                request, chat_session, model_config, router_decision
+            )
+            if general_response:
+                return PreparedTurn(
+                    chat_session=chat_session,
+                    model_config=model_config,
+                    active_skill=None,
+                    router_decision=router_decision,
+                    step_result=StepAgentResult(),
+                    tool_result=None,
+                    memory_context=[],
+                    conversation_context=self._conversation_context(chat_session),
+                    general_response=general_response,
+                )
             return PreparedTurn(
                 chat_session=chat_session,
                 model_config=model_config,
