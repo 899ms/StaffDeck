@@ -38,6 +38,9 @@ export type TraceLineRead = {
   detail?: string | null;
   code?: string | null;
   language?: string | null;
+  output?: string | null;
+  outputLanguage?: string | null;
+  outputTitle?: string | null;
   state: 'running' | 'completed' | 'failed';
   collapsible?: boolean | null;
 };

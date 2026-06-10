@@ -583,6 +583,90 @@ def _fill_skill_context_version(
     return context
 
 
+def _trace_payload_text(value: object) -> str:
+    if value is None or value == "":
+        return ""
+    if isinstance(value, str):
+        try:
+            return json.dumps(json.loads(value), ensure_ascii=False, indent=2)
+        except Exception:
+            return value
+    return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def _trace_payload_language(value: str) -> str:
+    if not value.strip():
+        return "text"
+    try:
+        json.loads(value)
+        return "json"
+    except Exception:
+        return "text"
+
+
+def _general_skill_trace_detail(payload: dict, phase: str) -> str | None:
+    review = payload.get("review") if isinstance(payload.get("review"), dict) else {}
+    if phase.startswith("reflection_"):
+        parts = [
+            str(review.get("reason") or "").strip(),
+            str(review.get("repair_hint") or "").strip(),
+        ]
+        text = " · ".join(part for part in parts if part)
+        return text or None
+    detail = str(payload.get("rationale") or payload.get("text") or "").strip()
+    return detail or None
+
+
+def _general_skill_trace_output(payload: dict, phase: str) -> dict[str, str]:
+    if phase == "stdout_chunk":
+        output = _trace_payload_text(payload.get("stdout_preview") or payload.get("text"))
+        return {
+            "output": output,
+            "outputLanguage": _trace_payload_language(output),
+            "outputTitle": "查看运行输出",
+        } if output else {}
+    if phase == "stderr_chunk":
+        output = _trace_payload_text(payload.get("stderr_preview") or payload.get("text"))
+        return {
+            "output": output,
+            "outputLanguage": _trace_payload_language(output),
+            "outputTitle": "查看错误输出",
+        } if output else {}
+    if phase in {"code_finished", "code_timeout"}:
+        result: dict[str, object] = {}
+        if "return_code" in payload:
+            result["return_code"] = payload.get("return_code")
+        if "structured_result" in payload:
+            result["structured_result"] = payload.get("structured_result")
+        if str(payload.get("stdout_preview") or "").strip():
+            result["stdout"] = payload.get("stdout_preview")
+        if str(payload.get("stderr_preview") or "").strip():
+            result["stderr"] = payload.get("stderr_preview")
+        output = _trace_payload_text(result if result else payload.get("stdout_preview") or payload.get("stderr_preview"))
+        return {
+            "output": output,
+            "outputLanguage": _trace_payload_language(output),
+            "outputTitle": "查看超时结果" if phase == "code_timeout" else "查看执行结果",
+        } if output else {}
+    if phase.startswith("reflection_"):
+        result: dict[str, object] = {}
+        if "structured_result" in payload:
+            result["structured_result"] = payload.get("structured_result")
+        if "review" in payload:
+            result["review"] = payload.get("review")
+        if str(payload.get("stdout_preview") or "").strip():
+            result["stdout"] = payload.get("stdout_preview")
+        if str(payload.get("stderr_preview") or "").strip():
+            result["stderr"] = payload.get("stderr_preview")
+        output = _trace_payload_text(result)
+        return {
+            "output": output,
+            "outputLanguage": _trace_payload_language(output),
+            "outputTitle": "查看校验详情",
+        } if result and output else {}
+    return {}
+
+
 def _ensure_request_tenant(tenant_id: str, current_user: User) -> None:
     if tenant_id != current_user.tenant_id:
         raise HTTPException(status_code=403, detail="Tenant mismatch")
@@ -698,7 +782,8 @@ def _event_trace_line(
     if event.event_type == "general_skill_trace":
         message = str(payload.get("message") or "").strip()
         phase = str(payload.get("phase") or "").strip()
-        detail = str(payload.get("rationale") or payload.get("stdout_preview") or payload.get("stderr_preview") or "").strip()
+        detail = _general_skill_trace_detail(payload, phase)
+        output = _general_skill_trace_output(payload, phase)
         code = str(payload.get("code") or "").strip()
         code_phases = {
             "plan_created",
@@ -713,11 +798,12 @@ def _event_trace_line(
             "id": f"general_skill_trace_{event.id}",
             "kind": "code" if code or phase in code_phases else "decision",
             "text": message or phase or "执行通用技能",
-            "detail": detail[:300] or None,
+            "detail": detail or None,
             "code": code or None,
             "language": "python" if code else None,
             "state": "completed",
-            "collapsible": bool(code),
+            "collapsible": bool(code or output.get("output")),
+            **output,
         }
     if event.event_type == "general_skill_run_finished":
         success = bool(payload.get("success"))

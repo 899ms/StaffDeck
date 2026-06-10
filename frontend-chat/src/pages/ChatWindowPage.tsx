@@ -462,6 +462,10 @@ function formatTracePayload(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
 function tracePayloadLanguage(value: string): string {
   if (!value.trim()) return 'text';
   try {
@@ -470,6 +474,24 @@ function tracePayloadLanguage(value: string): string {
   } catch {
     return 'text';
   }
+}
+
+function generalSkillTraceDetail(data: Record<string, unknown>, phase: string): string | undefined {
+  const review = isPlainRecord(data.review) ? data.review : undefined;
+  if (phase.startsWith('reflection_')) {
+    return [
+      typeof review?.reason === 'string' ? review.reason : '',
+      typeof review?.repair_hint === 'string' ? review.repair_hint : '',
+    ]
+      .filter(Boolean)
+      .join(' · ') || undefined;
+  }
+  const detail = typeof data.rationale === 'string'
+    ? data.rationale
+    : typeof data.text === 'string'
+      ? data.text
+      : undefined;
+  return detail?.trim() || undefined;
 }
 
 function generalSkillTraceOutput(data: Record<string, unknown>, phase: string, accumulatedText?: string): {
@@ -495,6 +517,15 @@ function generalSkillTraceOutput(data: Record<string, unknown>, phase: string, a
       ? formatTracePayload(result)
       : formatTracePayload(data.stdout_preview || data.stderr_preview || data.text);
     return output ? { output, language: tracePayloadLanguage(output), title: phase === 'code_timeout' ? '查看超时结果' : '查看执行结果' } : {};
+  }
+  if (phase.startsWith('reflection_')) {
+    const result: Record<string, unknown> = {};
+    if ('structured_result' in data) result.structured_result = data.structured_result;
+    if ('review' in data) result.review = data.review;
+    if (typeof data.stdout_preview === 'string' && data.stdout_preview.trim()) result.stdout = data.stdout_preview;
+    if (typeof data.stderr_preview === 'string' && data.stderr_preview.trim()) result.stderr = data.stderr_preview;
+    const output = Object.keys(result).length > 0 ? formatTracePayload(result) : '';
+    return output ? { output, language: tracePayloadLanguage(output), title: '查看校验详情' } : {};
   }
   return {};
 }
@@ -707,8 +738,11 @@ export default function ChatWindowPage() {
               detail: line.detail || undefined,
               code: line.code || undefined,
               language: line.language || undefined,
+              output: line.output || undefined,
+              outputLanguage: line.outputLanguage || undefined,
+              outputTitle: line.outputTitle || undefined,
               state: line.state,
-              collapsible: Boolean(line.collapsible || line.code),
+              collapsible: Boolean(line.collapsible || line.code || line.output),
             })),
             startedAt: Date.parse(row.started_at) || Date.now(),
             completedAt: row.completed_at ? Date.parse(row.completed_at) : undefined,
@@ -1004,15 +1038,7 @@ export default function ChatWindowPage() {
           const id = isOutputChunk
             ? `general_skill_trace_${phase}_${attempt || 'current'}`
             : `general_skill_trace_${phase}_${attempt || sequence}`;
-          const rawDetail = typeof item.data.rationale === 'string'
-            ? item.data.rationale
-            : typeof item.data.text === 'string'
-              ? item.data.text
-              : typeof item.data.stdout_preview === 'string'
-                ? item.data.stdout_preview
-                : typeof item.data.stderr_preview === 'string'
-                  ? item.data.stderr_preview
-                  : undefined;
+          const rawDetail = generalSkillTraceDetail(item.data, phase);
           const existing = trace.lines.find((line) => line.id === id);
           const previousOutput = existing?.output || existing?.detail || '';
           const detail = isOutputChunk && previousOutput && rawDetail
