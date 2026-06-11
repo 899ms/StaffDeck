@@ -1,5 +1,7 @@
 from collections.abc import Generator
 import json
+from pathlib import Path
+from urllib.parse import unquote
 
 from sqlalchemy import Engine, inspect, text
 from sqlmodel import Session, SQLModel, create_engine
@@ -7,10 +9,27 @@ from sqlmodel import Session, SQLModel, create_engine
 from app.config import get_settings
 
 
+def _normalize_database_url(url: str) -> str:
+    if not url.startswith("sqlite:///") or url.startswith("sqlite:////") or url == "sqlite:///:memory:":
+        return url
+
+    raw_path = unquote(url.removeprefix("sqlite:///"))
+    if not raw_path or raw_path == ":memory:":
+        return url
+
+    path = Path(raw_path)
+    if path.is_absolute():
+        return url
+
+    backend_dir = Path(__file__).resolve().parents[2]
+    return f"sqlite:///{(backend_dir / path).resolve()}"
+
+
 settings = get_settings()
 
-connect_args = {"check_same_thread": False, "timeout": 30} if settings.database_url.startswith("sqlite") else {}
-engine: Engine = create_engine(settings.database_url, echo=False, connect_args=connect_args)
+database_url = _normalize_database_url(settings.database_url)
+connect_args = {"check_same_thread": False, "timeout": 30} if database_url.startswith("sqlite") else {}
+engine: Engine = create_engine(database_url, echo=False, connect_args=connect_args)
 
 
 def init_db() -> None:
@@ -22,7 +41,7 @@ def init_db() -> None:
 
 
 def _configure_sqlite_runtime() -> None:
-    if not settings.database_url.startswith("sqlite"):
+    if not database_url.startswith("sqlite"):
         return
     with engine.begin() as conn:
         conn.execute(text("PRAGMA journal_mode=WAL"))
@@ -30,7 +49,7 @@ def _configure_sqlite_runtime() -> None:
 
 
 def _migrate_sqlite_skill_schema() -> None:
-    if not settings.database_url.startswith("sqlite"):
+    if not database_url.startswith("sqlite"):
         return
 
     inspector = inspect(engine)
