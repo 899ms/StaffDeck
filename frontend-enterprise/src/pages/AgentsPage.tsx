@@ -19,6 +19,8 @@ import type {
   SkillRead,
 } from '../types';
 
+const ENTERPRISE_AGENT_STORAGE_KEY = 'ultrarag_enterprise_agent_scope';
+
 type ResourceItem = {
   type: AgentResourceType;
   id: string;
@@ -33,6 +35,8 @@ const RESOURCE_LABEL: Record<AgentResourceType, string> = {
   knowledge_base: '知识库',
 };
 
+type ResourceFilter = 'all' | AgentResourceType;
+
 export default function AgentsPage() {
   const [agents, setAgents] = useState<AgentProfileRead[]>([]);
   const [skills, setSkills] = useState<SkillRead[]>([]);
@@ -40,6 +44,7 @@ export default function AgentsPage() {
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseRead[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [draftResources, setDraftResources] = useState<AgentResourceBindingRead[]>([]);
+  const [resourceFilter, setResourceFilter] = useState<ResourceFilter>('all');
   const [loading, setLoading] = useState(false);
   const [form] = Form.useForm();
 
@@ -69,8 +74,22 @@ export default function AgentsPage() {
     })),
   ], [generalSkills, knowledgeBases, skills]);
 
+  const visibleCatalog = useMemo(
+    () => resourceFilter === 'all' ? catalog : catalog.filter((resource) => resource.type === resourceFilter),
+    [catalog, resourceFilter],
+  );
+
   useEffect(() => {
     void refresh();
+  }, []);
+
+  useEffect(() => {
+    const onScopeChange = (event: Event) => {
+      const agentId = (event as CustomEvent<{ agentId?: string }>).detail?.agentId || '';
+      if (agentId) setSelectedAgentId(agentId);
+    };
+    window.addEventListener('ultrarag-enterprise-agent-scope-change', onScopeChange);
+    return () => window.removeEventListener('ultrarag-enterprise-agent-scope-change', onScopeChange);
   }, []);
 
   useEffect(() => {
@@ -100,7 +119,12 @@ export default function AgentsPage() {
       setSkills(skillRows);
       setGeneralSkills(generalSkillRows);
       setKnowledgeBases(knowledgeBaseRows);
-      setSelectedAgentId((current) => current && agentRows.some((item) => item.id === current) ? current : agentRows[0]?.id || '');
+      setSelectedAgentId((current) => {
+        const stored = window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY);
+        const candidate = current || stored || '';
+        if (candidate && agentRows.some((item) => item.id === candidate)) return candidate;
+        return agentRows[0]?.id || '';
+      });
     } catch (error) {
       message.error(error instanceof Error ? error.message : '加载智能体失败');
     } finally {
@@ -118,6 +142,7 @@ export default function AgentsPage() {
       });
       setAgents((prev) => [row, ...prev]);
       setSelectedAgentId(row.id);
+      window.localStorage.setItem(ENTERPRISE_AGENT_STORAGE_KEY, row.id);
       message.success('已创建智能体');
     } catch (error) {
       message.error(error instanceof Error ? error.message : '创建智能体失败');
@@ -235,7 +260,10 @@ export default function AgentsPage() {
                     type="button"
                     key={agent.id}
                     className={`agent-list-item ${agent.id === selectedAgent?.id ? 'active' : ''}`}
-                    onClick={() => setSelectedAgentId(agent.id)}
+                    onClick={() => {
+                      setSelectedAgentId(agent.id);
+                      window.localStorage.setItem(ENTERPRISE_AGENT_STORAGE_KEY, agent.id);
+                    }}
                   >
                     <span className="agent-list-icon"><RobotOutlined /></span>
                     <span className="agent-list-main">
@@ -291,13 +319,25 @@ export default function AgentsPage() {
                 title="可视域"
                 extra={!selectedAgent.is_overall && <Button icon={<SaveOutlined />} onClick={() => void saveResources()}>保存可视域</Button>}
               >
-                <ResourceSummary resources={selectedAgent.is_overall ? catalog : draftResources} catalog={catalog} />
+                <ResourceSummary
+                  resources={selectedAgent.is_overall ? catalog : draftResources}
+                  catalog={catalog}
+                  value={resourceFilter}
+                  onChange={setResourceFilter}
+                />
                 <div className="agent-resource-grid">
-                  {catalog.map((resource) => {
+                  {visibleCatalog.map((resource) => {
                     const binding = bindingFor(resource);
                     const checked = selectedAgent.is_overall || binding?.status === 'active';
                     return (
-                      <div className="agent-resource-card" key={`${resource.type}:${resource.id}`}>
+                      <button
+                        type="button"
+                        className={`agent-resource-card ${checked ? 'active' : ''}`}
+                        key={`${resource.type}:${resource.id}`}
+                        onClick={() => {
+                          if (!selectedAgent.is_overall) toggleResource(resource, !checked);
+                        }}
+                      >
                         <div className="agent-resource-icon">{resourceIcon(resource.type)}</div>
                         <div className="agent-resource-body">
                           <Space size={8} wrap>
@@ -314,9 +354,10 @@ export default function AgentsPage() {
                           disabled={selectedAgent.is_overall}
                           checkedChildren="上线"
                           unCheckedChildren="下线"
+                          onClick={(_, event) => event.stopPropagation()}
                           onChange={(value) => toggleResource(resource, value)}
                         />
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
@@ -332,9 +373,13 @@ export default function AgentsPage() {
 function ResourceSummary({
   resources,
   catalog,
+  value,
+  onChange,
 }: {
   resources: Array<AgentResourceBindingRead | ResourceItem>;
   catalog: ResourceItem[];
+  value: ResourceFilter;
+  onChange: (value: ResourceFilter) => void;
 }) {
   const activeResources = resources.filter((item) => 'resource_id' in item ? item.status === 'active' : true);
   const counts: Record<AgentResourceType, number> = { skill: 0, general_skill: 0, knowledge_base: 0 };
@@ -345,11 +390,13 @@ function ResourceSummary({
   return (
     <Segmented
       className="agent-resource-summary"
-      value="summary"
+      value={value}
+      onChange={(next) => onChange(next as ResourceFilter)}
       options={[
-        { label: `场景技能 ${counts.skill}/${catalog.filter((item) => item.type === 'skill').length}`, value: 'summary' },
-        { label: `通用技能 ${counts.general_skill}/${catalog.filter((item) => item.type === 'general_skill').length}`, value: 'general' },
-        { label: `知识库 ${counts.knowledge_base}/${catalog.filter((item) => item.type === 'knowledge_base').length}`, value: 'knowledge' },
+        { label: `全部 ${activeResources.length}/${catalog.length}`, value: 'all' },
+        { label: `场景技能 ${counts.skill}/${catalog.filter((item) => item.type === 'skill').length}`, value: 'skill' },
+        { label: `通用技能 ${counts.general_skill}/${catalog.filter((item) => item.type === 'general_skill').length}`, value: 'general_skill' },
+        { label: `知识库 ${counts.knowledge_base}/${catalog.filter((item) => item.type === 'knowledge_base').length}`, value: 'knowledge_base' },
       ]}
     />
   );

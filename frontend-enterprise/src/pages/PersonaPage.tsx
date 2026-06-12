@@ -2,7 +2,9 @@ import { SaveOutlined, UserOutlined } from '@ant-design/icons';
 import { Button, Card, Form, Input, InputNumber, Switch, Typography, message } from 'antd';
 import { useEffect, useState } from 'react';
 import { api, TENANT_ID } from '../api/client';
-import type { PersonaRead, UIConfigRead } from '../types';
+import type { AgentProfileRead, PersonaRead, UIConfigRead } from '../types';
+
+const ENTERPRISE_AGENT_STORAGE_KEY = 'ultrarag_enterprise_agent_scope';
 
 function formatDateOnly(value: string): string {
   const normalized = /(?:z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : `${value}Z`;
@@ -20,15 +22,13 @@ export default function PersonaPage() {
   const [uiLoading, setUiLoading] = useState(false);
   const [updatedAt, setUpdatedAt] = useState('');
   const [uiUpdatedAt, setUiUpdatedAt] = useState('');
+  const [agents, setAgents] = useState<AgentProfileRead[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState(() => window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY) || '');
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) || null;
+  const isOverallPersona = !selectedAgent || selectedAgent.is_overall;
 
   useEffect(() => {
-    api
-      .get<PersonaRead>(`/api/enterprise/persona?tenant_id=${TENANT_ID}`)
-      .then((row) => {
-        form.setFieldsValue({ system_prompt: row.system_prompt });
-        setUpdatedAt(row.updated_at);
-      })
-      .catch((error) => message.error(error.message));
+    void loadPersonaScope();
     api
       .get<UIConfigRead>(`/api/enterprise/ui-config?tenant_id=${TENANT_ID}`)
       .then((row) => {
@@ -36,18 +36,71 @@ export default function PersonaPage() {
         setUiUpdatedAt(row.updated_at);
       })
       .catch((error) => message.error(error.message));
-  }, [form, uiForm]);
+  }, [uiForm]);
+
+  useEffect(() => {
+    const onScopeChange = (event: Event) => {
+      const agentId = (event as CustomEvent<{ agentId?: string }>).detail?.agentId || '';
+      if (agentId) setSelectedAgentId(agentId);
+    };
+    window.addEventListener('ultrarag-enterprise-agent-scope-change', onScopeChange);
+    return () => window.removeEventListener('ultrarag-enterprise-agent-scope-change', onScopeChange);
+  }, []);
+
+  useEffect(() => {
+    const agent = agents.find((item) => item.id === selectedAgentId);
+    if (agent && !agent.is_overall) {
+      form.setFieldsValue({ system_prompt: agent.persona_prompt || '' });
+      setUpdatedAt(agent.updated_at);
+      return;
+    }
+    api
+      .get<PersonaRead>(`/api/enterprise/persona?tenant_id=${TENANT_ID}`)
+      .then((row) => {
+        form.setFieldsValue({ system_prompt: row.system_prompt });
+        setUpdatedAt(row.updated_at);
+      })
+      .catch((error) => message.error(error.message));
+  }, [agents, form, selectedAgentId]);
+
+  async function loadPersonaScope() {
+    try {
+      const rows = await api.get<AgentProfileRead[]>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`);
+      setAgents(rows);
+      setSelectedAgentId((current) => {
+        const stored = window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY);
+        const candidate = current || stored || '';
+        if (candidate && rows.some((agent) => agent.id === candidate)) return candidate;
+        return rows.find((agent) => agent.is_overall)?.id || rows[0]?.id || '';
+      });
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '加载智能体域失败');
+    }
+  }
 
   async function save() {
     setLoading(true);
     try {
       const values = await form.validateFields();
-      const row = await api.put<PersonaRead>('/api/enterprise/persona', {
-        tenant_id: TENANT_ID,
-        system_prompt: values.system_prompt,
-      });
-      setUpdatedAt(row.updated_at);
-      message.success('人设已保存');
+      if (!isOverallPersona && selectedAgent) {
+        const row = await api.put<AgentProfileRead>(`/api/enterprise/agents/${selectedAgent.id}`, {
+          tenant_id: TENANT_ID,
+          name: selectedAgent.name,
+          description: selectedAgent.description,
+          persona_prompt: values.system_prompt,
+          status: selectedAgent.status,
+        });
+        setAgents((prev) => prev.map((item) => (item.id === row.id ? { ...row, resources: item.resources } : item)));
+        setUpdatedAt(row.updated_at);
+        message.success('智能体人设已保存');
+      } else {
+        const row = await api.put<PersonaRead>('/api/enterprise/persona', {
+          tenant_id: TENANT_ID,
+          system_prompt: values.system_prompt,
+        });
+        setUpdatedAt(row.updated_at);
+        message.success('整体人设已保存');
+      }
     } catch (error) {
       message.error(error instanceof Error ? error.message : '保存失败');
     } finally {
@@ -79,13 +132,22 @@ export default function PersonaPage() {
   return (
     <>
       <div className="page-title">
-        <Typography.Title level={3}>人设</Typography.Title>
+        <div>
+          <Typography.Title level={3}>人设</Typography.Title>
+          <Typography.Text type="secondary">
+            当前域：{selectedAgent?.name || '整体智能体'}，{isOverallPersona ? '保存为全局 System Prompt' : '保存为该智能体专属人设'}
+          </Typography.Text>
+        </div>
         <Button type="primary" icon={<SaveOutlined />} loading={loading} onClick={save}>保存</Button>
       </div>
-      <Card className="editor-card" title={<><UserOutlined /> System Prompt</>}>
+      <Card className="editor-card" title={<><UserOutlined /> {isOverallPersona ? 'System Prompt' : '智能体专属人设'}</>}>
         <Form form={form} layout="vertical">
           <Form.Item name="system_prompt" label="人设 Prompt" rules={[{ required: true }]}>
-            <Input.TextArea className="persona-editor" rows={12} />
+            <Input.TextArea
+              className="persona-editor"
+              rows={12}
+              placeholder={isOverallPersona ? '输入整体默认人设' : '输入仅当前智能体可见的人设补充'}
+            />
           </Form.Item>
         </Form>
         {updatedAt && <Typography.Text type="secondary">最后更新：{formatDateOnly(updatedAt)}</Typography.Text>}

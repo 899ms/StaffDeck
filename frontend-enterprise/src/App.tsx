@@ -11,10 +11,11 @@ import {
   ToolOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import { Button, ConfigProvider, Layout, Menu, Typography, theme as antdTheme } from 'antd';
+import { Button, ConfigProvider, Layout, Menu, Select, Typography, theme as antdTheme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { api, TENANT_ID } from './api/client';
 import DashboardPage from './pages/DashboardPage';
 import AgentsPage from './pages/AgentsPage';
 import DistillPage from './pages/DistillPage';
@@ -27,12 +28,16 @@ import PersonaPage from './pages/PersonaPage';
 import SkillsPage from './pages/SkillsPage';
 import ToolsPage from './pages/ToolsPage';
 import { ThemeToggleButton, useThemeController, type EffectiveTheme } from './theme';
+import type { AgentProfileRead } from './types';
 
 const { Header, Sider, Content } = Layout;
+const ENTERPRISE_AGENT_STORAGE_KEY = 'ultrarag_enterprise_agent_scope';
 
 function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const [agents, setAgents] = useState<AgentProfileRead[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState(() => window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY) || '');
   const selected = location.pathname === '/enterprise'
     ? '/enterprise/dashboard'
     : location.pathname.startsWith('/enterprise/knowledge/new')
@@ -48,6 +53,29 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
       setLastDistillSearch(location.search);
     }
   }, [isDistillRoute, location.search]);
+
+  useEffect(() => {
+    api
+      .get<AgentProfileRead[]>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`)
+      .then((rows) => {
+        setAgents(rows);
+        setSelectedAgentId((current) => {
+          if (current && rows.some((item) => item.id === current)) return current;
+          const next = rows.find((item) => item.is_overall)?.id || rows[0]?.id || '';
+          if (next) window.localStorage.setItem(ENTERPRISE_AGENT_STORAGE_KEY, next);
+          return next;
+        });
+      })
+      .catch(() => setAgents([]));
+  }, []);
+
+  function changeAgentScope(agentId: string) {
+    setSelectedAgentId(agentId);
+    window.localStorage.setItem(ENTERPRISE_AGENT_STORAGE_KEY, agentId);
+    window.dispatchEvent(new CustomEvent('ultrarag-enterprise-agent-scope-change', { detail: { agentId } }));
+  }
+
+  const selectedAgent = agents.find((item) => item.id === selectedAgentId);
 
   return (
     <Layout className="app-shell">
@@ -66,8 +94,16 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
           selectedKeys={[selected]}
           onClick={(item) => navigate(item.key)}
           items={[
-            { key: '/enterprise/dashboard', icon: <DashboardOutlined />, label: 'Dashboard' },
-            { key: '/enterprise/memories', icon: <DatabaseOutlined />, label: 'Memory 查询' },
+            {
+              key: 'workspace',
+              type: 'group',
+              label: '工作区',
+              children: [
+                { key: '/enterprise/dashboard', icon: <DashboardOutlined />, label: 'Dashboard' },
+                { key: '/enterprise/memories', icon: <DatabaseOutlined />, label: 'Memory 查询' },
+                { key: '/enterprise/feedback', icon: <DislikeOutlined />, label: '负反馈会话' },
+              ],
+            },
             {
               key: 'knowledge',
               type: 'group',
@@ -77,7 +113,6 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
                 { key: '/enterprise/knowledge/new', icon: <FileAddOutlined />, label: '新增知识' },
               ],
             },
-            { key: '/enterprise/feedback', icon: <DislikeOutlined />, label: '负反馈会话' },
             {
               key: 'skills',
               type: 'group',
@@ -92,16 +127,27 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
             { key: '/enterprise/models', icon: <ApiOutlined />, label: '模型配置' },
           ]}
         />
-        <div className="sidebar-footer">
-          <span className="status-dot" />
-          <span>local runtime</span>
-        </div>
       </Sider>
       <Layout>
         <Header className="topbar">
-          <div>
-            <Typography.Text strong>Skill Studio</Typography.Text>
-            <div className="topbar-subtitle">Skill, tool, memory and persona workspace</div>
+          <div className="topbar-scope">
+            <div className="topbar-copy">
+              <Typography.Text strong>{selectedAgent?.name || '智能体域'}</Typography.Text>
+              <div className="topbar-subtitle">
+                {selectedAgent?.is_overall ? '整体资源池' : selectedAgent?.description || '当前模型可视域'}
+              </div>
+            </div>
+            <Select
+              className="enterprise-agent-scope-select"
+              value={selectedAgentId || undefined}
+              placeholder="选择智能体域"
+              popupMatchSelectWidth={280}
+              options={agents.map((agent) => ({
+                value: agent.id,
+                label: agent.is_overall ? `整体 · ${agent.name}` : agent.name,
+              }))}
+              onChange={changeAgentScope}
+            />
           </div>
           <div className="topbar-actions">
             <ThemeToggleButton />

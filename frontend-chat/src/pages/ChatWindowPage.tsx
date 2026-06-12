@@ -1293,18 +1293,6 @@ export default function ChatWindowPage() {
             />
           </div>
         </div>
-        <div className="agent-switcher">
-          <Select
-            size="small"
-            value={selectedAgentId || undefined}
-            placeholder="选择智能体"
-            onChange={(value) => {
-              setSelectedAgentId(value);
-              window.localStorage.setItem('skill_agent_selected_agent', value);
-            }}
-            options={agents.map((agent) => ({ value: agent.id, label: agent.name }))}
-          />
-        </div>
         <div className="session-section-label">Sessions</div>
         {sessions.map((session) => {
           const itemStream = getStreamSlot(session.id);
@@ -1366,6 +1354,18 @@ export default function ChatWindowPage() {
             <div className="header-subtitle">{sessionId}</div>
           </div>
           <div className="chat-header-actions">
+            <Select
+              className="chat-agent-select"
+              size="middle"
+              value={selectedAgentId || undefined}
+              placeholder="选择智能体"
+              popupMatchSelectWidth={220}
+              onChange={(value) => {
+                setSelectedAgentId(value);
+                window.localStorage.setItem('skill_agent_selected_agent', value);
+              }}
+              options={agents.map((agent) => ({ value: agent.id, label: agent.name }))}
+            />
             <ThemeToggleButton />
           </div>
         </div>
