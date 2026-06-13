@@ -2567,7 +2567,7 @@ body.skill-distill-fixed .content {
   height: calc(100% - 44px);
   min-height: 0;
   overflow: auto;
-  padding: clamp(16px, 2.6vw, 28px) clamp(14px, 2.6vw, 28px) 52px;
+  padding: clamp(18px, 2.8vw, 34px) clamp(18px, 3vw, 40px) 64px;
   display: block;
 }
 
@@ -2575,7 +2575,7 @@ body.skill-distill-fixed .content {
   position: relative;
   min-width: 100%;
   width: max-content;
-  margin-inline: 0;
+  margin-inline: auto;
   border-radius: 18px;
   background:
     radial-gradient(circle at 40px 40px, rgba(18, 128, 115, 0.05), transparent 240px),
@@ -2595,26 +2595,26 @@ body.skill-distill-fixed .content {
 
 .skill-flow-edge-path {
   fill: none;
-  stroke: #d8d0c4;
-  stroke-width: 1.6;
+  stroke: #c9bca9;
+  stroke-width: 2.1;
   stroke-linecap: round;
-  stroke-dasharray: 4 5;
+  stroke-linejoin: round;
 }
 
 .skill-flow-edges marker path {
-  fill: #c8beaf;
+  fill: #b9aa95;
 }
 
 .skill-flow-edge-label {
   position: absolute;
-  z-index: 3;
-  max-width: 220px;
-  padding: 5px 10px;
-  color: #6c655b;
-  background: rgba(255, 253, 248, 0.94);
-  border: 1px solid #ded5c9;
+  z-index: 5;
+  max-width: 260px;
+  padding: 5px 11px;
+  color: #5f574b;
+  background: rgba(255, 253, 248, 0.98);
+  border: 1px solid #d7cbbb;
   border-radius: 999px;
-  box-shadow: 0 8px 18px rgba(38, 32, 23, 0.08);
+  box-shadow: 0 8px 18px rgba(38, 32, 23, 0.1);
   font-size: 12px;
   line-height: 1.35;
   overflow: hidden;
@@ -2632,7 +2632,6 @@ body.skill-distill-fixed .content {
 .skill-flow-node-position {
   position: absolute;
   z-index: 4;
-  width: 340px;
 }
 
 .skill-flow-connector-count {
@@ -2670,8 +2669,8 @@ body.skill-distill-fixed .content {
 
 .skill-flow-node-shell {
   width: 100%;
-  max-width: 340px;
-  height: 248px;
+  max-width: none;
+  height: 100%;
   display: grid;
   justify-self: stretch;
   justify-items: stretch;
@@ -2702,7 +2701,7 @@ body.skill-distill-fixed .content {
   z-index: 1;
   justify-self: start;
   width: 100%;
-  height: auto;
+  height: 100%;
   min-height: 0;
   background: #f2f0eb;
   box-shadow: 0 14px 34px rgba(37, 32, 24, 0.08);
@@ -2924,8 +2923,8 @@ body.skill-distill-fixed .content {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  max-height: 30px;
-  overflow: hidden;
+  max-height: none;
+  overflow: visible;
 }
 
 .skill-flow-node p {
@@ -2942,7 +2941,7 @@ body.skill-distill-fixed .content {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 4;
 }
 
 .skill-flow-compact-meta {
@@ -3000,6 +2999,12 @@ body.skill-distill-fixed .content {
   gap: 6px;
   max-height: 84px;
   overflow: auto;
+}
+
+.skill-flow .skill-flow-chip-list,
+.skill-flow .skill-action-list {
+  max-height: none;
+  overflow: visible;
 }
 
 .skill-flow-edge-targets .skill-flow-chip-list {
