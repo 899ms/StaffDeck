@@ -4290,6 +4290,46 @@ pre {
   padding: 18px;
 }
 
+.knowledge-demo-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 0 16px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent-soft) 36%, transparent), transparent 54%),
+    var(--surface);
+}
+
+.knowledge-demo-copy {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.knowledge-demo-copy > .anticon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent-soft) 56%, var(--surface));
+  font-size: 20px;
+}
+
+.knowledge-demo-copy > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
 .knowledge-upload-card .ant-upload-wrapper,
 .knowledge-upload-card .ant-upload,
 .knowledge-upload-card .ant-upload-drag {
@@ -4656,6 +4696,11 @@ pre {
 
   .knowledge-upload-controls {
     align-items: stretch;
+  }
+
+  .knowledge-demo-panel {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .knowledge-upload-controls .ant-space,
