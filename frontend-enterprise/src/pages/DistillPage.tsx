@@ -2290,7 +2290,6 @@ function SkillFlow({
       </SelectableTarget>
       <div className="skill-flow-graph-canvas">
         {layout.layers.map((layer, layerIndex) => {
-          const layerEdges = layer.flatMap((item) => edgeMap[item.nodeId] || []);
           const previousEdges = layerIndex > 0
             ? layout.layers[layerIndex - 1].flatMap((item) => edgeMap[item.nodeId] || [])
             : [];
@@ -2299,15 +2298,7 @@ function SkillFlow({
               {layerIndex > 0 && (
                 <div className="skill-flow-connector">
                   <div className="skill-flow-layer-line" />
-                  {previousEdges.length > 0 && (
-                    <div className="skill-flow-edge-row">
-                      {previousEdges.map((edge, edgeIndex) => (
-                        <span className="skill-flow-edge-chip" key={`incoming_${String(edge.source_node_id)}_${String(edge.next_node_id)}_${edgeIndex}`}>
-                          {edgeLabel(edge, nodeNameMap)}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                  {previousEdges.length > 0 && <span className="skill-flow-connector-count">{previousEdges.length} 条流转</span>}
                   <div className="skill-flow-layer-line" />
                 </div>
               )}
@@ -2406,9 +2397,9 @@ function SkillFlowNodeCard({
             </div>
           )}
           {outgoingEdges.length > 0 && (
-            <div className="skill-flow-compact-row">
+            <div className="skill-flow-compact-row skill-flow-edge-targets">
               <span>流转</span>
-              <PlainChipList values={outgoingEdges.slice(0, 4).map((edge) => edgeLabel(edge, nodeNameMap))} />
+              <PlainChipList values={outgoingEdges.map((edge) => edgeLabel(edge, nodeNameMap))} />
             </div>
           )}
         </div>

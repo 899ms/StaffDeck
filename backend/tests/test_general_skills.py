@@ -1,12 +1,15 @@
 from fastapi import HTTPException
+from io import BytesIO
 from pathlib import Path
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
+from zipfile import ZipFile
 
 from app.api.general_skills import (
     archive_general_skill,
     delete_general_skill,
     get_general_skill,
+    import_clawhub_skill,
     import_general_skill,
     list_general_skills,
     publish_general_skill,
@@ -15,7 +18,7 @@ from app.api.general_skills import (
 from app.core import AgentLoop
 from app.db.models import AgentEvent, ChatSession, GeneralSkill, ModelConfig, Skill, Tenant, User
 from app.general_skills.runner import GeneralSkillRunner
-from app.general_skills.schema import GeneralSkillImportRequest, GeneralSkillRunRequest
+from app.general_skills.schema import GeneralSkillClawHubImportRequest, GeneralSkillImportRequest, GeneralSkillRunRequest
 from app.llm import LLMClient, LLMError
 from app.security.auth import hash_password
 from app.security.encryption import encrypt_secret
@@ -139,6 +142,39 @@ def test_import_general_skill_folder_reads_skill_md_metadata() -> None:
         assert row.metadata["name"] == "中国城市天气"
         assert [file.path for file in row.skill_files] == ["SKILL.md", "data/cities.json"]
         assert row.skill_markdown.startswith("---\nname: 中国城市天气")
+
+
+def test_import_clawhub_skill_reads_zip_package_without_overwriting(monkeypatch) -> None:
+    package = BytesIO()
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "skill-pack-main/weather/SKILL.md",
+            "---\nname: 天气包\nslug: weather-pack\n---\n\n# 天气包\n",
+        )
+        archive.writestr("skill-pack-main/weather/scripts/run.py", "print('ok')\n")
+        archive.writestr("skill-pack-main/weather/data/cities.json", "{\"北京\": \"101010100\"}")
+
+    def fake_download(url: str):  # noqa: ANN001
+        assert url == "https://github.com/example/skill-pack/archive/refs/heads/main.zip"
+        return package.getvalue(), "application/zip"
+
+    monkeypatch.setattr("app.api.general_skills._download_url", fake_download)
+
+    with _test_session() as db:
+        _seed_minimal_tenant(db)
+        first = import_clawhub_skill(
+            GeneralSkillClawHubImportRequest(tenant_id="tenant_demo", source="https://github.com/example/skill-pack/tree/main/weather"),
+            db,
+        )
+        second = import_clawhub_skill(
+            GeneralSkillClawHubImportRequest(tenant_id="tenant_demo", source="https://github.com/example/skill-pack/tree/main/weather"),
+            db,
+        )
+
+        assert first.slug == "weather-pack"
+        assert second.slug == "weather-pack-2"
+        assert [file.path for file in first.skill_files] == ["SKILL.md", "scripts/run.py", "data/cities.json"]
+        assert first.skill_markdown.startswith("---\nname: 天气包")
 
 
 def test_general_skill_archive_publish_and_delete_api(monkeypatch) -> None:

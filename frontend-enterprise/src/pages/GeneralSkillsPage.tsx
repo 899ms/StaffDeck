@@ -2,8 +2,10 @@ import {
   CheckCircleOutlined,
   CloudOutlined,
   CloseCircleOutlined,
+  DeleteOutlined,
   ExperimentOutlined,
   FileTextOutlined,
+  FolderOpenOutlined,
   MoreOutlined,
   PlayCircleOutlined,
   UploadOutlined,
@@ -281,6 +283,10 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  const [selectedFilePath, setSelectedFilePath] = useState('SKILL.md');
+  const [clawhubModalOpen, setClawhubModalOpen] = useState(false);
+  const [clawhubSource, setClawhubSource] = useState('');
+  const [clawhubLoading, setClawhubLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -289,6 +295,10 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
     [rows, selectedSlug],
   );
   const activeResult = runResult || liveResult;
+  const selectedFile = useMemo(
+    () => skillFiles.find((file) => file.path === selectedFilePath) || skillFiles[0],
+    [skillFiles, selectedFilePath],
+  );
 
   const load = () =>
     api
@@ -304,6 +314,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
           setSkillDescription(items[0].description || '');
           setSkillHomepage(items[0].homepage || '');
           setSkillFiles(items[0].skill_files?.length ? items[0].skill_files : [{ path: 'SKILL.md', content: items[0].skill_markdown }]);
+          setSelectedFilePath((items[0].skill_files?.length ? items[0].skill_files : [{ path: 'SKILL.md' }])[0].path);
         }
       })
       .catch((error) => message.error(error.message));
@@ -316,6 +327,14 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
     folderInputRef.current?.setAttribute('webkitdirectory', '');
     folderInputRef.current?.setAttribute('directory', '');
   }, []);
+
+  useEffect(() => {
+    if (!skillFiles.length) return;
+    if (!skillFiles.some((file) => file.path === selectedFilePath)) {
+      const skillFile = skillFiles.find((file) => file.path.split('/').pop()?.toLowerCase() === 'skill.md');
+      setSelectedFilePath(skillFile?.path || skillFiles[0].path);
+    }
+  }, [skillFiles, selectedFilePath]);
 
   function hasUnsavedEditingChanges(): boolean {
     if (!editingSlug) return false;
@@ -360,6 +379,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
       setSkillDescription(row.description || '');
       setSkillHomepage(row.homepage || '');
       setSkillFiles(row.skill_files?.length ? row.skill_files : [{ path: 'SKILL.md', content: row.skill_markdown }]);
+      setSelectedFilePath((row.skill_files?.length ? row.skill_files : [{ path: 'SKILL.md' }])[0].path);
       setRows((current) => {
         const withoutSaved = current.filter((item) => item.id !== row.id && item.slug !== row.slug);
         return [row, ...withoutSaved];
@@ -381,6 +401,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
     setSkillDescription('');
     setSkillHomepage('');
     setSkillFiles([{ path: 'SKILL.md', content: DEFAULT_MARKDOWN, size: DEFAULT_MARKDOWN.length, mime_type: 'text/markdown' }]);
+    setSelectedFilePath('SKILL.md');
     setEditingSlug(null);
     setRunResult(null);
   }
@@ -392,6 +413,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
     setSkillDescription(row.description || '');
     setSkillHomepage(row.homepage || '');
     setSkillFiles(row.skill_files?.length ? row.skill_files : [{ path: 'SKILL.md', content: row.skill_markdown }]);
+    setSelectedFilePath((row.skill_files?.length ? row.skill_files : [{ path: 'SKILL.md' }])[0].path);
     setSelectedSlug(row.slug);
     setEditingSlug(row.slug);
     setRunResult(null);
@@ -406,6 +428,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
       setSkillHomepage(row.homepage || '');
       setMarkdown(row.skill_markdown);
       setSkillFiles(row.skill_files?.length ? row.skill_files : [{ path: 'SKILL.md', content: row.skill_markdown }]);
+      setSelectedFilePath((row.skill_files?.length ? row.skill_files : [{ path: 'SKILL.md' }])[0].path);
     }
   }
 
@@ -488,6 +511,71 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
       }
       fileInputRef.current?.click();
     });
+  }
+
+  function requestClawHubImport() {
+    void withImportPreparation(() => {
+      setClawhubSource('');
+      setClawhubModalOpen(true);
+    });
+  }
+
+  async function importClawHubSource() {
+    if (!clawhubSource.trim()) {
+      message.warning('请输入 ClawHub/GitHub/zip 来源');
+      return;
+    }
+    setClawhubLoading(true);
+    try {
+      const row = await api.post<GeneralSkillRead>('/api/enterprise/general-skills/import-clawhub', {
+        tenant_id: TENANT_ID,
+        source: clawhubSource.trim(),
+        status: 'published',
+      });
+      message.success(`已导入 ${row.name}`);
+      setRows((current) => [row, ...current.filter((item) => item.id !== row.id && item.slug !== row.slug)]);
+      setSelectedSlug(row.slug);
+      editSkill(row);
+      setClawhubModalOpen(false);
+      void load();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'ClawHub 导入失败');
+    } finally {
+      setClawhubLoading(false);
+    }
+  }
+
+  function updateSelectedFile(text: string) {
+    if (!selectedFile) return;
+    setSkillFiles((current) => current.map((file) => (
+      file.path === selectedFile.path
+        ? { ...file, content: text, size: text.length }
+        : file
+    )));
+    if (selectedFile.path.split('/').pop()?.toLowerCase() === 'skill.md') {
+      setMarkdown(text);
+    }
+  }
+
+  function addSkillFile() {
+    const base = 'notes.md';
+    let candidate = base;
+    let index = 2;
+    while (skillFiles.some((file) => file.path === candidate)) {
+      candidate = `notes-${index}.md`;
+      index += 1;
+    }
+    setSkillFiles((current) => [...current, { path: candidate, content: '', size: 0, mime_type: 'text/markdown' }]);
+    setSelectedFilePath(candidate);
+  }
+
+  function deleteSelectedFile() {
+    if (!selectedFile) return;
+    if (selectedFile.path.split('/').pop()?.toLowerCase() === 'skill.md') {
+      message.warning('SKILL.md 是通用技能入口，不能删除');
+      return;
+    }
+    setSkillFiles((current) => current.filter((file) => file.path !== selectedFile.path));
   }
 
   async function runSkill() {
@@ -583,6 +671,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
     const nextFile = { path: 'SKILL.md', content: text, size: target.size, mime_type: target.type || 'text/markdown' };
     startImportedDraft();
     setSkillFiles([nextFile]);
+    setSelectedFilePath('SKILL.md');
     setMarkdown(text);
     applyMetadata(text, { setSkillName, setSkillSlug, setSkillDescription, setSkillHomepage });
     message.success(`已读取 ${target.name}`);
@@ -607,9 +696,11 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
     const skillFile = nextFiles.find((item) => item.path.split('/').pop()?.toLowerCase() === 'skill.md');
     if (skillFile) {
       setMarkdown(skillFile.content);
+      setSelectedFilePath(skillFile.path);
       applyMetadata(skillFile.content, { setSkillName, setSkillSlug, setSkillDescription, setSkillHomepage });
       message.success(`已读取 ${nextFiles.length} 个文件`);
     } else {
+      setSelectedFilePath(nextFiles[0]?.path || 'SKILL.md');
       message.warning('文件夹中没有找到 SKILL.md');
     }
   }
@@ -700,8 +791,13 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
                     items: [
                       { key: 'file', label: '选择文件' },
                       { key: 'folder', label: '选择文件夹' },
+                      { key: 'clawhub', label: '从 ClawHub / GitHub 导入' },
                     ],
                     onClick: ({ key }) => {
+                      if (key === 'clawhub') {
+                        requestClawHubImport();
+                        return;
+                      }
                       requestImport(key === 'folder' ? 'folder' : 'file');
                     },
                   }}
@@ -762,24 +858,44 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
                 placeholder="主页或参考链接，可选"
               />
             </div>
-            <Input.TextArea
-              className="general-skill-source-input"
-              value={markdown}
-              onChange={(event) => {
-                const text = event.target.value;
-                setMarkdown(text);
-                setSkillFiles((current) => {
-                  const withoutSkill = current.filter((item) => item.path !== 'SKILL.md');
-                  return [{ path: 'SKILL.md', content: text, size: text.length, mime_type: 'text/markdown' }, ...withoutSkill];
-                });
-              }}
-              rows={20}
-              spellCheck={false}
-            />
-            <div className="general-skill-file-list">
-              {skillFiles.map((file) => (
-                <Tag key={file.path}>{file.path}</Tag>
-              ))}
+            <div className="general-skill-file-editor">
+              <aside className="general-skill-file-tree">
+                <div className="general-skill-file-tree-title">
+                  <FolderOpenOutlined />
+                  <span>文件</span>
+                </div>
+                <div className="general-skill-file-tree-list">
+                  {skillFiles.map((file) => (
+                    <button
+                      key={file.path}
+                      type="button"
+                      className={`general-skill-file-node ${file.path === selectedFile?.path ? 'active' : ''}`}
+                      onClick={() => setSelectedFilePath(file.path)}
+                      title={file.path}
+                    >
+                      <FileTextOutlined />
+                      <span>{file.path}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="general-skill-file-actions">
+                  <Button size="small" onClick={addSkillFile}>新建文件</Button>
+                  <Button size="small" icon={<DeleteOutlined />} onClick={deleteSelectedFile} />
+                </div>
+              </aside>
+              <section className="general-skill-file-pane">
+                <div className="general-skill-file-tab">
+                  <FileTextOutlined />
+                  <span>{selectedFile?.path || '未选择文件'}</span>
+                </div>
+                <Input.TextArea
+                  className="general-skill-source-input"
+                  value={selectedFile?.content || ''}
+                  onChange={(event) => updateSelectedFile(event.target.value)}
+                  rows={20}
+                  spellCheck={false}
+                />
+              </section>
             </div>
           </Card>
           <Card
@@ -962,6 +1078,26 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
           </Card>
         </aside>
       </div>
+      <Modal
+        title="从 ClawHub / GitHub 导入通用技能"
+        open={clawhubModalOpen}
+        onOk={importClawHubSource}
+        confirmLoading={clawhubLoading}
+        onCancel={() => setClawhubModalOpen(false)}
+        okText="导入"
+        cancelText="取消"
+      >
+        <Space direction="vertical" size={10} style={{ width: '100%' }}>
+          <Typography.Text type="secondary">
+            支持 GitHub repo/tree/raw SKILL.md、zip 包地址，或 owner/repo 形式。导入会新建通用技能，不覆盖当前内容。
+          </Typography.Text>
+          <Input
+            value={clawhubSource}
+            onChange={(event) => setClawhubSource(event.target.value)}
+            placeholder="例如 OpenBMB/PilotDeck/path/to/skill 或 https://github.com/owner/repo/tree/main/skill"
+          />
+        </Space>
+      </Modal>
     </>
   );
 }

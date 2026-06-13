@@ -24,6 +24,16 @@ class GeneralSkillImportRequest(BaseModel):
     original_slug: Optional[str] = None
 
 
+class GeneralSkillClawHubImportRequest(BaseModel):
+    tenant_id: str
+    source: str
+    name: Optional[str] = None
+    slug: Optional[str] = None
+    description: Optional[str] = None
+    homepage: Optional[str] = None
+    status: str = "published"
+
+
 class GeneralSkillRead(BaseModel):
     id: str
     tenant_id: str

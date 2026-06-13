@@ -4,8 +4,13 @@ import json
 import queue
 import re
 import threading
+import zipfile
 from collections.abc import Iterator
+from io import BytesIO
 from types import SimpleNamespace
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -13,12 +18,22 @@ from sqlmodel import Session, select
 
 from app.db import get_session
 from app.db.models import GeneralSkill, ModelConfig, utc_now
-from app.general_skills import GeneralSkillImportRequest, GeneralSkillRead, GeneralSkillRunRequest, GeneralSkillRunResponse
+from app.general_skills import (
+    GeneralSkillClawHubImportRequest,
+    GeneralSkillImportRequest,
+    GeneralSkillRead,
+    GeneralSkillRunRequest,
+    GeneralSkillRunResponse,
+)
 from app.general_skills.schema import GeneralSkillFile
 from app.general_skills.runner import GeneralSkillRunner
 from app.security.tenant import ensure_tenant
 
 router = APIRouter(prefix="/api/enterprise/general-skills", tags=["enterprise:general-skills"])
+
+MAX_CLAWHUB_PACKAGE_BYTES = 24 * 1024 * 1024
+MAX_CLAWHUB_FILE_BYTES = 2 * 1024 * 1024
+MAX_CLAWHUB_FILES = 240
 
 
 def general_skill_read(row: GeneralSkill) -> GeneralSkillRead:
@@ -110,6 +125,44 @@ def import_general_skill(
             created_at=now,
             updated_at=now,
         )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return general_skill_read(row)
+
+
+@router.post("/import-clawhub", response_model=GeneralSkillRead)
+def import_clawhub_skill(
+    request: GeneralSkillClawHubImportRequest,
+    db: Session = Depends(get_session),
+) -> GeneralSkillRead:
+    ensure_tenant(db, request.tenant_id)
+    raw_files = _load_clawhub_source(request.source)
+    files = _normalize_skill_files(raw_files, None)
+    markdown = _skill_markdown_from_files(files)
+    metadata = _parse_skill_metadata(markdown)
+    name = _optional_text(request.name) or _metadata_text(metadata, "name", "title") or _source_name(request.source)
+    slug_base = _optional_text(request.slug) or _metadata_text(metadata, "slug", "id") or _slugify(name)
+    slug = _unique_slug(db, request.tenant_id, slug_base)
+    description = _optional_text(request.description) or _metadata_text(metadata, "description", "summary")
+    homepage = _optional_text(request.homepage) or _metadata_text(metadata, "homepage", "url", "source")
+    _validate_slug(slug)
+    now = utc_now()
+    row = GeneralSkill(
+        tenant_id=request.tenant_id,
+        slug=slug,
+        name=name,
+        description=description,
+        homepage=homepage,
+        skill_markdown=markdown,
+        skill_files_json=[file.model_dump(mode="json") for file in files],
+        metadata_json={**metadata, "import_source": request.source},
+        status=request.status,
+        permissions_json={"network": True, "python": True},
+        runtime_config_json={"runtime": "python", "timeout_seconds": 12},
+        created_at=now,
+        updated_at=now,
+    )
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -401,6 +454,168 @@ def _metadata_text(metadata: dict[str, object], *keys: str) -> str | None:
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", value.strip().lower()).strip("-_")
     return slug or "general-skill"
+
+
+def _unique_slug(db: Session, tenant_id: str, base_slug: str) -> str:
+    base = _slugify(base_slug)
+    candidate = base
+    suffix = 2
+    while db.exec(select(GeneralSkill).where(GeneralSkill.tenant_id == tenant_id, GeneralSkill.slug == candidate)).first():
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _source_name(source: str) -> str:
+    parsed = urlparse(source)
+    path = parsed.path if parsed.scheme else source
+    cleaned = path.rstrip("/").rsplit("/", 1)[-1].removesuffix(".zip").removesuffix(".md")
+    return cleaned or "ClawHub 通用技能"
+
+
+def _load_clawhub_source(source: str) -> list[GeneralSkillFile]:
+    cleaned = _required_text(source, "source")
+    if cleaned.startswith(("http://", "https://")):
+        return _load_remote_skill_source(cleaned)
+    if _looks_like_github_shorthand(cleaned):
+        return _load_remote_skill_source(f"https://github.com/{cleaned}")
+    raise HTTPException(
+        status_code=400,
+        detail="ClawHub source must be a GitHub URL, raw SKILL.md URL, zip URL, or owner/repo path",
+    )
+
+
+def _looks_like_github_shorthand(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/.+)?", value.strip()))
+
+
+def _load_remote_skill_source(url: str) -> list[GeneralSkillFile]:
+    parsed = urlparse(url)
+    if parsed.netloc in {"github.com", "www.github.com"}:
+        return _load_github_skill_source(parsed)
+    data, content_type = _download_url(url)
+    if url.lower().endswith(".zip") or "zip" in content_type:
+        return _files_from_zip(data)
+    text = _decode_text(data)
+    return [GeneralSkillFile(path="SKILL.md", content=text, size=len(data), mime_type=content_type or "text/markdown")]
+
+
+def _load_github_skill_source(parsed) -> list[GeneralSkillFile]:
+    parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if len(parts) < 2:
+        raise HTTPException(status_code=400, detail="GitHub source must include owner and repository")
+    owner, repo = parts[0], parts[1]
+    if "raw.githubusercontent.com" in parsed.netloc:
+        data, content_type = _download_url(parsed.geturl())
+        return [GeneralSkillFile(path="SKILL.md", content=_decode_text(data), size=len(data), mime_type=content_type or "text/markdown")]
+    if len(parts) >= 5 and parts[2] in {"blob", "raw"}:
+        branch = parts[3]
+        file_path = "/".join(parts[4:])
+        raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{file_path}"
+        data, content_type = _download_url(raw_url)
+        return [GeneralSkillFile(path=file_path.rsplit("/", 1)[-1] or "SKILL.md", content=_decode_text(data), size=len(data), mime_type=content_type or "text/markdown")]
+    if len(parts) >= 5 and parts[2] == "tree":
+        branch = parts[3]
+        subtree = "/".join(parts[4:])
+        return _download_github_archive(owner, repo, [branch], subtree)
+    subtree = "/".join(parts[2:]) if len(parts) > 2 else ""
+    return _download_github_archive(owner, repo, ["main", "master"], subtree)
+
+
+def _download_github_archive(owner: str, repo: str, branches: list[str], subtree: str = "") -> list[GeneralSkillFile]:
+    errors: list[str] = []
+    for branch in branches:
+        archive_url = f"https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip"
+        try:
+            data, _ = _download_url(archive_url)
+            return _files_from_zip(data, subtree=subtree)
+        except HTTPException as exc:
+            errors.append(str(exc.detail))
+    raise HTTPException(status_code=400, detail=f"Unable to download GitHub skill package: {'; '.join(errors)}")
+
+
+def _download_url(url: str) -> tuple[bytes, str]:
+    try:
+        request = Request(url, headers={"User-Agent": "UltraRAG4-GeneralSkillImporter/1.0"})
+        with urlopen(request, timeout=20) as response:  # noqa: S310 - user-confirmed import source
+            content_type = response.headers.get("content-type", "")
+            data = response.read(MAX_CLAWHUB_PACKAGE_BYTES + 1)
+    except HTTPError as exc:
+        raise HTTPException(status_code=400, detail=f"Download failed with HTTP {exc.code}") from exc
+    except URLError as exc:
+        raise HTTPException(status_code=400, detail=f"Download failed: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=400, detail="Download timed out") from exc
+    if len(data) > MAX_CLAWHUB_PACKAGE_BYTES:
+        raise HTTPException(status_code=400, detail="General skill package is too large")
+    return data, content_type
+
+
+def _files_from_zip(data: bytes, subtree: str = "") -> list[GeneralSkillFile]:
+    normalized_subtree = subtree.strip("/")
+    with zipfile.ZipFile(BytesIO(data)) as archive:
+        names = [name for name in archive.namelist() if not name.endswith("/") and not _skip_package_path(name)]
+        skill_candidates = [name for name in names if name.rsplit("/", 1)[-1].lower() == "skill.md"]
+        if normalized_subtree:
+            skill_candidates = [name for name in skill_candidates if _zip_relative_path(name, normalized_subtree) is not None]
+        if not skill_candidates:
+            raise HTTPException(status_code=400, detail="Package does not contain SKILL.md")
+        base = skill_candidates[0].rsplit("/", 1)[0] if "/" in skill_candidates[0] else ""
+        files: list[GeneralSkillFile] = []
+        for name in names:
+            if base:
+                if not name.startswith(f"{base}/"):
+                    continue
+                relative = name[len(base) + 1 :]
+            else:
+                relative = name
+            if not relative or relative.endswith("/"):
+                continue
+            info = archive.getinfo(name)
+            if info.file_size > MAX_CLAWHUB_FILE_BYTES:
+                continue
+            if len(files) >= MAX_CLAWHUB_FILES:
+                break
+            content = _decode_text(archive.read(name))
+            files.append(
+                GeneralSkillFile(
+                    path=relative,
+                    content=content,
+                    size=info.file_size,
+                    mime_type=_guess_mime_type(relative),
+                )
+            )
+    return files
+
+
+def _zip_relative_path(name: str, subtree: str) -> str | None:
+    parts = name.split("/")
+    for index in range(1, len(parts)):
+        candidate = "/".join(parts[index:])
+        if candidate == subtree or candidate.startswith(f"{subtree}/"):
+            return candidate
+    return None
+
+
+def _skip_package_path(path: str) -> bool:
+    parts = path.split("/")
+    return any(part in {"__MACOSX", ".git", "node_modules", ".venv", "dist", "build"} for part in parts)
+
+
+def _decode_text(data: bytes) -> str:
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("utf-8", errors="replace")
+
+
+def _guess_mime_type(path: str) -> str:
+    lower = path.lower()
+    if lower.endswith(".md"):
+        return "text/markdown"
+    if lower.endswith((".py", ".sh", ".js", ".ts", ".json", ".txt", ".yaml", ".yml")):
+        return "text/plain"
+    return "text/plain"
 
 
 def _validate_slug(value: str) -> None:
