@@ -73,6 +73,13 @@ class AgentResourcesUpdateRequest(BaseModel):
     resources: list[AgentResourceBindingInput] = Field(default_factory=list)
 
 
+class AgentResourceImportRequest(BaseModel):
+    tenant_id: str
+    source_agent_id: str
+    resource_type: Literal["skill", "general_skill", "knowledge_base"]
+    resource_ids: list[str] = Field(default_factory=list)
+
+
 class AgentModelBindingInput(BaseModel):
     role: Literal["default", "router", "step", "response", "general_skill"]
     model_config_id: str

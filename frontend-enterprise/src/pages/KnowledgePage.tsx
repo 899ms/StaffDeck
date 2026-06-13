@@ -10,7 +10,7 @@ import {
   ReloadOutlined,
   RightOutlined,
 } from '@ant-design/icons';
-import { Button, Card, Col, Collapse, Empty, Input, Progress, Row, Select, Space, Table, Tag, Typography, Upload, message } from 'antd';
+import { Button, Card, Col, Collapse, Empty, Input, Modal, Progress, Row, Select, Space, Table, Tag, Typography, Upload, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -21,6 +21,7 @@ import type {
   KnowledgeDiscoveryRead,
   KnowledgeDocumentRead,
   KnowledgeIngestJobRead,
+  AgentProfileRead,
 } from '../types';
 
 const { Dragger } = Upload;
@@ -91,6 +92,12 @@ export default function KnowledgeManagePage() {
   const [buckets, setBuckets] = useState<KnowledgeBucketRead[]>([]);
   const [loading, setLoading] = useState(false);
   const [agentId, setAgentId] = useState(() => window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY) || '');
+  const [agents, setAgents] = useState<AgentProfileRead[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importSourceAgentId, setImportSourceAgentId] = useState('');
+  const [importSourceKnowledgeBases, setImportSourceKnowledgeBases] = useState<KnowledgeBaseRead[]>([]);
+  const [importSelectedKnowledgeBaseIds, setImportSelectedKnowledgeBaseIds] = useState<string[]>([]);
+  const [importLoading, setImportLoading] = useState(false);
 
   const actionableDiscoveries = discoveries.filter((item) => item.status === 'pending' && item.suggestion_type !== 'warning');
   const warningDiscoveries = discoveries.filter((item) => item.suggestion_type === 'warning' || item.status !== 'pending');
@@ -111,14 +118,16 @@ export default function KnowledgeManagePage() {
     setLoading(true);
     const suffix = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
     try {
-      const [docRows, discoveryRows, kbRows] = await Promise.all([
+      const [docRows, discoveryRows, kbRows, agentRows] = await Promise.all([
         api.get<KnowledgeDocumentRead[]>(`/api/enterprise/knowledge/documents?tenant_id=${TENANT_ID}${suffix}`),
         api.get<KnowledgeDiscoveryRead[]>(`/api/enterprise/knowledge/discoveries?tenant_id=${TENANT_ID}${suffix}`),
         api.get<KnowledgeBaseRead[]>(`/api/enterprise/knowledge-bases?tenant_id=${TENANT_ID}${suffix}`),
+        api.get<AgentProfileRead[]>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`),
       ]);
       setDocuments(docRows);
       setDiscoveries(discoveryRows);
       setKnowledgeBases(kbRows);
+      setAgents(agentRows);
       const current = selectedDocument ? docRows.find((item) => item.id === selectedDocument.id) || null : docRows[0] || null;
       setSelectedDocument(current);
       if (current) {
@@ -165,6 +174,74 @@ export default function KnowledgeManagePage() {
     }
   }
 
+  async function openImportKnowledgeBases() {
+    try {
+      const agentRows = agents.length ? agents : await api.get<AgentProfileRead[]>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`);
+      setAgents(agentRows);
+      const firstSource = agentRows.find((item) => item.id !== agentId)?.id || '';
+      setImportSourceAgentId(firstSource);
+      setImportSelectedKnowledgeBaseIds([]);
+      setImportOpen(true);
+      if (firstSource) {
+        await loadImportSourceKnowledgeBases(firstSource);
+      } else {
+        setImportSourceKnowledgeBases([]);
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '加载智能体失败');
+    }
+  }
+
+  async function loadImportSourceKnowledgeBases(sourceAgentId: string) {
+    setImportSourceKnowledgeBases([]);
+    setImportSelectedKnowledgeBaseIds([]);
+    if (!sourceAgentId) return;
+    try {
+      const rows = await api.get<KnowledgeBaseRead[]>(
+        `/api/enterprise/knowledge-bases?tenant_id=${TENANT_ID}&agent_id=${encodeURIComponent(sourceAgentId)}`,
+      );
+      setImportSourceKnowledgeBases(rows);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '加载来源知识库失败');
+    }
+  }
+
+  async function submitImportKnowledgeBases() {
+    if (!agentId) {
+      message.warning('请先选择目标智能体');
+      return;
+    }
+    if (!importSourceAgentId) {
+      message.warning('请选择来源智能体');
+      return;
+    }
+    if (importSelectedKnowledgeBaseIds.length === 0) {
+      message.warning('请选择要导入的知识库');
+      return;
+    }
+    setImportLoading(true);
+    try {
+      const result = await api.post<{ imported: Array<Record<string, unknown>>; missing: Array<Record<string, unknown>> }>(
+        `/api/enterprise/agents/${agentId}/resources/import`,
+        {
+          tenant_id: TENANT_ID,
+          source_agent_id: importSourceAgentId,
+          resource_type: 'knowledge_base',
+          resource_ids: importSelectedKnowledgeBaseIds,
+        },
+      );
+      const importedCount = result.imported?.length || 0;
+      const missingCount = result.missing?.length || 0;
+      message.success(`已导入 ${importedCount} 个知识库${missingCount ? `，${missingCount} 个未导入` : ''}`);
+      setImportOpen(false);
+      await refresh();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '导入失败');
+    } finally {
+      setImportLoading(false);
+    }
+  }
+
   const documentColumns: ColumnsType<KnowledgeDocumentRead> = [
     {
       title: '知识',
@@ -192,6 +269,7 @@ export default function KnowledgeManagePage() {
         </div>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => refresh()} loading={loading}>刷新</Button>
+          <Button onClick={() => void openImportKnowledgeBases()}>从智能体导入</Button>
           <Button type="primary" icon={<FileAddOutlined />} onClick={() => navigate('/enterprise/knowledge/new')}>
             新增知识
           </Button>
@@ -296,6 +374,49 @@ export default function KnowledgeManagePage() {
           </Col>
         </Row>
       </Card>
+      <Modal
+        open={importOpen}
+        title="从其他智能体导入知识库"
+        width={720}
+        okText="导入"
+        cancelText="取消"
+        confirmLoading={importLoading}
+        onOk={() => void submitImportKnowledgeBases()}
+        onCancel={() => setImportOpen(false)}
+      >
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <Select
+            value={importSourceAgentId || undefined}
+            placeholder="选择来源智能体"
+            onChange={(value) => {
+              setImportSourceAgentId(value);
+              void loadImportSourceKnowledgeBases(value);
+            }}
+            options={agents
+              .filter((item) => item.id !== agentId)
+              .map((item) => ({
+                value: item.id,
+                label: `${item.name}${item.is_overall ? '（整体）' : ''}`,
+              }))}
+            style={{ width: '100%' }}
+          />
+          <Select
+            mode="multiple"
+            value={importSelectedKnowledgeBaseIds}
+            placeholder="选择一个或多个知识库"
+            onChange={setImportSelectedKnowledgeBaseIds}
+            options={importSourceKnowledgeBases.map((item) => ({
+              value: item.id,
+              label: `${item.name} · ${item.version || '1.0.0'} · ${item.status}`,
+            }))}
+            optionFilterProp="label"
+            style={{ width: '100%' }}
+          />
+          <Typography.Text type="secondary">
+            导入会复制来源智能体中选中知识库的分支版本；目标为整体智能体时，会将来源分支推送为整体知识库新版本。
+          </Typography.Text>
+        </Space>
+      </Modal>
     </div>
   );
 }

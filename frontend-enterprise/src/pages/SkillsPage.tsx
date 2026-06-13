@@ -16,7 +16,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, TENANT_ID } from '../api/client';
-import type { SkillRead, SkillVersionRead } from '../types';
+import type { AgentProfileRead, SkillRead, SkillVersionRead } from '../types';
 import GeneralSkillsPage from './GeneralSkillsPage';
 
 const ENTERPRISE_AGENT_STORAGE_KEY = 'ultrarag_enterprise_agent_scope';
@@ -70,6 +70,12 @@ export default function SkillsPage() {
   const [searchText, setSearchText] = useState('');
   const [statusFilter, setStatusFilter] = useState<SkillStatusFilter>('all');
   const [branchFilter, setBranchFilter] = useState<BranchFilter>('all');
+  const [agents, setAgents] = useState<AgentProfileRead[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importSourceAgentId, setImportSourceAgentId] = useState('');
+  const [importSourceSkills, setImportSourceSkills] = useState<SkillRead[]>([]);
+  const [importSelectedSkillIds, setImportSelectedSkillIds] = useState<string[]>([]);
+  const [importLoading, setImportLoading] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -77,8 +83,9 @@ export default function SkillsPage() {
       const suffix = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
       const result = await api.get<SkillRead[]>(`/api/enterprise/skills?tenant_id=${TENANT_ID}${suffix}`);
       setRows(result);
-      const agents = await api.get<Array<{ id: string; is_overall: boolean }>>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`);
-      setIsOverallAgent(Boolean(agents.find((item) => item.id === agentId)?.is_overall ?? true));
+      const agentRows = await api.get<AgentProfileRead[]>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`);
+      setAgents(agentRows);
+      setIsOverallAgent(Boolean(agentRows.find((item) => item.id === agentId)?.is_overall ?? true));
     } catch (error) {
       message.error(error instanceof Error ? error.message : '加载失败');
     } finally {
@@ -245,6 +252,72 @@ export default function SkillsPage() {
     navigate(`/enterprise/skills/distill?mode=create${agentId ? `&agent_id=${encodeURIComponent(agentId)}` : ''}`);
   }
 
+  async function openImport() {
+    try {
+      const agentRows = agents.length ? agents : await api.get<AgentProfileRead[]>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`);
+      setAgents(agentRows);
+      const firstSource = agentRows.find((item) => item.id !== agentId)?.id || '';
+      setImportSourceAgentId(firstSource);
+      setImportSelectedSkillIds([]);
+      setImportOpen(true);
+      if (firstSource) {
+        await loadImportSourceSkills(firstSource);
+      } else {
+        setImportSourceSkills([]);
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '加载智能体失败');
+    }
+  }
+
+  async function loadImportSourceSkills(sourceAgentId: string) {
+    setImportSourceSkills([]);
+    setImportSelectedSkillIds([]);
+    if (!sourceAgentId) return;
+    try {
+      const sourceRows = await api.get<SkillRead[]>(`/api/enterprise/agents/${sourceAgentId}/skills?tenant_id=${TENANT_ID}`);
+      setImportSourceSkills(sourceRows);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '加载来源技能失败');
+    }
+  }
+
+  async function submitImportSkills() {
+    if (!agentId) {
+      message.warning('请先选择目标智能体');
+      return;
+    }
+    if (!importSourceAgentId) {
+      message.warning('请选择来源智能体');
+      return;
+    }
+    if (importSelectedSkillIds.length === 0) {
+      message.warning('请选择要导入的技能');
+      return;
+    }
+    setImportLoading(true);
+    try {
+      const result = await api.post<{ imported: Array<Record<string, unknown>>; missing: Array<Record<string, unknown>> }>(
+        `/api/enterprise/agents/${agentId}/resources/import`,
+        {
+          tenant_id: TENANT_ID,
+          source_agent_id: importSourceAgentId,
+          resource_type: 'skill',
+          resource_ids: importSelectedSkillIds,
+        },
+      );
+      const importedCount = result.imported?.length || 0;
+      const missingCount = result.missing?.length || 0;
+      message.success(`已导入 ${importedCount} 个技能${missingCount ? `，${missingCount} 个未导入` : ''}`);
+      setImportOpen(false);
+      await load();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '导入失败');
+    } finally {
+      setImportLoading(false);
+    }
+  }
+
   function openEdit(row: SkillRead) {
     const suffix = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
     navigate(`/enterprise/skills/distill?skill_id=${encodeURIComponent(row.skill_id)}${suffix}`);
@@ -373,9 +446,12 @@ export default function SkillsPage() {
                   className="data-card"
                   title="场景化技能列表"
                   extra={(
-                    <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-                      新建
-                    </Button>
+                    <Space>
+                      <Button onClick={() => void openImport()}>从智能体导入</Button>
+                      <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+                        新建
+                      </Button>
+                    </Space>
                   )}
                 >
                   <div className="skill-table-toolbar">
@@ -465,6 +541,49 @@ export default function SkillsPage() {
           },
         ]}
       />
+      <Modal
+        open={importOpen}
+        title="从其他智能体导入技能"
+        width={720}
+        okText="导入"
+        cancelText="取消"
+        confirmLoading={importLoading}
+        onOk={() => void submitImportSkills()}
+        onCancel={() => setImportOpen(false)}
+      >
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <Select
+            value={importSourceAgentId || undefined}
+            placeholder="选择来源智能体"
+            onChange={(value) => {
+              setImportSourceAgentId(value);
+              void loadImportSourceSkills(value);
+            }}
+            options={agents
+              .filter((item) => item.id !== agentId)
+              .map((item) => ({
+                value: item.id,
+                label: `${item.name}${item.is_overall ? '（整体）' : ''}`,
+              }))}
+            style={{ width: '100%' }}
+          />
+          <Select
+            mode="multiple"
+            value={importSelectedSkillIds}
+            placeholder="选择一个或多个技能"
+            onChange={setImportSelectedSkillIds}
+            options={importSourceSkills.map((item) => ({
+              value: item.id,
+              label: `${item.name} · ${item.skill_id} · ${statusText(item.status)}`,
+            }))}
+            optionFilterProp="label"
+            style={{ width: '100%' }}
+          />
+          <Typography.Text type="secondary">
+            导入会复制来源智能体中的技能分支内容和上下线状态；目标为整体智能体时，会把来源分支推送为整体新版本。
+          </Typography.Text>
+        </Space>
+      </Modal>
       <Modal
         open={Boolean(rankingModal)}
         title={rankingModalTitle}
