@@ -163,7 +163,7 @@ def list_skills(
     agent_id: str | None = None,
 ) -> list[SkillRead]:
     ensure_tenant(db, tenant_id)
-    rows = visible_skill_rows(db, tenant_id, agent_id)
+    rows = visible_skill_rows(db, tenant_id, agent_id, include_inactive=True)
     stats = _skill_stats(db, tenant_id)
     recent_stats = _recent_skill_stats(db, tenant_id, stats)
     return [skill_read(row, stats, recent_stats) for row in rows]

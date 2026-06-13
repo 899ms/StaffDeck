@@ -205,7 +205,7 @@ def get_agent_skills(
     db: Session = Depends(get_session),
 ) -> list[dict[str, object]]:
     _get_agent(db, tenant_id, agent_id)
-    return [_skill_branch_read(skill) for skill in visible_skill_rows(db, tenant_id, agent_id)]
+    return [_skill_branch_read(skill) for skill in visible_skill_rows(db, tenant_id, agent_id, include_inactive=True)]
 
 
 @enterprise_router.post("/{agent_id}/skills/{skill_id}/sync-from-overall")

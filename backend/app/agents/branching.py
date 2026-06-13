@@ -64,17 +64,23 @@ def require_overall_agent(db: Session, tenant_id: str, agent_id: str | None) -> 
         raise HTTPException(status_code=403, detail="Only the overall agent can delete global resources")
 
 
-def project_skill_with_branch(skill: Skill, branch: AgentSkillBranch | None) -> Skill:
+def project_skill_with_branch(
+    skill: Skill,
+    branch: AgentSkillBranch | None,
+    binding_status: str | None = None,
+) -> Skill:
     if not branch:
         return skill
     content = dict(branch.content_json or {})
     content["version"] = branch.head_version
+    is_visible = branch.status == "active" and (binding_status in {None, "active"})
     metadata = {
         "agent_id": branch.agent_id,
         "base_version": branch.base_version,
         "head_version": branch.head_version,
         "sync_state": branch.sync_state,
         "status": branch.status,
+        "binding_status": binding_status,
     }
     projected = Skill(
         id=skill.id,
@@ -85,7 +91,7 @@ def project_skill_with_branch(skill: Skill, branch: AgentSkillBranch | None) -> 
         business_domain=branch.content_json.get("business_domain") or skill.business_domain,
         description=branch.content_json.get("description") or skill.description,
         content_json=content,
-        status="published" if branch.status == "active" else "archived",
+        status="published" if is_visible else "archived",
         created_at=skill.created_at,
         updated_at=branch.updated_at,
     )
@@ -93,13 +99,19 @@ def project_skill_with_branch(skill: Skill, branch: AgentSkillBranch | None) -> 
     return projected
 
 
-def visible_skill_rows(db: Session, tenant_id: str, agent_id: str | None = None) -> list[Skill]:
+def visible_skill_rows(
+    db: Session,
+    tenant_id: str,
+    agent_id: str | None = None,
+    include_inactive: bool = False,
+) -> list[Skill]:
     agent = get_agent(db, tenant_id, agent_id)
     if not agent or agent.is_overall:
+        status_clause = Skill.status != "deleted" if include_inactive else Skill.status == "published"
         return list(
             db.exec(
                 select(Skill)
-                .where(Skill.tenant_id == tenant_id)
+                .where(Skill.tenant_id == tenant_id, status_clause)
                 .order_by(Skill.updated_at.desc())
             ).all()
         )
@@ -109,15 +121,18 @@ def visible_skill_rows(db: Session, tenant_id: str, agent_id: str | None = None)
             AgentResourceBinding.tenant_id == tenant_id,
             AgentResourceBinding.agent_id == agent.id,
             AgentResourceBinding.resource_type == "skill",
-            AgentResourceBinding.status == "active",
         )
     ).all()
     for binding in bindings:
+        if not include_inactive and binding.status != "active":
+            continue
         skill = db.get(Skill, binding.resource_id)
         if not skill or skill.tenant_id != tenant_id:
             continue
         branch = ensure_agent_skill_branch(db, tenant_id, agent.id, skill)
-        rows.append(project_skill_with_branch(skill, branch))
+        if not include_inactive and branch.status != "active":
+            continue
+        rows.append(project_skill_with_branch(skill, branch, binding.status))
     return sorted(rows, key=lambda item: item.updated_at, reverse=True)
 
 

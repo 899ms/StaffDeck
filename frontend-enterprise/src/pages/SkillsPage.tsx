@@ -11,7 +11,7 @@ import {
   SyncOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
-import { Button, Card, Col, Descriptions, Dropdown, Modal, Row, Segmented, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Button, Card, Col, Descriptions, Dropdown, Input, Modal, Row, Segmented, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -31,6 +31,8 @@ type RankingMode = 'calls' | 'positive' | 'negative';
 type RankingScope = 'current' | 'total';
 type RankedSkill = SkillRead & { rank: number };
 type RankingModalState = { mode: RankingMode; scope: RankingScope };
+type SkillStatusFilter = 'all' | SkillRead['status'];
+type BranchFilter = 'all' | 'synced' | 'diverged' | 'inactive';
 type NumericSkillMetric =
   | 'call_count'
   | 'positive_feedback_count'
@@ -61,7 +63,13 @@ export default function SkillsPage() {
   const [versionModalOpen, setVersionModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [agentId, setAgentId] = useState(() => window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY) || '');
-  const [isOverallAgent, setIsOverallAgent] = useState(true);
+  const [isOverallAgent, setIsOverallAgent] = useState(() => {
+    const stored = window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY) || '';
+    return !stored || stored.includes('overall');
+  });
+  const [searchText, setSearchText] = useState('');
+  const [statusFilter, setStatusFilter] = useState<SkillStatusFilter>('all');
+  const [branchFilter, setBranchFilter] = useState<BranchFilter>('all');
 
   const load = async () => {
     setLoading(true);
@@ -91,6 +99,23 @@ export default function SkillsPage() {
     return () => window.removeEventListener('ultrarag-enterprise-agent-scope-change', onScopeChange);
   }, []);
 
+  const filteredRows = useMemo(() => {
+    const keyword = searchText.trim().toLowerCase();
+    return rows.filter((row) => {
+      const matchesKeyword = !keyword || [
+        row.name,
+        row.skill_id,
+        row.business_domain || '',
+        row.description || '',
+        row.version,
+      ].some((value) => value.toLowerCase().includes(keyword));
+      const matchesStatus = statusFilter === 'all' || row.status === statusFilter;
+      const branchState = row.branch_status === 'inactive' ? 'inactive' : row.branch_sync_state || 'synced';
+      const matchesBranch = isOverallAgent || branchFilter === 'all' || branchState === branchFilter;
+      return matchesKeyword && matchesStatus && matchesBranch;
+    });
+  }, [branchFilter, isOverallAgent, rows, searchText, statusFilter]);
+
   const columns: ColumnsType<SkillRead> = useMemo(
     () => [
       { title: '技能名称', dataIndex: 'name', width: 180, ellipsis: true },
@@ -102,6 +127,7 @@ export default function SkillsPage() {
         width: 120,
         render: (_, row) => {
           if (isOverallAgent) return <Tag>主干</Tag>;
+          if (row.branch_status === 'inactive') return <Tag>已下线</Tag>;
           const state = row.branch_sync_state || 'synced';
           return <Tag color={state === 'diverged' ? 'orange' : 'green'}>{state === 'diverged' ? '已分叉' : '已同步'}</Tag>;
         },
@@ -139,8 +165,9 @@ export default function SkillsPage() {
               items: [
                 { key: 'edit', icon: <EditOutlined />, label: isOverallAgent ? '编辑' : '编辑分支' },
                 { key: 'versions', icon: <HistoryOutlined />, label: '版本管理' },
-                { key: 'publish', icon: <CheckCircleOutlined />, label: isOverallAgent ? '发布' : '分支上线' },
-                { key: 'archive', icon: <StopOutlined />, label: isOverallAgent ? '下线' : '分支下线' },
+                row.status === 'published'
+                  ? { key: 'archive', icon: <StopOutlined />, label: isOverallAgent ? '下线' : '分支下线' }
+                  : { key: 'publish', icon: <CheckCircleOutlined />, label: isOverallAgent ? '发布/上线' : '分支上线' },
                 ...(!isOverallAgent
                   ? [
                       { key: 'sync', icon: <SyncOutlined />, label: '同步整体' },
@@ -351,10 +378,45 @@ export default function SkillsPage() {
                     </Button>
                   )}
                 >
+                  <div className="skill-table-toolbar">
+                    <Input.Search
+                      allowClear
+                      placeholder="搜索技能名称、ID、业务域"
+                      value={searchText}
+                      onChange={(event) => setSearchText(event.target.value)}
+                      style={{ maxWidth: 360 }}
+                    />
+                    <Space wrap>
+                      <Select<SkillStatusFilter>
+                        value={statusFilter}
+                        onChange={setStatusFilter}
+                        style={{ width: 140 }}
+                        options={[
+                          { label: '全部状态', value: 'all' },
+                          { label: '已发布', value: 'published' },
+                          { label: '草稿', value: 'draft' },
+                          { label: '已下线', value: 'archived' },
+                        ]}
+                      />
+                      {!isOverallAgent && (
+                        <Select<BranchFilter>
+                          value={branchFilter}
+                          onChange={setBranchFilter}
+                          style={{ width: 148 }}
+                          options={[
+                            { label: '全部分支', value: 'all' },
+                            { label: '已同步', value: 'synced' },
+                            { label: '已分叉', value: 'diverged' },
+                            { label: '分支下线', value: 'inactive' },
+                          ]}
+                        />
+                      )}
+                    </Space>
+                  </div>
                   <Table
                     rowKey="id"
                     columns={columns}
-                    dataSource={rows}
+                    dataSource={filteredRows}
                     loading={loading}
                     pagination={{ pageSize: 10 }}
                     scroll={{ x: 1080 }}

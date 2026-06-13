@@ -2256,10 +2256,6 @@ function SkillFlow({
 }) {
   const nodes = skillGraphSteps(skill);
   const edgeMap = skillGraphEdgeMap(skill);
-  const incomingEdgeMap = skillGraphIncomingEdgeMap(skill);
-  const layout = buildSkillFlowLayout(skill, nodes);
-  const maxLayerSize = Math.max(1, ...layout.layers.map((layer) => layer.length));
-  const flowLayerWidth = maxLayerSize > 1 ? maxLayerSize * 340 + (maxLayerSize - 1) * 42 : 340;
   const terminalSet = new Set(asStringList(skill.terminal_node_ids));
   const nodeNameMap = Object.fromEntries(
     nodes.map((node, index) => {
@@ -2267,6 +2263,7 @@ function SkillFlow({
       return [nodeId, String(node.name || nodeId)];
     }),
   );
+  const graphLayout = buildSkillFlowCanvasLayout(skill, nodes, nodeNameMap);
   return (
     <div className="skill-flow" ref={containerRef}>
       <SelectableTarget
@@ -2291,78 +2288,64 @@ function SkillFlow({
           </FlowMetaRow>
         </div>
       </SelectableTarget>
-      <div className="skill-flow-graph-canvas">
-        {layout.layers.map((layer, layerIndex) => {
-          return (
-            <div className="skill-flow-layer-block" key={`layer_${layerIndex}`}>
-              {layerIndex > 0 && <div className="skill-flow-layer-spine" />}
-              <div
-                className={`skill-flow-layer ${layer.length > 1 ? 'branching' : ''}`}
-                style={{
-                  gridTemplateColumns: `repeat(${Math.max(1, layer.length)}, minmax(286px, 340px))`,
-                  justifyContent: layer.length < maxLayerSize ? 'center' : 'start',
-                  width: flowLayerWidth,
-                }}
-              >
-                {layer.map((item) => {
-                  const incomingEdges = incomingEdgeMap[item.nodeId] || [];
-                  return (
-                    <div className="skill-flow-branch" key={item.nodeId}>
-                      {layerIndex > 0 && (
-                        <FlowIncomingEdges
-                          edges={incomingEdges}
-                          nodeNameMap={nodeNameMap}
-                          fallback={layer.length > 1 ? '分支流转' : '继续流转'}
-                        />
-                      )}
-                      <SkillFlowNodeCard
-                        index={item.index}
-                        step={item.step}
-                        terminal={terminalSet.has(item.nodeId)}
-                        outgoingEdges={edgeMap[item.nodeId] || []}
-                        selectedPaths={selectedPaths}
-                        highlightedPaths={highlightedPaths}
-                        updatingPaths={updatingPaths}
-                        dirtyPaths={dirtyPaths}
-                        textDiffs={textDiffs}
-                        toolDescriptions={toolDescriptions}
-                        toolStatuses={toolStatuses}
-                        nodeNameMap={nodeNameMap}
-                        onToggle={onToggle}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function FlowIncomingEdges({
-  edges,
-  nodeNameMap,
-  fallback,
-}: {
-  edges: Array<Record<string, unknown>>;
-  nodeNameMap: Record<string, string>;
-  fallback: string;
-}) {
-  const labels = edges.length > 0
-    ? edges.map((edge) => incomingEdgeLabel(edge, nodeNameMap))
-    : [fallback];
-  return (
-    <div className="skill-flow-incoming">
-      <span className="skill-flow-incoming-line" />
-      <div className="skill-flow-incoming-chips">
-        {labels.map((label, index) => (
-          <span className="skill-flow-edge-chip" key={`${label}_${index}`}>{label}</span>
+      <div
+        className="skill-flow-graph-canvas"
+        style={{ width: graphLayout.width, height: graphLayout.height }}
+      >
+        <svg
+          className="skill-flow-edges"
+          width={graphLayout.width}
+          height={graphLayout.height}
+          viewBox={`0 0 ${graphLayout.width} ${graphLayout.height}`}
+          aria-hidden="true"
+        >
+          <defs>
+            <marker id="skill-flow-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" />
+            </marker>
+          </defs>
+          {graphLayout.edges.map((edge) => (
+            <path
+              className="skill-flow-edge-path"
+              d={edge.path}
+              key={edge.id}
+              markerEnd="url(#skill-flow-arrow)"
+            />
+          ))}
+        </svg>
+        {graphLayout.edges.map((edge) => (
+          <span
+            className="skill-flow-edge-label"
+            key={`${edge.id}_label`}
+            style={{ left: edge.labelX, top: edge.labelY }}
+            title={edge.title}
+          >
+            {edge.label}
+          </span>
+        ))}
+        {graphLayout.nodes.map((item) => (
+          <div
+            className="skill-flow-node-position"
+            key={item.nodeId}
+            style={{ left: item.x, top: item.y }}
+          >
+            <SkillFlowNodeCard
+              index={item.index}
+              step={item.step}
+              terminal={terminalSet.has(item.nodeId)}
+              outgoingEdges={edgeMap[item.nodeId] || []}
+              selectedPaths={selectedPaths}
+              highlightedPaths={highlightedPaths}
+              updatingPaths={updatingPaths}
+              dirtyPaths={dirtyPaths}
+              textDiffs={textDiffs}
+              toolDescriptions={toolDescriptions}
+              toolStatuses={toolStatuses}
+              onToggle={onToggle}
+            />
+          </div>
         ))}
       </div>
-      <span className="skill-flow-incoming-line bottom" />
     </div>
   );
 }
@@ -2379,7 +2362,6 @@ function SkillFlowNodeCard({
   textDiffs,
   toolDescriptions,
   toolStatuses,
-  nodeNameMap,
   onToggle,
 }: {
   index: number;
@@ -2393,7 +2375,6 @@ function SkillFlowNodeCard({
   textDiffs: TextDiffAnimation[];
   toolDescriptions: ToolDescriptionMap;
   toolStatuses: ToolStatusMap;
-  nodeNameMap: Record<string, string>;
   onToggle: (target: TargetSelection) => void;
 }) {
   const nodeId = String(step.node_id || step.step_id || `node_${index + 1}`);
@@ -2433,12 +2414,7 @@ function SkillFlowNodeCard({
               <ActionList actions={actionList.slice(0, 4)} toolDescriptions={toolDescriptions} toolStatuses={toolStatuses} />
             </div>
           )}
-          {outgoingEdges.length > 0 && (
-            <div className="skill-flow-compact-row skill-flow-edge-targets">
-              <span>流转</span>
-              <PlainChipList values={outgoingEdges.map((edge) => edgeLabel(edge, nodeNameMap))} />
-            </div>
-          )}
+          {outgoingEdges.length > 0 && <span className="skill-flow-route-count">{outgoingEdges.length} 条流转</span>}
         </div>
       </SelectableTarget>
     </div>
@@ -2499,15 +2475,93 @@ function skillGraphEdgeMap(skill: SkillCard): Record<string, Array<Record<string
   return map;
 }
 
-function skillGraphIncomingEdgeMap(skill: SkillCard): Record<string, Array<Record<string, unknown>>> {
-  const map: Record<string, Array<Record<string, unknown>>> = {};
-  (Array.isArray(skill.edges) ? skill.edges : []).forEach((edge) => {
-    const target = String(edge.next_node_id || '');
-    if (!target) return;
-    if (!map[target]) map[target] = [];
-    map[target].push(edge);
+type SkillFlowCanvasNode = {
+  nodeId: string;
+  step: Record<string, unknown>;
+  index: number;
+  x: number;
+  y: number;
+};
+
+type SkillFlowCanvasEdge = {
+  id: string;
+  label: string;
+  title: string;
+  path: string;
+  labelX: number;
+  labelY: number;
+};
+
+function buildSkillFlowCanvasLayout(
+  skill: SkillCard,
+  nodes: Array<Record<string, unknown>>,
+  nodeNameMap: Record<string, string>,
+) {
+  const layerLayout = buildSkillFlowLayout(skill, nodes);
+  const cardWidth = 340;
+  const cardHeight = 248;
+  const columnGap = 74;
+  const rowGap = 148;
+  const paddingX = 56;
+  const paddingY = 36;
+  const maxLayerSize = Math.max(1, ...layerLayout.layers.map((layer) => layer.length));
+  const width = Math.max(760, paddingX * 2 + maxLayerSize * cardWidth + (maxLayerSize - 1) * columnGap);
+  const positionedNodes: SkillFlowCanvasNode[] = [];
+  const positionMap = new Map<string, SkillFlowCanvasNode>();
+
+  layerLayout.layers.forEach((layer, layerIndex) => {
+    const layerWidth = layer.length * cardWidth + Math.max(0, layer.length - 1) * columnGap;
+    const startX = paddingX + Math.max(0, (width - paddingX * 2 - layerWidth) / 2);
+    layer.forEach((item, itemIndex) => {
+      const positioned = {
+        ...item,
+        x: startX + itemIndex * (cardWidth + columnGap),
+        y: paddingY + layerIndex * (cardHeight + rowGap),
+      };
+      positionedNodes.push(positioned);
+      positionMap.set(item.nodeId, positioned);
+    });
   });
-  return map;
+
+  const rawEdges = Array.isArray(skill.edges) ? skill.edges : [];
+  const edgeSiblingCounts = rawEdges.reduce<Record<string, number>>((acc, edge) => {
+    const sourceId = String(edge.source_node_id || '');
+    if (sourceId) acc[sourceId] = (acc[sourceId] || 0) + 1;
+    return acc;
+  }, {});
+  const edgeSiblingIndexes: Record<string, number> = {};
+  const layoutEdges: SkillFlowCanvasEdge[] = [];
+  rawEdges.forEach((edge, index) => {
+    const sourceId = String(edge.source_node_id || '');
+    const targetId = String(edge.next_node_id || '');
+    const source = positionMap.get(sourceId);
+    const target = positionMap.get(targetId);
+    if (!source || !target) return;
+    const sourceX = source.x + cardWidth / 2;
+    const sourceY = source.y + cardHeight;
+    const targetX = target.x + cardWidth / 2;
+    const targetY = target.y;
+    const distanceY = Math.max(80, targetY - sourceY);
+    const bendY = sourceY + distanceY * 0.5;
+    const path = `M ${sourceX} ${sourceY} C ${sourceX} ${bendY}, ${targetX} ${bendY}, ${targetX} ${targetY}`;
+    const label = edgeDisplayLabel(edge, nodeNameMap);
+    const title = incomingEdgeLabel(edge, nodeNameMap);
+    const siblingCount = edgeSiblingCounts[sourceId] || 1;
+    const siblingIndex = edgeSiblingIndexes[sourceId] || 0;
+    edgeSiblingIndexes[sourceId] = siblingIndex + 1;
+    const labelOffset = siblingCount > 1 ? (siblingIndex - (siblingCount - 1) / 2) * 28 : 0;
+    layoutEdges.push({
+      id: `${sourceId}_${targetId}_${index}`,
+      label,
+      title,
+      path,
+      labelX: (sourceX + targetX) / 2,
+      labelY: bendY + labelOffset,
+    });
+  });
+
+  const height = paddingY * 2 + layerLayout.layers.length * cardHeight + Math.max(0, layerLayout.layers.length - 1) * rowGap;
+  return { width, height, nodes: positionedNodes, edges: layoutEdges };
 }
 
 function buildSkillFlowLayout(skill: SkillCard, nodes: Array<Record<string, unknown>>) {
@@ -2559,17 +2613,6 @@ function buildSkillFlowLayout(skill: SkillCard, nodes: Array<Record<string, unkn
   return { layers };
 }
 
-function edgeLabel(edge: Record<string, unknown>, nodeNameMap: Record<string, string> = {}): string {
-  const target = String(edge.next_node_id || '-');
-  const targetName = target && nodeNameMap[target] ? nodeNameMap[target] : target;
-  const label = String(edge.label || '');
-  const condition = String(edge.condition || '');
-  if (label && condition) return `${label} -> ${targetName}（${condition}）`;
-  if (label) return `${label} -> ${targetName}`;
-  if (condition) return `${targetName}（${condition}）`;
-  return targetName;
-}
-
 function incomingEdgeLabel(edge: Record<string, unknown>, nodeNameMap: Record<string, string> = {}): string {
   const source = String(edge.source_node_id || '');
   const sourceName = source && nodeNameMap[source] ? nodeNameMap[source] : source;
@@ -2578,6 +2621,16 @@ function incomingEdgeLabel(edge: Record<string, unknown>, nodeNameMap: Record<st
   if (label && condition) return `${label}（${condition}）`;
   if (label) return label;
   if (condition) return condition;
+  return sourceName ? `来自 ${sourceName}` : '流转';
+}
+
+function edgeDisplayLabel(edge: Record<string, unknown>, nodeNameMap: Record<string, string> = {}): string {
+  const label = String(edge.label || '').trim();
+  if (label) return label;
+  const condition = String(edge.condition || '').trim();
+  if (condition) return condition;
+  const source = String(edge.source_node_id || '');
+  const sourceName = source && nodeNameMap[source] ? nodeNameMap[source] : source;
   return sourceName ? `来自 ${sourceName}` : '流转';
 }
 
