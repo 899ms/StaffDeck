@@ -258,17 +258,20 @@ export default function KnowledgeManagePage() {
   }
 
   function deleteKnowledgeBase(row: KnowledgeBaseRead) {
+    const branchMode = !isOverallAgent;
     Modal.confirm({
-      title: `删除知识库：${row.name}`,
-      content: '只有整体智能体可以删除知识库；有文档的知识库会被归档，避免误删内容。',
-      okText: '删除',
+      title: branchMode ? `从当前智能体移除知识库：${row.name}` : `删除知识库：${row.name}`,
+      content: branchMode
+        ? '这只会在当前分支智能体中隐藏该知识库；整体智能体和其他分支仍然保留。'
+        : '整体智能体会删除或归档知识库；有文档的知识库会被归档，避免误删内容。',
+      okText: branchMode ? '移除' : '删除',
       okButtonProps: { danger: true },
       cancelText: '取消',
       async onOk() {
         const suffix = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
         try {
           await api.delete(`/api/enterprise/knowledge-bases/${row.id}?tenant_id=${TENANT_ID}${suffix}`);
-          message.success('已处理删除请求');
+          message.success(branchMode ? '已从当前智能体移除知识库' : '已处理删除请求');
           await refresh();
         } catch (error) {
           message.error(error instanceof Error ? error.message : '删除失败');
@@ -471,7 +474,12 @@ export default function KnowledgeManagePage() {
                             item.status === 'archived'
                               ? { key: 'publish', label: '上线' }
                               : { key: 'archive', label: '下线' },
-                            isOverallAgent ? { key: 'delete', icon: <DeleteOutlined />, label: '删除', danger: true } : null,
+                            {
+                              key: 'delete',
+                              icon: <DeleteOutlined />,
+                              label: isOverallAgent ? '删除' : '从当前智能体移除',
+                              danger: true,
+                            },
                           ].filter(Boolean),
                           onClick: ({ key }) => {
                             if (key === 'edit') openEditKnowledgeBase(item);

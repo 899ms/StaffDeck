@@ -349,8 +349,37 @@ def delete_skill(
     db: Session = Depends(get_session),
     agent_id: str | None = None,
 ) -> dict[str, str]:
-    require_overall_agent(db, tenant_id, agent_id)
     row = _get_skill(db, tenant_id, skill_id)
+    agent = get_agent(db, tenant_id, agent_id)
+    if agent and not agent.is_overall:
+        binding = db.exec(
+            select(AgentResourceBinding).where(
+                AgentResourceBinding.tenant_id == tenant_id,
+                AgentResourceBinding.agent_id == agent.id,
+                AgentResourceBinding.resource_type == "skill",
+                AgentResourceBinding.resource_id == row.id,
+            )
+        ).first()
+        if not binding:
+            binding = AgentResourceBinding(
+                tenant_id=tenant_id,
+                agent_id=agent.id,
+                resource_type="skill",
+                resource_id=row.id,
+                status="deleted",
+            )
+        else:
+            binding.status = "deleted"
+            binding.updated_at = utc_now()
+        branch = ensure_agent_skill_branch(db, tenant_id, agent.id, row)
+        branch.status = "deleted"
+        branch.updated_at = utc_now()
+        db.add(binding)
+        db.add(branch)
+        db.commit()
+        return {"status": "hidden"}
+
+    require_overall_agent(db, tenant_id, agent_id)
     feedback_rows = db.exec(
         select(SkillFeedback).where(
             SkillFeedback.tenant_id == tenant_id,

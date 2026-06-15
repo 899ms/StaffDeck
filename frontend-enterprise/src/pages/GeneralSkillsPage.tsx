@@ -499,10 +499,13 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
   }
 
   function confirmDeleteSkill(row: GeneralSkillRead) {
+    const branchMode = !isOverallAgent;
     Modal.confirm({
-      title: `删除通用技能：${row.name}`,
-      content: '删除后该技能不会再出现在通用技能选择和对话调用中，此操作不可撤销。',
-      okText: '删除',
+      title: branchMode ? `从当前智能体移除通用技能：${row.name}` : `删除通用技能：${row.name}`,
+      content: branchMode
+        ? '这只会在当前分支智能体中隐藏该通用技能；整体智能体和其他分支仍然保留。'
+        : '删除后该技能不会再出现在整体通用技能池中，此操作不可撤销。',
+      okText: branchMode ? '移除' : '删除',
       okButtonProps: { danger: true },
       cancelText: '取消',
       async onOk() {
@@ -521,7 +524,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
               newSkill();
             }
           }
-          message.success('已删除通用技能');
+          message.success(branchMode ? '已从当前智能体移除通用技能' : '已删除通用技能');
         } catch (error) {
           message.error(error instanceof Error ? error.message : '删除失败');
         }
@@ -1207,7 +1210,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
                             row.status === 'published'
                               ? { key: 'archive', label: '下线' }
                               : { key: 'publish', label: '发布' },
-                            isOverallAgent ? { key: 'delete', label: '删除', danger: true } : null,
+                            { key: 'delete', label: isOverallAgent ? '删除' : '从当前智能体移除', danger: true },
                           ].filter(Boolean),
                           onClick: ({ key, domEvent }) => {
                             domEvent.stopPropagation();

@@ -213,7 +213,7 @@ def list_general_skills(
                 status_override="published" if binding.status == "active" else "archived",
             )
             for binding in bindings
-            if binding.resource_id in rows_by_id
+            if binding.status != "deleted" and binding.resource_id in rows_by_id
         ]
     rows = db.exec(
         select(GeneralSkill).where(GeneralSkill.tenant_id == tenant_id).order_by(GeneralSkill.updated_at.desc())
@@ -288,8 +288,17 @@ def delete_general_skill(
     agent_id: str | None = Query(None),
 ) -> dict[str, str]:
     agent_id = _agent_id_or_none(agent_id)
-    require_overall_agent(db, tenant_id, agent_id)
     row = _get_general_skill(db, tenant_id, slug)
+    agent = get_agent(db, tenant_id, agent_id)
+    if agent and not agent.is_overall:
+        binding = _ensure_general_skill_binding(db, tenant_id, agent.id, row.id)
+        binding.status = "deleted"
+        binding.updated_at = utc_now()
+        db.add(binding)
+        db.commit()
+        return {"status": "hidden", "slug": slug}
+
+    require_overall_agent(db, tenant_id, agent_id)
     db.delete(row)
     db.commit()
     return {"status": "deleted", "slug": slug}

@@ -575,9 +575,9 @@ def _seed_default_agents(conn, tables: set[str]) -> None:
 def _seed_default_agent_bindings(conn, tenant_id: str) -> None:
     default_agent = _default_agent_id(tenant_id)
     resource_queries = (
-        ("skill", "SELECT id FROM skills WHERE tenant_id = :tenant_id AND status != 'archived'"),
-        ("general_skill", "SELECT id FROM general_skills WHERE tenant_id = :tenant_id AND status != 'archived'"),
-        ("knowledge_base", "SELECT id FROM knowledge_bases WHERE tenant_id = :tenant_id AND status != 'archived'"),
+        ("skill", "SELECT id, status FROM skills WHERE tenant_id = :tenant_id AND status != 'deleted'"),
+        ("general_skill", "SELECT id, status FROM general_skills WHERE tenant_id = :tenant_id AND status != 'deleted'"),
+        ("knowledge_base", "SELECT id, status FROM knowledge_bases WHERE tenant_id = :tenant_id AND status != 'deleted'"),
     )
     for resource_type, sql in resource_queries:
         rows = conn.execute(text(sql), {"tenant_id": tenant_id}).mappings().all()
@@ -585,6 +585,7 @@ def _seed_default_agent_bindings(conn, tenant_id: str) -> None:
             resource_id = str(row.get("id") or "")
             if not resource_id:
                 continue
+            binding_status = "active" if str(row.get("status") or "") in {"active", "published"} else "inactive"
             existing = conn.execute(
                 text(
                     """
@@ -610,7 +611,7 @@ def _seed_default_agent_bindings(conn, tenant_id: str) -> None:
                         metadata_json, created_at, updated_at
                     )
                     VALUES (
-                        :id, :tenant_id, :agent_id, :resource_type, :resource_id, 'active',
+                        :id, :tenant_id, :agent_id, :resource_type, :resource_id, :status,
                         '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                     )
                     """
@@ -621,6 +622,7 @@ def _seed_default_agent_bindings(conn, tenant_id: str) -> None:
                     "agent_id": default_agent,
                     "resource_type": resource_type,
                     "resource_id": resource_id,
+                    "status": binding_status,
                 },
             )
 
@@ -647,7 +649,7 @@ def _seed_agent_branch_state(conn, inspector, tables: set[str]) -> None:
                      AND b.tenant_id = s.tenant_id
                     WHERE s.tenant_id = :tenant_id
                       AND b.agent_id = :agent_id
-                      AND s.status != 'archived'
+                      AND s.status != 'deleted'
                     """
                 ),
                 {"tenant_id": tenant_id, "agent_id": agent_id},
@@ -673,7 +675,7 @@ def _seed_agent_branch_state(conn, inspector, tables: set[str]) -> None:
                      AND b.tenant_id = kb.tenant_id
                     WHERE kb.tenant_id = :tenant_id
                       AND b.agent_id = :agent_id
-                      AND kb.status != 'archived'
+                      AND kb.status != 'deleted'
                     """
                 ),
                 {"tenant_id": tenant_id, "agent_id": agent_id},
@@ -733,6 +735,7 @@ def _seed_agent_skill_branch(conn, agent_id: str, row) -> None:
         return
     version = row.get("version") or "1.0.0"
     content_json = row.get("content_json") or "{}"
+    branch_status = "active" if str(row.get("status") or "") == "published" else "inactive"
     conn.execute(
         text(
             """
@@ -742,7 +745,7 @@ def _seed_agent_skill_branch(conn, agent_id: str, row) -> None:
             )
             VALUES (
                 :id, :tenant_id, :agent_id, :skill_id, :source_skill_id, :base_version, :head_version,
-                :content_json, 'active', 'synced', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                :content_json, :status, 'synced', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
             """
         ),
@@ -755,6 +758,7 @@ def _seed_agent_skill_branch(conn, agent_id: str, row) -> None:
             "base_version": version,
             "head_version": version,
             "content_json": content_json,
+            "status": branch_status,
         },
     )
     if "agent_skill_branch_versions" not in {table for table in inspect(engine).get_table_names()}:
@@ -775,7 +779,7 @@ def _seed_agent_skill_branch(conn, agent_id: str, row) -> None:
             )
             VALUES (
                 :id, :tenant_id, :agent_id, :skill_id, :source_skill_id, :version, :base_version,
-                :content_json, 'active', 'synced', '初始化分支', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                :content_json, :status, 'synced', '初始化分支', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
             """
         ),
@@ -788,6 +792,7 @@ def _seed_agent_skill_branch(conn, agent_id: str, row) -> None:
             "version": version,
             "base_version": version,
             "content_json": content_json,
+            "status": branch_status,
         },
     )
 
@@ -797,6 +802,7 @@ def _seed_agent_knowledge_branch(conn, agent_id: str, row) -> None:
     existing = conn.execute(text("SELECT id FROM agent_knowledge_branches WHERE id = :id"), {"id": branch_id}).first()
     if existing:
         return
+    branch_status = "active" if str(row.get("status") or "") == "active" else "inactive"
     conn.execute(
         text(
             """
@@ -806,7 +812,7 @@ def _seed_agent_knowledge_branch(conn, agent_id: str, row) -> None:
             )
             VALUES (
                 :id, :tenant_id, :agent_id, :knowledge_base_id, '1.0.0', '1.0.0',
-                'active', 'synced', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                :status, 'synced', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
             """
         ),
@@ -815,6 +821,7 @@ def _seed_agent_knowledge_branch(conn, agent_id: str, row) -> None:
             "tenant_id": row["tenant_id"],
             "agent_id": agent_id,
             "knowledge_base_id": row["id"],
+            "status": branch_status,
         },
     )
 

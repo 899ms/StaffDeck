@@ -17,6 +17,7 @@ import zhCN from 'antd/locale/zh_CN';
 import { useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { api, TENANT_ID } from './api/client';
+import AgentsPage from './pages/AgentsPage';
 import DashboardPage from './pages/DashboardPage';
 import DistillPage from './pages/DistillPage';
 import FeedbackPage from './pages/FeedbackPage';
@@ -76,6 +77,14 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
     loadAgents();
   }, []);
 
+  useEffect(() => {
+    const onAgentRefresh = () => {
+      void loadAgents();
+    };
+    window.addEventListener('ultrarag-enterprise-agent-scope-refresh', onAgentRefresh);
+    return () => window.removeEventListener('ultrarag-enterprise-agent-scope-refresh', onAgentRefresh);
+  }, []);
+
   function loadAgents() {
     return api
       .get<AgentProfileRead[]>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`)
@@ -98,6 +107,12 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
   }
 
   const selectedAgent = agents.find((item) => item.id === selectedAgentId);
+
+  useEffect(() => {
+    if (location.pathname === '/enterprise/agents' && selectedAgent && !selectedAgent.is_overall) {
+      navigate('/enterprise/dashboard', { replace: true });
+    }
+  }, [location.pathname, navigate, selectedAgent]);
 
   function openCreateAgentModal() {
     setAgentForm({
@@ -147,6 +162,9 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
               label: '工作区',
               children: [
                 { key: '/enterprise/dashboard', icon: <DashboardOutlined />, label: '看板' },
+                ...(selectedAgent?.is_overall
+                  ? [{ key: '/enterprise/agents', icon: <RobotOutlined />, label: '智能体' }]
+                  : []),
                 { key: '/enterprise/memories', icon: <DatabaseOutlined />, label: '记忆查询' },
                 { key: '/enterprise/feedback', icon: <DislikeOutlined />, label: '负反馈会话' },
               ],
@@ -230,6 +248,7 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
             <Routes>
               <Route path="/enterprise" element={<Navigate to="/enterprise/dashboard" replace />} />
               <Route path="/enterprise/dashboard" element={<DashboardPage />} />
+              <Route path="/enterprise/agents" element={<AgentsPage />} />
               <Route path="/enterprise/memories" element={<MemoriesPage />} />
               <Route path="/enterprise/knowledge" element={<KnowledgeManagePage />} />
               <Route path="/enterprise/knowledge/new" element={<KnowledgeAddPage />} />

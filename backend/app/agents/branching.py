@@ -124,6 +124,8 @@ def visible_skill_rows(
         )
     ).all()
     for binding in bindings:
+        if binding.status == "deleted":
+            continue
         if not include_inactive and binding.status != "active":
             continue
         skill = db.get(Skill, binding.resource_id)
@@ -144,10 +146,12 @@ def visible_skill(db: Session, tenant_id: str, skill_id: str, agent_id: str | No
     skill = db.exec(
         select(Skill).where(Skill.tenant_id == tenant_id, Skill.skill_id == skill_id)
     ).first()
-    if not skill or skill.status == "archived":
+    if not skill or skill.status == "deleted":
         return None
     agent = get_agent(db, tenant_id, agent_id)
     if not agent or agent.is_overall:
+        if skill.status == "archived":
+            return None
         return skill
     binding = db.exec(
         select(AgentResourceBinding).where(
@@ -342,7 +346,7 @@ def visible_knowledge_base_versions(
     result: dict[str, KnowledgeBaseVersion] = {}
     for branch in branches:
         kb = db.get(KnowledgeBase, branch.knowledge_base_id)
-        if not kb or kb.tenant_id != tenant_id or kb.status == "archived":
+        if not kb or kb.tenant_id != tenant_id or kb.status == "deleted":
             continue
         result[kb.id] = ensure_knowledge_base_version(db, kb, branch.head_version)
     return result
@@ -505,24 +509,34 @@ def model_for_agent(db: Session, tenant_id: str, agent_id: str | None, role: str
 
 def copy_overall_scope_to_agent(db: Session, tenant_id: str, agent: AgentProfile) -> None:
     skills = db.exec(
-        select(Skill).where(Skill.tenant_id == tenant_id, Skill.status != "archived")
+        select(Skill).where(Skill.tenant_id == tenant_id, Skill.status != "deleted")
     ).all()
     for skill in skills:
-        _ensure_binding(db, tenant_id, agent.id, "skill", skill.id)
+        _ensure_binding(db, tenant_id, agent.id, "skill", skill.id, _binding_status_from_resource_status(skill.status))
         ensure_agent_skill_branch(db, tenant_id, agent.id, skill)
     knowledge_bases = db.exec(
-        select(KnowledgeBase).where(KnowledgeBase.tenant_id == tenant_id, KnowledgeBase.status != "archived")
+        select(KnowledgeBase).where(KnowledgeBase.tenant_id == tenant_id, KnowledgeBase.status != "deleted")
     ).all()
     for kb in knowledge_bases:
-        _ensure_binding(db, tenant_id, agent.id, "knowledge_base", kb.id)
-        _ensure_knowledge_branch(db, tenant_id, agent.id, kb)
+        _ensure_binding(db, tenant_id, agent.id, "knowledge_base", kb.id, _binding_status_from_resource_status(kb.status))
+        branch = _ensure_knowledge_branch(db, tenant_id, agent.id, kb)
+        branch.status = _binding_status_from_resource_status(kb.status)
+        branch.updated_at = utc_now()
+        db.add(branch)
     from app.db.models import GeneralSkill
 
     general_skills = db.exec(
-        select(GeneralSkill).where(GeneralSkill.tenant_id == tenant_id, GeneralSkill.status != "archived")
+        select(GeneralSkill).where(GeneralSkill.tenant_id == tenant_id, GeneralSkill.status != "deleted")
     ).all()
     for general_skill in general_skills:
-        _ensure_binding(db, tenant_id, agent.id, "general_skill", general_skill.id)
+        _ensure_binding(
+            db,
+            tenant_id,
+            agent.id,
+            "general_skill",
+            general_skill.id,
+            _binding_status_from_resource_status(general_skill.status),
+        )
 
 
 def next_branch_version(version: str) -> str:
@@ -566,7 +580,18 @@ def _ensure_branch_version(db: Session, branch: AgentSkillBranch, change_summary
     )
 
 
-def _ensure_binding(db: Session, tenant_id: str, agent_id: str, resource_type: str, resource_id: str) -> None:
+def _binding_status_from_resource_status(status: str | None) -> str:
+    return "active" if status in {"active", "published"} else "inactive"
+
+
+def _ensure_binding(
+    db: Session,
+    tenant_id: str,
+    agent_id: str,
+    resource_type: str,
+    resource_id: str,
+    status: str = "active",
+) -> None:
     existing = db.exec(
         select(AgentResourceBinding).where(
             AgentResourceBinding.tenant_id == tenant_id,
@@ -576,8 +601,9 @@ def _ensure_binding(db: Session, tenant_id: str, agent_id: str, resource_type: s
         )
     ).first()
     if existing:
-        existing.status = "active"
+        existing.status = status
         existing.updated_at = utc_now()
+        db.add(existing)
         return
     db.add(
         AgentResourceBinding(
@@ -585,7 +611,7 @@ def _ensure_binding(db: Session, tenant_id: str, agent_id: str, resource_type: s
             agent_id=agent_id,
             resource_type=resource_type,
             resource_id=resource_id,
-            status="active",
+            status=status,
         )
     )
 
@@ -606,7 +632,7 @@ def _ensure_knowledge_branch(db: Session, tenant_id: str, agent_id: str, kb: Kno
         knowledge_base_id=kb.id,
         base_version="1.0.0",
         head_version="1.0.0",
-        status="active",
+        status=_binding_status_from_resource_status(kb.status),
         sync_state="synced",
     )
     db.add(branch)

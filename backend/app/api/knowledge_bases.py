@@ -44,7 +44,11 @@ def list_knowledge_bases(
     if agent and not agent.is_overall:
         branches = db.exec(
             select(AgentKnowledgeBranch)
-            .where(AgentKnowledgeBranch.tenant_id == tenant_id, AgentKnowledgeBranch.agent_id == agent.id)
+            .where(
+                AgentKnowledgeBranch.tenant_id == tenant_id,
+                AgentKnowledgeBranch.agent_id == agent.id,
+                AgentKnowledgeBranch.status != "deleted",
+            )
             .order_by(AgentKnowledgeBranch.updated_at.desc())
         ).all()
         if not branches:
@@ -303,7 +307,41 @@ def delete_knowledge_base(
 ) -> dict[str, str]:
     agent = get_agent(db, tenant_id, agent_id)
     if agent and not agent.is_overall:
-        raise HTTPException(status_code=403, detail="Only the overall agent can delete knowledge bases")
+        row = _get_knowledge_base(db, tenant_id, knowledge_base_id)
+        branch = db.exec(
+            select(AgentKnowledgeBranch).where(
+                AgentKnowledgeBranch.tenant_id == tenant_id,
+                AgentKnowledgeBranch.agent_id == agent.id,
+                AgentKnowledgeBranch.knowledge_base_id == knowledge_base_id,
+            )
+        ).first()
+        if not branch:
+            branch = sync_knowledge_branch_from_overall(db, tenant_id, agent.id, knowledge_base_id)
+        branch.status = "deleted"
+        branch.updated_at = utc_now()
+        binding = db.exec(
+            select(AgentResourceBinding).where(
+                AgentResourceBinding.tenant_id == tenant_id,
+                AgentResourceBinding.agent_id == agent.id,
+                AgentResourceBinding.resource_type == "knowledge_base",
+                AgentResourceBinding.resource_id == row.id,
+            )
+        ).first()
+        if not binding:
+            binding = AgentResourceBinding(
+                tenant_id=tenant_id,
+                agent_id=agent.id,
+                resource_type="knowledge_base",
+                resource_id=row.id,
+                status="deleted",
+            )
+        else:
+            binding.status = "deleted"
+            binding.updated_at = utc_now()
+        db.add(branch)
+        db.add(binding)
+        db.commit()
+        return {"status": "hidden"}
     row = _get_knowledge_base(db, tenant_id, knowledge_base_id)
     document_count = db.exec(
         select(func.count(KnowledgeDocument.id)).where(
@@ -410,6 +448,7 @@ def _management_knowledge_base_versions(
             select(AgentKnowledgeBranch).where(
                 AgentKnowledgeBranch.tenant_id == tenant_id,
                 AgentKnowledgeBranch.agent_id == agent.id,
+                AgentKnowledgeBranch.status != "deleted",
             )
         ).all()
         result: dict[str, KnowledgeBaseVersion] = {}
@@ -466,6 +505,7 @@ def _knowledge_branch_meta(db: Session, tenant_id: str, agent_id: str | None) ->
         select(AgentKnowledgeBranch).where(
             AgentKnowledgeBranch.tenant_id == tenant_id,
             AgentKnowledgeBranch.agent_id == agent.id,
+            AgentKnowledgeBranch.status != "deleted",
         )
     ).all()
     return {

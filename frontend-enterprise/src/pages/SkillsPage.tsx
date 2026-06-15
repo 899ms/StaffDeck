@@ -179,6 +179,7 @@ export default function SkillsPage() {
                   ? [
                       { key: 'sync', icon: <SyncOutlined />, label: '同步整体' },
                       { key: 'promote', icon: <UploadOutlined />, label: '推送到整体' },
+                      { key: 'delete', icon: <DeleteOutlined />, label: '从当前智能体移除', danger: true },
                     ]
                   : [{ key: 'delete', icon: <DeleteOutlined />, label: '删除', danger: true }]),
               ] as any,
@@ -378,15 +379,18 @@ export default function SkillsPage() {
   }
 
   function remove(row: SkillRead) {
+    const branchMode = !isOverallAgent;
     Modal.confirm({
-      title: `删除技能「${row.name}」？`,
-      content: '删除后不会移除历史会话记录，但技能列表中将不再显示该技能。',
-      okText: '删除',
+      title: branchMode ? `从当前智能体移除「${row.name}」？` : `删除技能「${row.name}」？`,
+      content: branchMode
+        ? '这只会在当前分支智能体中隐藏该技能；整体智能体和其他分支仍然保留。'
+        : '删除后不会移除历史会话记录，但整体技能列表中将不再显示该技能。',
+      okText: branchMode ? '移除' : '删除',
       okButtonProps: { danger: true },
       cancelText: '取消',
       onOk: async () => {
         await api.delete(`/api/enterprise/skills/${row.skill_id}?tenant_id=${TENANT_ID}${agentQuery()}`);
-        message.success('已删除');
+        message.success(branchMode ? '已从当前智能体移除' : '已删除');
         load();
       },
     });
