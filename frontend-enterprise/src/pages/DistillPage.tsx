@@ -457,6 +457,14 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
     const changedPaths = diffTargetPaths(baseDraft, saveReviewDraft, allTargetPaths(saveReviewDraft));
     return collectTextDiffs(baseDraft, saveReviewDraft, changedPaths).filter((diff) => diff.field !== 'version');
   }, [lastSavedDraft, saveReviewDraft]);
+  const hasSaveableDraftChanges = useMemo(
+    () => hasSkillContentChanges(pendingChange?.nextDraft || draft, lastSavedDraft),
+    [draft, lastSavedDraft, pendingChange],
+  );
+  const saveReviewHasContentChanges = useMemo(
+    () => hasSkillContentChanges(saveReviewDraft, lastSavedDraft),
+    [lastSavedDraft, saveReviewDraft],
+  );
 
   async function send() {
     const text = buildOutgoingText(input, readyAttachments);
@@ -719,6 +727,10 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
   function openSaveReview(options: { clearAfterSave?: boolean } = {}) {
     const targetDraft = pendingChange?.nextDraft || draft;
     if (!targetDraft) return;
+    if (!hasSkillContentChanges(targetDraft, lastSavedDraft)) {
+      message.info('当前没有内容变化，无需保存草稿。');
+      return;
+    }
     confirmPendingChange(false);
     setClearAfterSave(Boolean(options.clearAfterSave));
     setSaveDraftSnapshot(targetDraft);
@@ -730,6 +742,10 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
 
   async function saveDraft() {
     if (!saveReviewDraft) return;
+    if (!hasSkillContentChanges(saveReviewDraft, lastSavedDraft)) {
+      message.info('当前没有内容变化，无需保存草稿。');
+      return;
+    }
     const finalDraft = saveReviewDraft;
     try {
       let savedSkill: SkillRead;
@@ -1263,8 +1279,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
   function hasUnsavedSkillChanges() {
     const targetDraft = pendingChange?.nextDraft || draft;
     if (!targetDraft) return false;
-    if (!lastSavedDraft) return true;
-    return JSON.stringify(targetDraft) !== JSON.stringify(lastSavedDraft);
+    return hasSkillContentChanges(targetDraft, lastSavedDraft);
   }
 
   function clearDistillWorkspace() {
@@ -1935,9 +1950,11 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
               <Button disabled={loading} onClick={handleClearClick}>
                 清空
               </Button>
-              <Button disabled={!draft || loading} icon={<SaveOutlined />} onClick={() => openSaveReview()}>
-                保存草稿
-              </Button>
+              <Tooltip title={draft && !hasSaveableDraftChanges ? '当前没有内容变化' : ''}>
+                <Button disabled={!draft || loading || !hasSaveableDraftChanges} icon={<SaveOutlined />} onClick={() => openSaveReview()}>
+                  保存草稿
+                </Button>
+              </Tooltip>
             </Space>
           }
         >
@@ -2024,6 +2041,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
         okText="保存"
         cancelText="取消"
         width={820}
+        okButtonProps={{ disabled: !saveReviewHasContentChanges }}
         onOk={() => void saveDraft()}
         onCancel={closeSaveReview}
       >
@@ -2038,7 +2056,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
           </label>
           <label>
             <span>版本号</span>
-            <Input value={saveVersion} onChange={(event) => setSaveVersion(event.target.value)} />
+            <Input value={saveVersion} disabled={!saveReviewHasContentChanges} onChange={(event) => setSaveVersion(event.target.value)} />
           </label>
         </div>
         <div className="save-review-diff">
@@ -4284,6 +4302,18 @@ function mergePaths(current: string[], next: string[]): string[] {
 
 function cloneSkill(skill: SkillCard): SkillCard {
   return JSON.parse(JSON.stringify(skill)) as SkillCard;
+}
+
+function comparableSkillContent(skill: SkillCard): SkillCard {
+  const next = cloneSkill(skill);
+  next.version = '';
+  return next;
+}
+
+function hasSkillContentChanges(targetDraft: SkillCard | null, baseDraft: SkillCard | null): boolean {
+  if (!targetDraft) return false;
+  if (!baseDraft) return true;
+  return JSON.stringify(comparableSkillContent(targetDraft)) !== JSON.stringify(comparableSkillContent(baseDraft));
 }
 
 function removeToolActionFromSkill(skill: SkillCard, toolName: string): SkillCard {

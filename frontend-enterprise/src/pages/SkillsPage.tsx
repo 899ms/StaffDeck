@@ -136,7 +136,7 @@ export default function SkillsPage() {
           if (isOverallAgent) return <Tag>主干</Tag>;
           if (row.branch_status === 'inactive') return <Tag>已下线</Tag>;
           const state = row.branch_sync_state || 'synced';
-          return <Tag color={state === 'diverged' ? 'orange' : 'green'}>{state === 'diverged' ? '已分叉' : '已同步'}</Tag>;
+          return <Tag color={state === 'diverged' ? 'gold' : 'green'}>{state === 'diverged' ? '专属版本' : '已同步'}</Tag>;
         },
       },
       {
@@ -487,7 +487,7 @@ export default function SkillsPage() {
                             options={[
                               { label: '全部分支', value: 'all' },
                               { label: '已同步', value: 'synced' },
-                              { label: '已分叉', value: 'diverged' },
+                              { label: '专属版本', value: 'diverged' },
                               { label: '分支下线', value: 'inactive' },
                             ]}
                           />

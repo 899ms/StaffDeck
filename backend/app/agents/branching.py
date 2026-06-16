@@ -211,8 +211,10 @@ def update_branch_skill(
     change_summary: str = "分支改写",
 ) -> AgentSkillBranch:
     branch = ensure_agent_skill_branch(db, tenant_id, agent_id, skill)
-    next_version = next_branch_version(branch.head_version)
-    branch.content_json = dict(content)
+    next_version = next_unique_branch_version(db, branch, str(content.get("version") or ""))
+    next_content = dict(content)
+    next_content["version"] = next_version
+    branch.content_json = next_content
     branch.head_version = next_version
     branch.status = "active"
     branch.sync_state = "diverged"
@@ -539,11 +541,26 @@ def copy_overall_scope_to_agent(db: Session, tenant_id: str, agent: AgentProfile
         )
 
 
-def next_branch_version(version: str) -> str:
-    base, _, suffix = version.partition("-branch.")
-    if suffix.isdigit():
-        return f"{base}-branch.{int(suffix) + 1}"
-    return f"{base}-branch.1"
+def next_branch_version(version: str, requested_version: str | None = None) -> str:
+    requested = (requested_version or "").strip()
+    if _is_semver(requested) and requested != version:
+        return requested
+    base = version.partition("-branch.")[0]
+    return next_global_version(base)
+
+
+def next_unique_branch_version(db: Session, branch: AgentSkillBranch, requested_version: str | None = None) -> str:
+    candidate = next_branch_version(branch.head_version, requested_version)
+    while db.exec(
+        select(AgentSkillBranchVersion).where(
+            AgentSkillBranchVersion.tenant_id == branch.tenant_id,
+            AgentSkillBranchVersion.agent_id == branch.agent_id,
+            AgentSkillBranchVersion.skill_id == branch.skill_id,
+            AgentSkillBranchVersion.version == candidate,
+        )
+    ).first():
+        candidate = next_global_version(candidate.partition("-branch.")[0])
+    return candidate
 
 
 def next_global_version(version: str) -> str:
@@ -551,6 +568,11 @@ def next_global_version(version: str) -> str:
     if len(parts) >= 3 and all(part.isdigit() for part in parts[:3]):
         return f"{parts[0]}.{int(parts[1]) + 1}.0"
     return f"{version}.1"
+
+
+def _is_semver(version: str) -> bool:
+    parts = version.split(".")
+    return len(parts) == 3 and all(part.isdigit() for part in parts)
 
 
 def _ensure_branch_version(db: Session, branch: AgentSkillBranch, change_summary: str) -> None:
