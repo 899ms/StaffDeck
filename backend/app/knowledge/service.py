@@ -38,10 +38,14 @@ PROMPT_DIR = Path(__file__).resolve().parents[1] / "llm" / "prompts"
 BUCKET_PROMPT = PROMPT_DIR / "knowledge_bucket_prompt.md"
 DISCOVERY_PROMPT = PROMPT_DIR / "knowledge_discovery_prompt.md"
 SEARCH_PROMPT = PROMPT_DIR / "knowledge_search_prompt.md"
+DOCUMENT_ROUTE_PROMPT = PROMPT_DIR / "knowledge_document_route_prompt.md"
 
-CHUNK_CHARS = 1800
+SECTION_TARGET_CHARS = 1400
+EVIDENCE_CHUNK_CHARS = 900
 BUCKET_SECTION_CHARS = 6000
 PARAGRAPH_GROUP_CHARS = 4200
+SEARCH_DOCUMENT_LIMIT = 40
+SEARCH_BUCKET_LIMIT = 80
 
 INGEST_STAGES: list[dict[str, Any]] = [
     {"key": "queued", "label": "排队中", "progress": 0.0},
@@ -127,8 +131,16 @@ class KnowledgeService:
             self._update_ingest_stage(
                 job,
                 "documenting",
-                detail=f"已获得 {len(normalized_text):,} 字符，正在写入文档记录",
+                detail=f"已获得 {len(normalized_text):,} 字符，正在识别章节导航树",
                 stats={"char_count": len(normalized_text), "file_type": file_type},
+            )
+            section_nodes = _build_section_nodes(normalized_text)
+            document_card = _build_document_card(
+                title=str(metadata.get("title") or Path(job.filename).stem),
+                filename=job.filename,
+                file_type=file_type,
+                text=normalized_text,
+                section_nodes=section_nodes,
             )
             document = KnowledgeDocument(
                 tenant_id=job.tenant_id,
@@ -141,6 +153,12 @@ class KnowledgeService:
                 metadata_json={
                     **(metadata.get("metadata") if isinstance(metadata.get("metadata"), dict) else {}),
                     "char_count": len(normalized_text),
+                    "document_card": document_card,
+                    "section_tree": section_nodes,
+                    "section_stats": {
+                        "section_count": len(section_nodes),
+                        "paragraph_count": len(_paragraph_blocks(normalized_text)),
+                    },
                 },
             )
             self.db.add(document)
@@ -150,16 +168,24 @@ class KnowledgeService:
             self._update_ingest_stage(
                 job,
                 "bucketing",
-                detail="正在按章节和段落规划知识桶",
+                detail="正在按目录结构和任务用途规划知识桶",
                 document_id=document.id,
+                stats={"section_count": len(section_nodes)},
             )
 
-            buckets = self._build_buckets(job.tenant_id, job.knowledge_base_id, document, normalized_text)
+            buckets = self._build_buckets(
+                job.tenant_id,
+                job.knowledge_base_id,
+                document,
+                normalized_text,
+                section_nodes,
+                document_card,
+            )
             self._update_ingest_stage(
                 job,
                 "bucket_writing",
                 detail=f"已生成 {len(buckets)} 个知识桶，正在持久化桶摘要",
-                stats={"bucket_count": len(buckets)},
+                stats={"bucket_count": len(buckets), "section_count": len(section_nodes)},
             )
             self._update_ingest_stage(
                 job,
@@ -167,11 +193,28 @@ class KnowledgeService:
                 detail="正在按段落预算切分知识片段",
                 stats={"bucket_count": len(buckets)},
             )
-            chunk_count = self._build_chunks(job.tenant_id, job.knowledge_base_id, document, buckets)
+            chunk_count = self._build_chunks(job.tenant_id, job.knowledge_base_id, document, buckets, section_nodes)
 
             document.bucket_count = len(buckets)
             document.chunk_count = chunk_count
             document.status = "ready"
+            document.metadata_json = {
+                **(document.metadata_json or {}),
+                "chunk_stats": {
+                    "total_chunks": chunk_count,
+                    "chunk_count": chunk_count,
+                    "target_chars": EVIDENCE_CHUNK_CHARS,
+                    "section_target_chars": SECTION_TARGET_CHARS,
+                },
+                "bucket_quality": [
+                    {
+                        "bucket_id": bucket.id,
+                        "title": bucket.title,
+                        "quality": (bucket.metadata_json or {}).get("quality", {}),
+                    }
+                    for bucket in buckets
+                ],
+            }
             document.updated_at = utc_now()
             self.db.add(document)
             self._update_ingest_stage(
@@ -219,39 +262,84 @@ class KnowledgeService:
         query = request.query.strip()
         if not query:
             return KnowledgeSearchResponse()
+        route_trace: list[dict[str, Any]] = []
         if request.agent_id and not request.knowledge_base_version_ids:
-            return KnowledgeSearchResponse(trace=[{"phase": "no_visible_knowledge", "message": "当前智能体没有可见知识"}])
-        stmt = select(KnowledgeBucket).where(KnowledgeBucket.tenant_id == request.tenant_id)
-        if request.knowledge_base_ids:
-            stmt = stmt.where(KnowledgeBucket.knowledge_base_id.in_(request.knowledge_base_ids))
-        if request.knowledge_base_version_ids:
-            stmt = stmt.where(KnowledgeBucket.knowledge_base_version_id.in_(request.knowledge_base_version_ids))
-        if request.document_ids:
-            stmt = stmt.where(KnowledgeBucket.document_id.in_(request.document_ids))
-        buckets = self.db.exec(stmt.order_by(KnowledgeBucket.created_at.desc())).all()
+            route_trace.append({"phase": "no_visible_knowledge", "message": "当前智能体没有可见知识"})
+            return KnowledgeSearchResponse(trace=route_trace, route_trace=route_trace)
+
+        documents = self._load_documents_for_search(request)
+        if not documents:
+            route_trace.append({"phase": "no_documents", "message": "没有可检索的知识文档"})
+            return KnowledgeSearchResponse(trace=route_trace, route_trace=route_trace)
+
+        route_trace.append(
+            {
+                "phase": "document_route",
+                "message": "正在选择知识文档",
+                "candidate_count": len(documents),
+                "mode": request.mode,
+            }
+        )
+        selected_document_ids: list[str] = []
+        if model_config:
+            selected_document_ids = self._select_documents_with_llm(query, documents, 5, model_config, route_trace)
+        if not selected_document_ids:
+            selected_document_ids = [row.id for row in _score_documents(query, documents)[:5]]
+            route_trace.append({"phase": "document_route_fallback", "message": "按文档卡相关性选择知识文档"})
+
+        selected_documents = [row for row in documents if row.id in set(selected_document_ids)]
+        selected_document_cards = [_document_card_for_search(row) for row in selected_documents]
+
+        buckets = self._load_buckets_for_search(request, selected_document_ids)
         if not buckets:
-            return KnowledgeSearchResponse(trace=[{"phase": "no_buckets", "message": "没有可检索的知识桶"}])
+            route_trace.append({"phase": "no_buckets", "message": "所选文档没有可展开的知识桶"})
+            return KnowledgeSearchResponse(
+                trace=route_trace,
+                route_trace=route_trace,
+                selected_documents=selected_document_cards,
+            )
 
         selected_ids: list[str] = []
-        trace: list[dict[str, Any]] = [{"phase": "scan_buckets", "message": "正在检索知识"}]
+        route_trace.append(
+            {
+                "phase": "bucket_route",
+                "message": "正在选择知识桶",
+                "candidate_count": len(buckets),
+                "selected_document_ids": selected_document_ids,
+            }
+        )
         if model_config:
-            selected_ids = self._select_buckets_with_llm(query, buckets, request.max_buckets, model_config, trace)
+            selected_ids = self._select_buckets_with_llm(query, buckets, request.max_buckets, model_config, route_trace)
         if not selected_ids:
-            selected_ids = [bucket.id for bucket in buckets[: request.max_buckets]]
-            trace.append({"phase": "fallback_buckets", "message": "模型未返回桶选择，使用最近知识桶"})
+            selected_ids = [bucket.id for bucket in _score_buckets(query, buckets)[: request.max_buckets]]
+            route_trace.append({"phase": "bucket_route_fallback", "message": "按桶摘要相关性选择知识桶"})
 
         selected_buckets = [bucket for bucket in buckets if bucket.id in set(selected_ids)]
-        chunks = self._load_chunks_for_buckets(request.tenant_id, selected_ids, request.max_chunks)
-        trace.extend(
+        expanded_sections = _expand_sections(selected_documents, selected_buckets, request.max_depth)
+        route_trace.append(
+            {
+                "phase": "section_expand",
+                "message": "正在展开章节",
+                "section_count": len(expanded_sections),
+            }
+        )
+        chunks = self._load_chunks_for_buckets(request.tenant_id, selected_ids, max(request.max_chunks * 3, request.max_chunks))
+        ranked_chunks = _rank_chunks(query, chunks, selected_buckets, expanded_sections)[: request.max_chunks]
+        evidence_pack = _build_evidence_pack(query, ranked_chunks) if request.need_evidence_pack else []
+        route_trace.extend(
             [
-                {"phase": "expand_buckets", "message": "展开知识桶", "bucket_ids": selected_ids},
-                {"phase": "read_chunks", "message": "读取知识片段", "chunk_count": len(chunks)},
+                {"phase": "read_chunks", "message": "读取知识片段", "chunk_count": len(ranked_chunks)},
+                {"phase": "evidence_pack", "message": "整理证据包", "evidence_count": len(evidence_pack)},
             ]
         )
         return KnowledgeSearchResponse(
             selected_buckets=[bucket_read(row) for row in selected_buckets],
-            chunks=[chunk_read(row) for row in chunks],
-            trace=trace,
+            chunks=[chunk_read(row) for row in ranked_chunks],
+            trace=route_trace,
+            route_trace=route_trace,
+            selected_documents=selected_document_cards,
+            expanded_sections=expanded_sections,
+            evidence_pack=evidence_pack,
         )
 
     def confirm_discovery(self, suggestion: KnowledgeDiscoverySuggestion) -> dict[str, Any]:
@@ -280,24 +368,31 @@ class KnowledgeService:
         knowledge_base_id: str,
         document: KnowledgeDocument,
         text: str,
+        section_nodes: list[dict[str, Any]],
+        document_card: dict[str, Any],
     ) -> list[KnowledgeBucket]:
-        sections = _split_sections(text)
         model_config = self._default_model_config(tenant_id)
-        llm_buckets = self._bucket_with_llm(sections, model_config) if model_config else []
-        bucket_specs = llm_buckets or _fallback_bucket_specs(sections)
+        structure_buckets = _structure_bucket_specs(section_nodes)
+        llm_buckets = self._bucket_with_llm(section_nodes, model_config) if model_config else []
+        bucket_specs = _unique_bucket_specs(structure_buckets + _normalize_llm_bucket_specs(llm_buckets, section_nodes))
+        if not bucket_specs:
+            bucket_specs = _fallback_bucket_specs(_split_sections(text), section_nodes)
         self.db.exec(delete(KnowledgeBucket).where(KnowledgeBucket.document_id == document.id))
         self.db.exec(delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id))
         self.db.exec(delete(KnowledgeDiscoverySuggestion).where(KnowledgeDiscoverySuggestion.document_id == document.id))
         rows: list[KnowledgeBucket] = []
         for index, spec in enumerate(bucket_specs):
             content = str(spec.get("content") or "")
-            if not content and isinstance(spec.get("section_indexes"), list):
+            section_ids = [str(item) for item in spec.get("section_ids", []) if item]
+            if not content and section_ids:
+                section_by_id = {str(node.get("section_id")): node for node in section_nodes}
                 content = "\n\n".join(
-                    sections[item]
-                    for item in spec["section_indexes"]
-                    if isinstance(item, int) and 0 <= item < len(sections)
+                    str(section_by_id[section_id].get("content") or "")
+                    for section_id in section_ids
+                    if section_id in section_by_id
                 )
-            content = content or sections[min(index, len(sections) - 1)]
+            content = content or text[:BUCKET_SECTION_CHARS]
+            quality = _bucket_quality(spec, section_ids, content)
             row = KnowledgeBucket(
                 tenant_id=tenant_id,
                 knowledge_base_id=knowledge_base_id,
@@ -307,7 +402,19 @@ class KnowledgeService:
                 title=str(spec.get("title") or f"知识桶 {index + 1}"),
                 summary=str(spec.get("summary") or content[:300]),
                 token_estimate=max(1, len(content) // 2),
-                metadata_json={"content": content[:BUCKET_SECTION_CHARS]},
+                metadata_json={
+                    "content": content[:BUCKET_SECTION_CHARS],
+                    "bucket_type": str(spec.get("bucket_type") or "structure"),
+                    "section_ids": section_ids,
+                    "section_paths": spec.get("section_paths") if isinstance(spec.get("section_paths"), list) else [],
+                    "representative_chunk_ids": [],
+                    "applicable_query_types": spec.get("applicable_query_types") if isinstance(spec.get("applicable_query_types"), list) else [],
+                    "quality": quality,
+                    "document_card": {
+                        "title": document_card.get("title"),
+                        "summary": document_card.get("summary"),
+                    },
+                },
             )
             self.db.add(row)
             rows.append(row)
@@ -322,25 +429,62 @@ class KnowledgeService:
         knowledge_base_id: str,
         document: KnowledgeDocument,
         buckets: list[KnowledgeBucket],
+        section_nodes: list[dict[str, Any]],
     ) -> int:
         count = 0
+        chunk_ids_by_bucket: dict[str, list[str]] = {}
+        section_by_id = {str(node.get("section_id")): node for node in section_nodes}
         for bucket in buckets:
-            content = str((bucket.metadata_json or {}).get("content") or "")
-            parts = _chunk_text(content, CHUNK_CHARS)
-            for index, part in enumerate(parts):
-                row = KnowledgeChunk(
-                    tenant_id=tenant_id,
-                    knowledge_base_id=knowledge_base_id,
-                    knowledge_base_version_id=document.knowledge_base_version_id,
-                    document_id=document.id,
-                    bucket_id=bucket.id,
-                    chunk_index=index,
-                    content=part,
-                    summary=part[:240],
-                    source_ref=f"{document.filename} / {bucket.title} / chunk {index + 1}",
-                )
-                self.db.add(row)
-                count += 1
+            metadata = dict(bucket.metadata_json or {})
+            section_ids = [str(item) for item in metadata.get("section_ids", []) if item]
+            section_sources = [section_by_id[section_id] for section_id in section_ids if section_id in section_by_id]
+            if not section_sources:
+                section_sources = [
+                    {
+                        "section_id": f"{bucket.bucket_key}_content",
+                        "path": bucket.title,
+                        "title": bucket.title,
+                        "content": str(metadata.get("content") or ""),
+                    }
+                ]
+            local_index = 0
+            for section in section_sources:
+                content = str(section.get("content") or "")
+                parts = _chunk_text(content, EVIDENCE_CHUNK_CHARS)
+                for part in parts:
+                    source_path = f"{document.filename} / {section.get('path') or bucket.title} / evidence {local_index + 1}"
+                    row = KnowledgeChunk(
+                        tenant_id=tenant_id,
+                        knowledge_base_id=knowledge_base_id,
+                        knowledge_base_version_id=document.knowledge_base_version_id,
+                        document_id=document.id,
+                        bucket_id=bucket.id,
+                        chunk_index=local_index,
+                        content=part,
+                        summary=_summarize_text(part, 180),
+                        source_ref=source_path,
+                        metadata_json={
+                            "node_type": "evidence_chunk",
+                            "section_id": section.get("section_id"),
+                            "section_path": section.get("path"),
+                            "section_title": section.get("title"),
+                            "bucket_title": bucket.title,
+                            "source_span": section.get("source_span") or {},
+                            "context_window": _summarize_text(content, 260),
+                        },
+                    )
+                    self.db.add(row)
+                    self.db.flush()
+                    chunk_ids_by_bucket.setdefault(bucket.id, []).append(row.id)
+                    count += 1
+                    local_index += 1
+        for bucket in buckets:
+            metadata = dict(bucket.metadata_json or {})
+            metadata["representative_chunk_ids"] = chunk_ids_by_bucket.get(bucket.id, [])[:3]
+            metadata["chunk_count"] = len(chunk_ids_by_bucket.get(bucket.id, []))
+            bucket.metadata_json = metadata
+            bucket.updated_at = utc_now()
+            self.db.add(bucket)
         self.db.commit()
         return count
 
@@ -401,14 +545,20 @@ class KnowledgeService:
         self.db.commit()
 
     def _bucket_with_llm(
-        self, sections: list[str], model_config: ModelConfig | None
+        self, section_nodes: list[dict[str, Any]], model_config: ModelConfig | None
     ) -> list[dict[str, Any]]:
         if not model_config:
             return []
         payload = {
             "sections": [
-                {"index": index, "text": section[:BUCKET_SECTION_CHARS]}
-                for index, section in enumerate(sections[:40])
+                {
+                    "section_id": node.get("section_id"),
+                    "path": node.get("path"),
+                    "title": node.get("title"),
+                    "summary": node.get("summary"),
+                    "excerpt": str(node.get("content") or "")[:1800],
+                }
+                for node in section_nodes[:60]
             ]
         }
         try:
@@ -417,6 +567,56 @@ class KnowledgeService:
             return []
         buckets = raw.get("buckets") if isinstance(raw, dict) else None
         return [item for item in buckets if isinstance(item, dict)] if isinstance(buckets, list) else []
+
+    def _load_documents_for_search(self, request: KnowledgeSearchRequest) -> list[KnowledgeDocument]:
+        stmt = select(KnowledgeDocument).where(
+            KnowledgeDocument.tenant_id == request.tenant_id,
+            KnowledgeDocument.status == "ready",
+        )
+        if request.knowledge_base_ids:
+            stmt = stmt.where(KnowledgeDocument.knowledge_base_id.in_(request.knowledge_base_ids))
+        if request.knowledge_base_version_ids:
+            stmt = stmt.where(KnowledgeDocument.knowledge_base_version_id.in_(request.knowledge_base_version_ids))
+        if request.document_ids:
+            stmt = stmt.where(KnowledgeDocument.id.in_(request.document_ids))
+        return self.db.exec(stmt.order_by(KnowledgeDocument.updated_at.desc()).limit(SEARCH_DOCUMENT_LIMIT)).all()
+
+    def _load_buckets_for_search(self, request: KnowledgeSearchRequest, document_ids: list[str]) -> list[KnowledgeBucket]:
+        if not document_ids:
+            return []
+        stmt = select(KnowledgeBucket).where(
+            KnowledgeBucket.tenant_id == request.tenant_id,
+            KnowledgeBucket.document_id.in_(document_ids),
+        )
+        if request.knowledge_base_ids:
+            stmt = stmt.where(KnowledgeBucket.knowledge_base_id.in_(request.knowledge_base_ids))
+        if request.knowledge_base_version_ids:
+            stmt = stmt.where(KnowledgeBucket.knowledge_base_version_id.in_(request.knowledge_base_version_ids))
+        return self.db.exec(stmt.order_by(KnowledgeBucket.created_at.asc()).limit(SEARCH_BUCKET_LIMIT)).all()
+
+    def _select_documents_with_llm(
+        self,
+        query: str,
+        documents: list[KnowledgeDocument],
+        max_documents: int,
+        model_config: ModelConfig,
+        trace: list[dict[str, Any]],
+    ) -> list[str]:
+        payload = {
+            "query": query,
+            "max_documents": max_documents,
+            "documents": [_document_card_for_search(row) for row in documents],
+        }
+        try:
+            raw = LLMClient(model_config).generate_json(DOCUMENT_ROUTE_PROMPT.read_text(encoding="utf-8"), payload)
+        except (LLMError, Exception) as exc:
+            trace.append({"phase": "document_route_failed", "message": str(exc)})
+            return []
+        ids = raw.get("selected_document_ids") if isinstance(raw, dict) else None
+        if not isinstance(ids, list):
+            return []
+        allowed = {row.id for row in documents}
+        return [str(item) for item in ids if str(item) in allowed][:max_documents]
 
     def _select_buckets_with_llm(
         self,
@@ -435,6 +635,9 @@ class KnowledgeService:
                     "title": bucket.title,
                     "summary": bucket.summary,
                     "document_id": bucket.document_id,
+                    "bucket_type": (bucket.metadata_json or {}).get("bucket_type"),
+                    "section_paths": (bucket.metadata_json or {}).get("section_paths", []),
+                    "quality": (bucket.metadata_json or {}).get("quality", {}),
                 }
                 for bucket in buckets[:80]
             ],
@@ -590,6 +793,7 @@ class KnowledgeService:
 
 
 def bucket_read(row: KnowledgeBucket) -> KnowledgeBucketRead:
+    metadata = row.metadata_json or {}
     return KnowledgeBucketRead(
         id=row.id,
         tenant_id=row.tenant_id,
@@ -599,9 +803,9 @@ def bucket_read(row: KnowledgeBucket) -> KnowledgeBucketRead:
         title=row.title,
         summary=row.summary,
         token_estimate=row.token_estimate,
-        chunk_count=0,
+        chunk_count=int(metadata.get("chunk_count") or len(metadata.get("representative_chunk_ids") or []) or 0),
         status="ready",
-        metadata=row.metadata_json or {},
+        metadata=metadata,
         created_at=row.created_at.isoformat(),
         updated_at=row.updated_at.isoformat(),
     )
@@ -774,16 +978,481 @@ def _ingest_steps_for(stage: str, progress: float, status: str) -> list[dict[str
     ]
 
 
-def _fallback_bucket_specs(sections: list[str]) -> list[dict[str, Any]]:
+def _build_section_nodes(text: str) -> list[dict[str, Any]]:
+    paragraphs = _paragraph_blocks(text)
+    if not paragraphs:
+        return [
+            {
+                "section_id": "sec_1",
+                "node_type": "section",
+                "level": 1,
+                "title": "全文",
+                "parent_id": None,
+                "path": "全文",
+                "section_order": 1,
+                "summary": _summarize_text(text, 260),
+                "content": text,
+                "source_span": {"start_paragraph": 0, "end_paragraph": 0},
+                "anchor_entities": _extract_anchor_entities(text),
+            }
+        ]
+
+    nodes: list[dict[str, Any]] = []
+    stack: dict[int, dict[str, Any]] = {}
+    current: dict[str, Any] | None = None
+    current_parts: list[str] = []
+    current_start = 0
+
+    def flush(end_paragraph: int) -> None:
+        nonlocal current, current_parts, current_start
+        if current is None:
+            return
+        content = "\n\n".join(part for part in current_parts if part.strip()).strip()
+        if not content:
+            content = str(current.get("title") or "")
+        current["content"] = content
+        current["summary"] = _section_summary(current.get("title"), content)
+        current["anchor_entities"] = _extract_anchor_entities(content)
+        current["source_span"] = {"start_paragraph": current_start, "end_paragraph": end_paragraph}
+        nodes.append(current)
+        current = None
+        current_parts = []
+
+    def start_section(title: str, level: int, paragraph_index: int, parent_id: str | None = None) -> dict[str, Any]:
+        section_id = f"sec_{len(nodes) + 1}"
+        parent = next((stack[item] for item in sorted(stack, reverse=True) if item < level), None)
+        resolved_parent_id = parent_id if parent_id is not None else (parent.get("section_id") if parent else None)
+        parent_path = str(parent.get("path") or "") if parent else ""
+        path = f"{parent_path} / {title}" if parent_path else title
+        return {
+            "section_id": section_id,
+            "node_type": "section",
+            "level": level,
+            "title": title,
+            "parent_id": resolved_parent_id,
+            "path": path,
+            "section_order": len(nodes) + 1,
+            "summary": "",
+            "content": "",
+            "source_span": {"start_paragraph": paragraph_index, "end_paragraph": paragraph_index},
+            "anchor_entities": [],
+        }
+
+    for index, paragraph in enumerate(paragraphs):
+        heading = _heading_info(paragraph)
+        if heading:
+            flush(index - 1)
+            level, title = heading
+            current = start_section(title, level, index)
+            current_parts = [paragraph]
+            current_start = index
+            stack = {key: value for key, value in stack.items() if key < level}
+            stack[level] = current
+            continue
+
+        if current is None:
+            current = start_section(f"段落组 {len(nodes) + 1}", 1, index)
+            current_parts = []
+            current_start = index
+
+        projected = sum(len(part) for part in current_parts) + len(paragraph)
+        if current_parts and projected > SECTION_TARGET_CHARS:
+            parent_id = str(current.get("parent_id") or "")
+            title = str(current.get("title") or f"段落组 {len(nodes) + 1}")
+            level = int(current.get("level") or 1)
+            flush(index - 1)
+            current = start_section(title, level, index, parent_id or None)
+            current_parts = []
+            current_start = index
+        current_parts.append(paragraph)
+
+    flush(len(paragraphs) - 1)
+    if not nodes:
+        return _build_section_nodes(text[:SECTION_TARGET_CHARS])
+    return nodes
+
+
+def _build_document_card(
+    title: str,
+    filename: str,
+    file_type: str,
+    text: str,
+    section_nodes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    outline = [
+        {
+            "section_id": node.get("section_id"),
+            "title": node.get("title"),
+            "path": node.get("path"),
+            "level": node.get("level"),
+            "summary": node.get("summary"),
+        }
+        for node in section_nodes[:60]
+    ]
+    summary_source = "\n".join(str(node.get("summary") or "") for node in section_nodes[:12])
+    entities = _extract_anchor_entities(text[:12000])
+    use_cases = [
+        str(node.get("title"))
+        for node in section_nodes
+        if node.get("title")
+    ][:8]
+    return {
+        "title": title,
+        "filename": filename,
+        "file_type": file_type,
+        "summary": _summarize_text(summary_source or text, 520),
+        "outline": outline,
+        "applicable_scenarios": use_cases,
+        "key_entities": entities[:24],
+        "char_count": len(text),
+        "section_count": len(section_nodes),
+    }
+
+
+def _heading_info(text: str) -> tuple[int, str] | None:
+    stripped = text.strip()
+    if not stripped:
+        return None
+    markdown = re.match(r"^(#{1,6})\s+(.+)$", stripped)
+    if markdown:
+        return len(markdown.group(1)), markdown.group(2).strip()
+    chapter = re.match(r"^第[一二三四五六七八九十百千万0-9]+[章节篇部分]\s*[：:\-、]?\s*(.+)?$", stripped)
+    if chapter:
+        return 1, (chapter.group(1) or stripped).strip()
+    numbered = re.match(r"^(\d+(?:\.\d+){0,4})[、.\s]+(.{2,80})$", stripped)
+    if numbered:
+        return min(numbered.group(1).count(".") + 1, 5), numbered.group(2).strip()
+    if _looks_like_heading(stripped):
+        return 2, stripped.strip("# ：:")
+    return None
+
+
+def _section_summary(title: Any, content: str) -> str:
+    prefix = str(title or "").strip()
+    summary = _summarize_text(content, 260)
+    if prefix and prefix not in summary:
+        return f"{prefix}：{summary}"[:320]
+    return summary
+
+
+def _summarize_text(text: str, max_chars: int) -> str:
+    compact = re.sub(r"\s+", " ", text or "").strip()
+    if len(compact) <= max_chars:
+        return compact
+    end = compact.rfind("。", 0, max_chars)
+    if end < max_chars // 2:
+        end = compact.rfind("；", 0, max_chars)
+    if end < max_chars // 2:
+        end = max_chars
+    return compact[:end].strip() + "..."
+
+
+def _extract_anchor_entities(text: str) -> list[str]:
+    candidates: list[str] = []
+    patterns = [
+        r"[A-Za-z][A-Za-z0-9_.:/-]{2,}",
+        r"[\u4e00-\u9fff]{2,12}",
+        r"\d+(?:\.\d+)+",
+    ]
+    for pattern in patterns:
+        candidates.extend(re.findall(pattern, text or ""))
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in candidates:
+        value = str(item).strip(".,，。；;：:()（）[]【】")
+        if len(value) < 2 or value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+        if len(result) >= 40:
+            break
+    return result
+
+
+def _structure_bucket_specs(section_nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not section_nodes:
+        return []
+    top_groups: dict[str, list[dict[str, Any]]] = {}
+    for node in section_nodes:
+        path = str(node.get("path") or node.get("title") or "未命名章节")
+        top = path.split(" / ")[0].strip() or "未命名章节"
+        top_groups.setdefault(top, []).append(node)
+    specs: list[dict[str, Any]] = []
+    for index, (title, nodes) in enumerate(top_groups.items()):
+        content = "\n\n".join(str(node.get("content") or "") for node in nodes)
+        section_paths = [str(node.get("path") or node.get("title") or "") for node in nodes]
+        specs.append(
+            {
+                "bucket_key": _safe_key(title, fallback=f"structure_{index + 1}"),
+                "title": title,
+                "summary": _summarize_text("\n".join(str(node.get("summary") or "") for node in nodes), 420),
+                "content": content[:BUCKET_SECTION_CHARS],
+                "section_ids": [str(node.get("section_id")) for node in nodes if node.get("section_id")],
+                "section_paths": section_paths,
+                "bucket_type": "structure",
+                "applicable_query_types": ["answer", "policy_check"],
+            }
+        )
+    return specs
+
+
+def _normalize_llm_bucket_specs(
+    buckets: list[dict[str, Any]],
+    section_nodes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    specs: list[dict[str, Any]] = []
+    section_by_index = {index: node for index, node in enumerate(section_nodes)}
+    section_by_id = {str(node.get("section_id")): node for node in section_nodes}
+    for index, item in enumerate(buckets):
+        section_ids = [str(value) for value in item.get("section_ids", []) if value]
+        if not section_ids and isinstance(item.get("section_indexes"), list):
+            section_ids = [
+                str(section_by_index[int(value)].get("section_id"))
+                for value in item.get("section_indexes", [])
+                if isinstance(value, int) and value in section_by_index
+            ]
+        nodes = [section_by_id[section_id] for section_id in section_ids if section_id in section_by_id]
+        content = "\n\n".join(str(node.get("content") or "") for node in nodes)
+        title = str(item.get("title") or f"任务桶 {index + 1}")
+        specs.append(
+            {
+                "bucket_key": str(item.get("bucket_key") or _safe_key(title, f"task_{index + 1}")),
+                "title": title,
+                "summary": str(item.get("summary") or _summarize_text(content, 420)),
+                "content": content[:BUCKET_SECTION_CHARS],
+                "section_ids": section_ids,
+                "section_paths": [str(node.get("path") or node.get("title") or "") for node in nodes],
+                "bucket_type": str(item.get("bucket_type") or "task"),
+                "applicable_query_types": item.get("applicable_query_types")
+                if isinstance(item.get("applicable_query_types"), list)
+                else ["answer", "policy_check", "tool_discovery", "skill_discovery"],
+            }
+        )
+    return specs
+
+
+def _unique_bucket_specs(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    seen_sections: set[tuple[str, ...]] = set()
+    for item in specs:
+        key = str(item.get("bucket_key") or "").strip()
+        section_ids = tuple(sorted(str(value) for value in item.get("section_ids", []) if value))
+        signature = section_ids or (key,)
+        if key in seen_keys or signature in seen_sections:
+            continue
+        seen_keys.add(key)
+        seen_sections.add(signature)
+        result.append(item)
+    return result
+
+
+def _bucket_quality(spec: dict[str, Any], section_ids: list[str], content: str) -> dict[str, Any]:
+    warnings: list[str] = []
+    if not section_ids:
+        warnings.append("missing_source_section")
+    if not str(spec.get("summary") or "").strip():
+        warnings.append("missing_summary")
+    if len(content.strip()) < 40:
+        warnings.append("content_too_short")
+    return {
+        "status": "warning" if warnings else "ready",
+        "warnings": warnings,
+        "has_source_sections": bool(section_ids),
+        "has_summary": bool(str(spec.get("summary") or "").strip()),
+        "content_chars": len(content or ""),
+    }
+
+
+def _fallback_bucket_specs(sections: list[str], section_nodes: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    if section_nodes:
+        return _structure_bucket_specs(section_nodes)
     return [
         {
             "bucket_key": f"bucket_{index + 1}",
             "title": _guess_title(section, index),
             "summary": section[:360],
             "content": section,
+            "bucket_type": "structure",
+            "section_ids": [],
+            "section_paths": [],
         }
         for index, section in enumerate(sections)
     ]
+
+
+def _document_card_for_search(row: KnowledgeDocument) -> dict[str, Any]:
+    metadata = row.metadata_json or {}
+    card = metadata.get("document_card") if isinstance(metadata.get("document_card"), dict) else {}
+    return {
+        "id": row.id,
+        "knowledge_base_id": row.knowledge_base_id,
+        "title": card.get("title") or row.title or row.filename,
+        "filename": row.filename,
+        "file_type": row.file_type,
+        "summary": card.get("summary") or "",
+        "outline": card.get("outline") if isinstance(card.get("outline"), list) else [],
+        "key_entities": card.get("key_entities") if isinstance(card.get("key_entities"), list) else [],
+        "section_count": card.get("section_count"),
+        "chunk_count": row.chunk_count,
+        "updated_at": row.updated_at.isoformat(),
+    }
+
+
+def _score_documents(query: str, documents: list[KnowledgeDocument]) -> list[KnowledgeDocument]:
+    return sorted(
+        documents,
+        key=lambda row: _score_text(
+            query,
+            " ".join(
+                [
+                    row.title or "",
+                    row.filename,
+                    json.dumps((row.metadata_json or {}).get("document_card", {}), ensure_ascii=False)[:4000],
+                ]
+            ),
+        ),
+        reverse=True,
+    )
+
+
+def _score_buckets(query: str, buckets: list[KnowledgeBucket]) -> list[KnowledgeBucket]:
+    return sorted(
+        buckets,
+        key=lambda row: _score_text(
+            query,
+            " ".join(
+                [
+                    row.title,
+                    row.summary,
+                    json.dumps(row.metadata_json or {}, ensure_ascii=False)[:3000],
+                ]
+            ),
+        ),
+        reverse=True,
+    )
+
+
+def _rank_chunks(
+    query: str,
+    chunks: list[KnowledgeChunk],
+    selected_buckets: list[KnowledgeBucket],
+    expanded_sections: list[dict[str, Any]],
+) -> list[KnowledgeChunk]:
+    bucket_rank = {bucket.id: index for index, bucket in enumerate(selected_buckets)}
+    section_ids = {str(item.get("section_id")) for item in expanded_sections if item.get("section_id")}
+
+    def score(chunk: KnowledgeChunk) -> tuple[float, int, int]:
+        metadata = chunk.metadata_json or {}
+        section_bonus = 2 if str(metadata.get("section_id")) in section_ids else 0
+        text_score = _score_text(query, f"{chunk.summary or ''} {chunk.content}")
+        return (text_score + section_bonus, -bucket_rank.get(chunk.bucket_id, 999), -chunk.chunk_index)
+
+    return sorted(chunks, key=score, reverse=True)
+
+
+def _build_evidence_pack(query: str, chunks: list[KnowledgeChunk]) -> list[dict[str, Any]]:
+    return [
+        {
+            "chunk_id": chunk.id,
+            "document_id": chunk.document_id,
+            "bucket_id": chunk.bucket_id,
+            "source_path": chunk.source_ref,
+            "section_path": (chunk.metadata_json or {}).get("section_path"),
+            "summary": chunk.summary,
+            "excerpt": chunk.content[:1200],
+            "confidence_reason": "片段摘要、章节路径或正文与查询相关"
+            if _score_text(query, f"{chunk.summary or ''} {chunk.content}") > 0
+            else "来自已选知识桶的候选证据",
+        }
+        for chunk in chunks
+    ]
+
+
+def _expand_sections(
+    documents: list[KnowledgeDocument],
+    buckets: list[KnowledgeBucket],
+    max_depth: int,
+) -> list[dict[str, Any]]:
+    nodes_by_doc: dict[str, dict[str, dict[str, Any]]] = {}
+    for document in documents:
+        tree = (document.metadata_json or {}).get("section_tree")
+        if isinstance(tree, list):
+            nodes_by_doc[document.id] = {
+                str(node.get("section_id")): node for node in tree if isinstance(node, dict) and node.get("section_id")
+            }
+    wanted: dict[tuple[str, str], dict[str, Any]] = {}
+    for bucket in buckets:
+        metadata = bucket.metadata_json or {}
+        section_ids = [str(value) for value in metadata.get("section_ids", []) if value]
+        doc_nodes = nodes_by_doc.get(bucket.document_id, {})
+        for section_id in section_ids:
+            node = doc_nodes.get(section_id)
+            if node:
+                _collect_section_with_children(bucket.document_id, node, doc_nodes, max_depth, wanted, bucket.title)
+    return list(wanted.values())
+
+
+def _collect_section_with_children(
+    document_id: str,
+    node: dict[str, Any],
+    all_nodes: dict[str, dict[str, Any]],
+    max_depth: int,
+    result: dict[tuple[str, str], dict[str, Any]],
+    reason: str,
+) -> None:
+    section_id = str(node.get("section_id") or "")
+    if not section_id:
+        return
+    result[(document_id, section_id)] = {
+        "document_id": document_id,
+        "section_id": section_id,
+        "title": node.get("title"),
+        "path": node.get("path"),
+        "summary": node.get("summary"),
+        "level": node.get("level"),
+        "source_span": node.get("source_span") or {},
+        "reason": f"命中知识桶：{reason}",
+    }
+    if max_depth <= 0:
+        return
+    children = [child for child in all_nodes.values() if child.get("parent_id") == section_id]
+    for child in children:
+        _collect_section_with_children(document_id, child, all_nodes, max_depth - 1, result, reason)
+
+
+def _safe_key(text: str, fallback: str) -> str:
+    ascii_words = re.findall(r"[A-Za-z0-9]+", text)
+    if ascii_words:
+        key = "_".join(ascii_words).lower()
+    else:
+        key = "bucket_" + str(abs(hash(text)) % 100000)
+    key = re.sub(r"_+", "_", key).strip("_")
+    return key[:64] or fallback
+
+
+def _query_terms(query: str) -> list[str]:
+    terms = re.findall(r"[A-Za-z0-9_.-]{2,}|[\u4e00-\u9fff]{2,}", query or "")
+    result: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        normalized = term.lower()
+        if normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+    return result
+
+
+def _score_text(query: str, text: str) -> float:
+    haystack = (text or "").lower()
+    score = 0.0
+    if query and query.lower() in haystack:
+        score += 5.0
+    for term in _query_terms(query):
+        count = haystack.count(term)
+        if count:
+            score += min(4.0, count * 1.5)
+    return score
 
 
 def _guess_title(section: str, index: int) -> str:

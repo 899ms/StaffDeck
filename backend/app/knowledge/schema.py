@@ -152,18 +152,26 @@ class KnowledgeSearchRequest(BaseModel):
     tenant_id: str
     agent_id: Optional[str] = None
     query: str
+    mode: Literal["chat", "skill_discovery", "debug"] = "chat"
     knowledge_base_ids: list[str] = Field(default_factory=list)
     knowledge_base_version_ids: list[str] = Field(default_factory=list)
     document_ids: list[str] = Field(default_factory=list)
     max_bucket_rounds: int = 2
     max_buckets: int = 4
     max_chunks: int = 8
+    budget_tokens: int = 4000
+    max_depth: int = 2
+    need_evidence_pack: bool = True
 
 
 class KnowledgeSearchResponse(BaseModel):
     selected_buckets: list[KnowledgeBucketRead] = Field(default_factory=list)
     chunks: list[KnowledgeChunkRead] = Field(default_factory=list)
     trace: list[dict[str, Any]] = Field(default_factory=list)
+    route_trace: list[dict[str, Any]] = Field(default_factory=list)
+    selected_documents: list[dict[str, Any]] = Field(default_factory=list)
+    expanded_sections: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_pack: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class KnowledgeDiscoveryRead(BaseModel):

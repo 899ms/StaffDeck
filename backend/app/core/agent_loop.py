@@ -2408,16 +2408,27 @@ class AgentLoop:
             chat_session.agent_id,
         )
         if self._agent_requires_resource_filter(request.tenant_id, chat_session.agent_id) and not knowledge_base_ids:
-            search_response = KnowledgeSearchResponse(selected_buckets=[], chunks=[], trace=[])
+            search_response = KnowledgeSearchResponse(
+                selected_buckets=[],
+                chunks=[],
+                trace=[],
+                route_trace=[],
+                selected_documents=[],
+                expanded_sections=[],
+                evidence_pack=[],
+            )
         else:
             search_response = KnowledgeService(self.db).search(
                 KnowledgeSearchRequest(
                     tenant_id=request.tenant_id,
                     agent_id=chat_session.agent_id,
                     query=query.query,
+                    mode="chat",
                     knowledge_base_ids=knowledge_base_ids,
                     max_chunks=max(1, min(query.max_chunks, 12)),
                     max_buckets=4,
+                    max_depth=max(1, min(query.max_depth, 4)),
+                    need_evidence_pack=True,
                 ),
                 model_config,
             )
@@ -2425,7 +2436,10 @@ class AgentLoop:
             "query": query.model_dump(mode="json"),
             "selected_buckets": [item.model_dump(mode="json") for item in search_response.selected_buckets],
             "chunks": [item.model_dump(mode="json") for item in search_response.chunks],
-            "trace": search_response.trace,
+            "trace": search_response.route_trace or search_response.trace,
+            "selected_documents": search_response.selected_documents,
+            "expanded_sections": search_response.expanded_sections,
+            "evidence_pack": search_response.evidence_pack,
         }
         self._record_knowledge_results(chat_session, knowledge_items)
         self.events.record(
@@ -2435,7 +2449,7 @@ class AgentLoop:
             knowledge_items,
         )
         if stream_events is not None:
-            for trace in search_response.trace:
+            for trace in search_response.route_trace or search_response.trace:
                 stream_events.append(("status", {"phase": "knowledge", **trace}))
             stream_events.append(("knowledge_result", knowledge_items))
 

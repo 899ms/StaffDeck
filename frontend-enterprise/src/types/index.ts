@@ -114,6 +114,27 @@ export type KnowledgeDiscoveryRead = {
   updated_at: string;
 };
 
+export type KnowledgeSearchEvidence = {
+  chunk_id: string;
+  document_id: string;
+  bucket_id: string;
+  source_path?: string;
+  section_path?: string;
+  summary?: string;
+  excerpt: string;
+  confidence_reason?: string;
+};
+
+export type KnowledgeSearchResponse = {
+  selected_buckets: KnowledgeBucketRead[];
+  chunks: KnowledgeChunkRead[];
+  trace: Array<Record<string, unknown>>;
+  route_trace: Array<Record<string, unknown>>;
+  selected_documents: Array<Record<string, unknown>>;
+  expanded_sections: Array<Record<string, unknown>>;
+  evidence_pack: KnowledgeSearchEvidence[];
+};
+
 export type AgentResourceType = 'skill' | 'general_skill' | 'knowledge_base';
 
 export type AgentResourceBindingRead = {

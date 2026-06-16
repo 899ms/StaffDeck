@@ -25,6 +25,7 @@ import type {
   KnowledgeDiscoveryRead,
   KnowledgeDocumentRead,
   KnowledgeIngestJobRead,
+  KnowledgeSearchResponse,
   AgentProfileRead,
 } from '../types';
 
@@ -89,6 +90,9 @@ export default function KnowledgeManagePage() {
   const [bucketChunks, setBucketChunks] = useState<KnowledgeChunkRead[]>([]);
   const [chunkDrafts, setChunkDrafts] = useState<Record<string, { content: string; summary: string }>>({});
   const [contentSaving, setContentSaving] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchResult, setSearchResult] = useState<KnowledgeSearchResponse | null>(null);
 
   const actionableDiscoveries = discoveries.filter((item) => item.status === 'pending' && item.suggestion_type !== 'warning');
   const warningDiscoveries = discoveries.filter((item) => item.suggestion_type === 'warning' || item.status !== 'pending');
@@ -137,6 +141,7 @@ export default function KnowledgeManagePage() {
 
   async function loadBuckets(document: KnowledgeDocumentRead, select = true) {
     if (select) setSelectedDocument(document);
+    setSearchResult(null);
     try {
       const rows = await api.get<KnowledgeBucketRead[]>(
         `/api/enterprise/knowledge/documents/${document.id}/buckets?tenant_id=${TENANT_ID}`,
@@ -144,6 +149,31 @@ export default function KnowledgeManagePage() {
       setBuckets(rows);
     } catch (error) {
       message.error(error instanceof Error ? error.message : '加载知识桶失败');
+    }
+  }
+
+  async function runKnowledgeSearch() {
+    const query = searchQuery.trim();
+    if (!query) {
+      message.warning('请输入要调试的知识问题');
+      return;
+    }
+    setSearchLoading(true);
+    try {
+      const response = await api.post<KnowledgeSearchResponse>('/api/enterprise/knowledge/search', {
+        tenant_id: TENANT_ID,
+        agent_id: agentId || undefined,
+        knowledge_base_ids: selectedDocument?.knowledge_base_id ? [selectedDocument.knowledge_base_id] : undefined,
+        query,
+        mode: 'debug',
+        max_depth: 3,
+        need_evidence_pack: true,
+      });
+      setSearchResult(response);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '知识检索失败');
+    } finally {
+      setSearchLoading(false);
     }
   }
 
@@ -577,6 +607,33 @@ export default function KnowledgeManagePage() {
                 ))}
               </div>
             )}
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[18, 18]}>
+        <Col xs={24} xl={14}>
+          <Card className="knowledge-card knowledge-card-solid" title="PageIndex 导航结构">
+            {!selectedDocument ? (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择文档后查看文档卡和章节树" />
+            ) : (
+              <PageIndexOverview document={selectedDocument} buckets={buckets} />
+            )}
+          </Card>
+        </Col>
+        <Col xs={24} xl={10}>
+          <Card className="knowledge-card knowledge-card-solid" title="渐进检索调试">
+            <Space direction="vertical" size={14} style={{ width: '100%' }}>
+              <Input.Search
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                onSearch={() => void runKnowledgeSearch()}
+                loading={searchLoading}
+                placeholder="输入一个知识问题，查看文档 -> 桶 -> 章节 -> 证据包"
+                enterButton="检索"
+              />
+              <KnowledgeSearchDebug result={searchResult} loading={searchLoading} />
+            </Space>
           </Card>
         </Col>
       </Row>
@@ -1072,6 +1129,138 @@ function stringFromMetadata(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
+function PageIndexOverview({ document, buckets }: { document: KnowledgeDocumentRead; buckets: KnowledgeBucketRead[] }) {
+  const metadata = document.metadata || {};
+  const documentCard = isRecord(metadata.document_card) ? metadata.document_card : {};
+  const sectionTree = Array.isArray(metadata.section_tree) ? metadata.section_tree.filter(isRecord).slice(0, 24) : [];
+  const chunkStats = isRecord(metadata.chunk_stats) ? metadata.chunk_stats : {};
+  const bucketQuality = Array.isArray(metadata.bucket_quality) ? metadata.bucket_quality.filter(isRecord) : [];
+  return (
+    <div className="knowledge-pageindex">
+      <div className="knowledge-pageindex-card">
+        <div>
+          <Typography.Text type="secondary">Document Card</Typography.Text>
+          <Typography.Title level={5}>{String(documentCard.title || document.title || document.filename)}</Typography.Title>
+          <Typography.Paragraph>{String(documentCard.summary || '暂无文档摘要')}</Typography.Paragraph>
+        </div>
+        <Space size={8} wrap>
+          <Tag>{document.file_type}</Tag>
+          <Tag>{Number(documentCard.section_count || sectionTree.length)} 章节</Tag>
+          <Tag>{Number(chunkStats.total_chunks || document.chunk_count)} 证据片段</Tag>
+          <Tag>{buckets.length} 知识桶</Tag>
+        </Space>
+      </div>
+      <div className="knowledge-pageindex-grid">
+        <div>
+          <Typography.Text strong>章节树</Typography.Text>
+          <div className="knowledge-section-tree">
+            {sectionTree.length === 0 ? (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无章节结构" />
+            ) : (
+              sectionTree.map((section) => (
+                <div
+                  className="knowledge-section-node"
+                  key={String(section.section_id || section.path || section.title)}
+                  style={{ paddingLeft: Math.max(0, Number(section.level || 1) - 1) * 14 }}
+                >
+                  <span>{String(section.path || section.title || '未命名章节')}</span>
+                  <small>{String(section.summary || '')}</small>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+        <div>
+          <Typography.Text strong>桶质量</Typography.Text>
+          <div className="knowledge-quality-list">
+            {bucketQuality.length === 0 ? (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无质量信息" />
+            ) : (
+              bucketQuality.map((quality, index) => {
+                const qualityInfo = isRecord(quality.quality) ? quality.quality : {};
+                const warnings = Array.isArray(qualityInfo.warnings) ? qualityInfo.warnings : [];
+                return (
+                  <div className="knowledge-quality-item" key={String(quality.bucket_key || index)}>
+                    <div>
+                      <strong>{String(quality.title || quality.bucket_key || `知识桶 ${index + 1}`)}</strong>
+                      <span>{String(quality.bucket_type || 'structure')}</span>
+                    </div>
+                    <Space size={6} wrap>
+                      <Tag color={qualityInfo.status === 'warning' ? 'gold' : 'green'}>
+                        {qualityInfo.status === 'warning' ? '需补足' : '达标'}
+                      </Tag>
+                      <Tag>{Number(quality.section_count || 0)} 章节</Tag>
+                      {warnings.slice(0, 2).map((warning) => (
+                        <Tag color="gold" key={String(warning)}>
+                          {String(warning)}
+                        </Tag>
+                      ))}
+                    </Space>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function KnowledgeSearchDebug({ result, loading }: { result: KnowledgeSearchResponse | null; loading: boolean }) {
+  if (loading) {
+    return <Typography.Text type="secondary">正在按文档、知识桶、章节和证据片段逐级检索...</Typography.Text>;
+  }
+  if (!result) {
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚未运行检索" />;
+  }
+  return (
+    <div className="knowledge-search-debug">
+      <div className="knowledge-route-trace">
+        {(result.route_trace || result.trace || []).map((item, index) => (
+          <div className="knowledge-route-step" key={`${String(item.phase || 'phase')}-${index}`}>
+            <span>{index + 1}</span>
+            <div>
+              <strong>{routePhaseLabel(String(item.phase || ''))}</strong>
+              <small>{String(item.message || '')}</small>
+            </div>
+          </div>
+        ))}
+      </div>
+      <Collapse
+        size="small"
+        items={[
+          {
+            key: 'documents',
+            label: `文档 ${result.selected_documents.length}`,
+            children: <pre className="knowledge-json">{JSON.stringify(result.selected_documents, null, 2)}</pre>,
+          },
+          {
+            key: 'sections',
+            label: `展开章节 ${result.expanded_sections.length}`,
+            children: <pre className="knowledge-json">{JSON.stringify(result.expanded_sections, null, 2)}</pre>,
+          },
+          {
+            key: 'evidence',
+            label: `证据包 ${result.evidence_pack.length}`,
+            children: (
+              <div className="knowledge-evidence-list">
+                {result.evidence_pack.map((item) => (
+                  <div className="knowledge-evidence-item" key={item.chunk_id}>
+                    <Typography.Text strong>{item.section_path || item.source_path || item.chunk_id}</Typography.Text>
+                    <Typography.Paragraph>{item.excerpt}</Typography.Paragraph>
+                    <Typography.Text type="secondary">{item.confidence_reason}</Typography.Text>
+                  </div>
+                ))}
+              </div>
+            ),
+          },
+        ]}
+      />
+    </div>
+  );
+}
+
 function DiscoveryColumn({
   title,
   description,
@@ -1132,6 +1321,25 @@ function DiscoveryColumn({
       )}
     </div>
   );
+}
+
+function routePhaseLabel(phase: string) {
+  const map: Record<string, string> = {
+    document_route: '选择知识库文档',
+    document_route_fallback: '文档路由兜底',
+    bucket_route: '展开知识桶',
+    bucket_route_fallback: '知识桶路由兜底',
+    section_expand: '读取章节',
+    read_chunks: '读取片段',
+    evidence_pack: '整理证据包',
+    no_documents: '没有文档',
+    no_buckets: '没有知识桶',
+  };
+  return map[phase] || phase || '检索阶段';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
 function statusTag(status: string) {

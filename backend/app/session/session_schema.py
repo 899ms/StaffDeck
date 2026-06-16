@@ -108,6 +108,9 @@ class KnowledgeQuery(BaseModel):
     reason: Optional[str] = None
     scope: dict[str, Any] = Field(default_factory=dict)
     max_chunks: int = 6
+    query_type: Literal["answer", "policy_check", "tool_discovery", "skill_discovery"] = "answer"
+    desired_evidence: Optional[str] = None
+    max_depth: int = 2
 
 
 class StepAgentResult(BaseModel):

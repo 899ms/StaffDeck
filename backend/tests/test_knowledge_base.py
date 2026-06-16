@@ -7,7 +7,17 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.api.knowledge_bases import knowledge_base_read
-from app.db.models import KnowledgeBase, KnowledgeBaseVersion, KnowledgeBucket, KnowledgeDiscoverySuggestion, Skill, Tenant, Tool
+from app.db.models import (
+    KnowledgeBase,
+    KnowledgeBaseVersion,
+    KnowledgeBucket,
+    KnowledgeChunk,
+    KnowledgeDiscoverySuggestion,
+    KnowledgeDocument,
+    Skill,
+    Tenant,
+    Tool,
+)
 from app.knowledge.schema import KnowledgeSearchRequest
 from app.knowledge.service import IngestPayload, KnowledgeService
 from app.skills.skill_schema import SkillCard
@@ -82,11 +92,37 @@ def test_knowledge_ingest_creates_document_buckets_and_chunks_without_auto_disco
         assert job is not None
         assert job.status == "succeeded"
         assert job.document_id
+        document = db.get(KnowledgeDocument, job.document_id)
+        assert document is not None
+        assert document.metadata_json["document_card"]["title"]
+        assert document.metadata_json["section_tree"]
+        assert document.metadata_json["chunk_stats"]["total_chunks"] > 0
+        assert document.metadata_json["bucket_quality"]
         buckets = db.exec(select(KnowledgeBucket).where(KnowledgeBucket.document_id == job.document_id)).all()
         assert buckets
+        assert all(bucket.metadata_json.get("section_ids") for bucket in buckets)
+        chunks = db.exec(select(KnowledgeChunk).where(KnowledgeChunk.document_id == job.document_id)).all()
+        assert chunks
+        assert all(chunk.metadata_json.get("section_path") for chunk in chunks)
         response = service.search(
-            KnowledgeSearchRequest(tenant_id="tenant_demo", knowledge_base_ids=["kb_demo"], query="配送怎么处理")
+            KnowledgeSearchRequest(
+                tenant_id="tenant_demo",
+                knowledge_base_ids=["kb_demo"],
+                query="配送怎么处理",
+                mode="debug",
+                need_evidence_pack=True,
+            )
         )
+        phases = [item["phase"] for item in response.route_trace]
+        assert "document_route" in phases
+        assert "bucket_route" in phases
+        assert "section_expand" in phases
+        assert "evidence_pack" in phases
+        assert response.selected_documents
+        assert response.expanded_sections
+        assert response.evidence_pack
+        assert response.evidence_pack[0]["source_path"]
+        assert response.evidence_pack[0]["excerpt"]
         assert response.chunks
         assert db.exec(select(KnowledgeDiscoverySuggestion)).all() == []
 
