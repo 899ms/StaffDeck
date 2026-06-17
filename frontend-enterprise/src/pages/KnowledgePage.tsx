@@ -90,6 +90,8 @@ export default function KnowledgeManagePage() {
   const [bucketChunks, setBucketChunks] = useState<KnowledgeChunkRead[]>([]);
   const [chunkDrafts, setChunkDrafts] = useState<Record<string, { content: string; summary: string }>>({});
   const [contentSaving, setContentSaving] = useState(false);
+  const [documentSearch, setDocumentSearch] = useState('');
+  const [knowledgeBaseFilter, setKnowledgeBaseFilter] = useState('__all__');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchResult, setSearchResult] = useState<KnowledgeSearchResponse | null>(null);
@@ -98,10 +100,38 @@ export default function KnowledgeManagePage() {
   const warningDiscoveries = discoveries.filter((item) => item.suggestion_type === 'warning' || item.status !== 'pending');
   const currentAgent = useMemo(() => agents.find((item) => item.id === agentId), [agents, agentId]);
   const isOverallAgent = !currentAgent || currentAgent.is_overall;
+  const knowledgeBaseNameById = useMemo(
+    () => new Map(knowledgeBases.map((item) => [item.id, item.name])),
+    [knowledgeBases],
+  );
+  const filteredDocuments = useMemo(() => {
+    const query = documentSearch.trim().toLowerCase();
+    return documents.filter((item) => {
+      if (knowledgeBaseFilter !== '__all__' && item.knowledge_base_id !== knowledgeBaseFilter) return false;
+      if (!query) return true;
+      const searchable = [
+        item.title,
+        item.filename,
+        item.file_type,
+        item.status,
+        knowledgeBaseNameById.get(item.knowledge_base_id),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return searchable.includes(query);
+    });
+  }, [documents, documentSearch, knowledgeBaseFilter, knowledgeBaseNameById]);
 
   useEffect(() => {
     void refresh();
   }, [agentId]);
+
+  useEffect(() => {
+    if (knowledgeBaseFilter !== '__all__' && !knowledgeBases.some((item) => item.id === knowledgeBaseFilter)) {
+      setKnowledgeBaseFilter('__all__');
+    }
+  }, [knowledgeBases, knowledgeBaseFilter]);
 
   useEffect(() => {
     const onScopeChange = (event: Event) => {
@@ -116,7 +146,7 @@ export default function KnowledgeManagePage() {
     const suffix = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
     try {
       const [docRows, discoveryRows, kbRows, agentRows] = await Promise.all([
-        api.get<KnowledgeDocumentRead[]>(`/api/enterprise/knowledge/documents?tenant_id=${TENANT_ID}${suffix}`),
+        api.get<KnowledgeDocumentRead[]>(`/api/enterprise/knowledge/documents?tenant_id=${TENANT_ID}&include_all_versions=true${suffix}`),
         api.get<KnowledgeDiscoveryRead[]>(`/api/enterprise/knowledge/discoveries?tenant_id=${TENANT_ID}${suffix}`),
         api.get<KnowledgeBaseRead[]>(`/api/enterprise/knowledge-bases?tenant_id=${TENANT_ID}${suffix}`),
         api.get<AgentProfileRead[]>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`),
@@ -125,7 +155,13 @@ export default function KnowledgeManagePage() {
       setDiscoveries(discoveryRows);
       setKnowledgeBases(kbRows);
       setAgents(agentRows);
-      const current = selectedDocument ? docRows.find((item) => item.id === selectedDocument.id) || null : docRows[0] || null;
+      const scopedDocRows =
+        knowledgeBaseFilter === '__all__'
+          ? docRows
+          : docRows.filter((item) => item.knowledge_base_id === knowledgeBaseFilter);
+      const current = selectedDocument
+        ? scopedDocRows.find((item) => item.id === selectedDocument.id) || scopedDocRows[0] || null
+        : scopedDocRows[0] || null;
       setSelectedDocument(current);
       if (current) {
         await loadBuckets(current, false);
@@ -163,7 +199,12 @@ export default function KnowledgeManagePage() {
       const response = await api.post<KnowledgeSearchResponse>('/api/enterprise/knowledge/search', {
         tenant_id: TENANT_ID,
         agent_id: agentId || undefined,
-        knowledge_base_ids: selectedDocument?.knowledge_base_id ? [selectedDocument.knowledge_base_id] : undefined,
+        knowledge_base_ids:
+          knowledgeBaseFilter !== '__all__'
+            ? [knowledgeBaseFilter]
+            : selectedDocument?.knowledge_base_id
+              ? [selectedDocument.knowledge_base_id]
+              : undefined,
         query,
         mode: 'debug',
         max_depth: 3,
@@ -466,6 +507,12 @@ export default function KnowledgeManagePage() {
         </button>
       ),
     },
+    {
+      title: '知识库',
+      dataIndex: 'knowledge_base_id',
+      width: 150,
+      render: (value: string) => <Tag>{knowledgeBaseNameById.get(value) || value}</Tag>,
+    },
     { title: '格式', dataIndex: 'file_type', width: 92, render: (value) => <Tag>{value}</Tag> },
     { title: '状态', dataIndex: 'status', width: 104, render: (value) => statusTag(value) },
     { title: '桶', dataIndex: 'bucket_count', width: 72 },
@@ -562,81 +609,105 @@ export default function KnowledgeManagePage() {
             )}
           </Card>
         </Col>
-        <Col xs={24} xl={14}>
+        <Col xs={24} xl={16}>
           <Card className="knowledge-card knowledge-card-solid" title="现有知识" extra={<DatabaseOutlined />}>
+            <div className="knowledge-management-toolbar">
+              <Input.Search
+                allowClear
+                value={documentSearch}
+                onChange={(event) => setDocumentSearch(event.target.value)}
+                placeholder="搜索文档、文件名、知识库、格式或状态"
+              />
+              <Select
+                value={knowledgeBaseFilter}
+                onChange={(value) => {
+                  setKnowledgeBaseFilter(value);
+                  const next =
+                    value === '__all__'
+                      ? documents[0] || null
+                      : documents.find((item) => item.knowledge_base_id === value) || null;
+                  if (next) {
+                    void loadBuckets(next);
+                  } else {
+                    setSelectedDocument(null);
+                    setBuckets([]);
+                  }
+                }}
+                options={[
+                  { value: '__all__', label: '全部知识库' },
+                  ...knowledgeBases.map((item) => ({ value: item.id, label: item.name })),
+                ]}
+              />
+            </div>
             <Table
               rowKey="id"
               columns={documentColumns}
-              dataSource={documents}
+              dataSource={filteredDocuments}
               loading={loading}
               pagination={{ pageSize: 8 }}
               rowClassName={(row) => (row.id === selectedDocument?.id ? 'knowledge-row-selected' : '')}
             />
           </Card>
         </Col>
-        <Col xs={24} xl={10}>
-          <Card
-            className="knowledge-card knowledge-card-solid"
-            title={selectedDocument ? `知识桶 · ${selectedDocument.title || selectedDocument.filename}` : '知识桶'}
-            extra={<FileSearchOutlined />}
-          >
-            {!selectedDocument ? (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择一个文档查看知识桶" />
-            ) : buckets.length === 0 ? (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无分桶结果" />
-            ) : (
-              <div className="knowledge-bucket-list">
-                {buckets.map((bucket) => (
-                  <div className="knowledge-bucket-item" key={bucket.id}>
-                    <div className="knowledge-bucket-title">
-                      <span>{bucket.title}</span>
-                      <Space size={6}>
-                        {bucketStatusTag(bucket)}
-                        <Button size="small" icon={<EditOutlined />} onClick={() => void openBucketEditor(bucket)}>
-                          编辑
-                        </Button>
-                      </Space>
+        <Col xs={24} xl={8}>
+          <Space direction="vertical" size={18} className="knowledge-manage-side-stack">
+            <Card
+              className="knowledge-card knowledge-card-solid knowledge-card-compact"
+              title={selectedDocument ? `知识桶 · ${selectedDocument.title || selectedDocument.filename}` : '知识桶'}
+              extra={<FileSearchOutlined />}
+            >
+              {!selectedDocument ? (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择一个文档查看知识桶" />
+              ) : buckets.length === 0 ? (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无分桶结果" />
+              ) : (
+                <div className="knowledge-bucket-list is-compact">
+                  {buckets.map((bucket) => (
+                    <div className="knowledge-bucket-item" key={bucket.id}>
+                      <div className="knowledge-bucket-title">
+                        <span>{bucket.title}</span>
+                        <Space size={6}>
+                          {bucketStatusTag(bucket)}
+                          <Button size="small" icon={<EditOutlined />} onClick={() => void openBucketEditor(bucket)}>
+                            编辑
+                          </Button>
+                        </Space>
+                      </div>
+                      <Typography.Paragraph ellipsis={{ rows: 2 }}>{bucket.summary}</Typography.Paragraph>
+                      <div className="knowledge-bucket-meta">
+                        <Tag>{bucket.bucket_key}</Tag>
+                        <Tag>{bucket.chunk_count} 片段</Tag>
+                        <Tag>{bucket.token_estimate} tokens</Tag>
+                      </div>
                     </div>
-                    <Typography.Paragraph ellipsis={{ rows: 3 }}>{bucket.summary}</Typography.Paragraph>
-                    <div className="knowledge-bucket-meta">
-                      <Tag>{bucket.bucket_key}</Tag>
-                      <Tag>{bucket.chunk_count} 片段</Tag>
-                      <Tag>{bucket.token_estimate} tokens</Tag>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
+                  ))}
+                </div>
+              )}
+            </Card>
+            <Card className="knowledge-card knowledge-card-solid knowledge-card-compact" title="渐进检索调试">
+              <Space direction="vertical" size={14} style={{ width: '100%' }}>
+                <Input.Search
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  onSearch={() => void runKnowledgeSearch()}
+                  loading={searchLoading}
+                  placeholder="输入知识问题"
+                  enterButton="检索"
+                />
+                <KnowledgeSearchDebug result={searchResult} loading={searchLoading} compact />
+              </Space>
+            </Card>
+          </Space>
         </Col>
       </Row>
 
-      <Row gutter={[18, 18]}>
-        <Col xs={24} xl={14}>
-          <Card className="knowledge-card knowledge-card-solid" title="PageIndex 导航结构">
-            {!selectedDocument ? (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择文档后查看文档卡和章节树" />
-            ) : (
-              <PageIndexOverview document={selectedDocument} buckets={buckets} />
-            )}
-          </Card>
-        </Col>
-        <Col xs={24} xl={10}>
-          <Card className="knowledge-card knowledge-card-solid" title="渐进检索调试">
-            <Space direction="vertical" size={14} style={{ width: '100%' }}>
-              <Input.Search
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                onSearch={() => void runKnowledgeSearch()}
-                loading={searchLoading}
-                placeholder="输入一个知识问题，查看文档 -> 桶 -> 章节 -> 证据包"
-                enterButton="检索"
-              />
-              <KnowledgeSearchDebug result={searchResult} loading={searchLoading} />
-            </Space>
-          </Card>
-        </Col>
-      </Row>
+      <Card className="knowledge-card knowledge-card-solid" title="知识导航结构">
+        {!selectedDocument ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择文档后查看文档卡和章节树" />
+        ) : (
+          <PageIndexOverview document={selectedDocument} buckets={buckets} />
+        )}
+      </Card>
 
       <Card className="knowledge-card knowledge-card-solid" title="自发现建议">
         <Row gutter={[16, 16]}>
@@ -1139,7 +1210,7 @@ function PageIndexOverview({ document, buckets }: { document: KnowledgeDocumentR
     <div className="knowledge-pageindex">
       <div className="knowledge-pageindex-card">
         <div>
-          <Typography.Text type="secondary">Document Card</Typography.Text>
+          <Typography.Text type="secondary">文档卡片</Typography.Text>
           <Typography.Title level={5}>{String(documentCard.title || document.title || document.filename)}</Typography.Title>
           <Typography.Paragraph>{String(documentCard.summary || '暂无文档摘要')}</Typography.Paragraph>
         </div>
@@ -1207,7 +1278,15 @@ function PageIndexOverview({ document, buckets }: { document: KnowledgeDocumentR
   );
 }
 
-function KnowledgeSearchDebug({ result, loading }: { result: KnowledgeSearchResponse | null; loading: boolean }) {
+function KnowledgeSearchDebug({
+  result,
+  loading,
+  compact = false,
+}: {
+  result: KnowledgeSearchResponse | null;
+  loading: boolean;
+  compact?: boolean;
+}) {
   if (loading) {
     return <Typography.Text type="secondary">正在按文档、知识桶、章节和证据片段逐级检索...</Typography.Text>;
   }
@@ -1215,7 +1294,7 @@ function KnowledgeSearchDebug({ result, loading }: { result: KnowledgeSearchResp
     return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚未运行检索" />;
   }
   return (
-    <div className="knowledge-search-debug">
+    <div className={`knowledge-search-debug${compact ? ' is-compact' : ''}`}>
       <div className="knowledge-route-trace">
         {(result.route_trace || result.trace || []).map((item, index) => (
           <div className="knowledge-route-step" key={`${String(item.phase || 'phase')}-${index}`}>

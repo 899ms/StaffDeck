@@ -85,12 +85,32 @@ def list_documents(
     tenant_id: str = Query(...),
     knowledge_base_id: str | None = Query(None),
     agent_id: str | None = Query(None),
+    include_all_versions: bool = Query(False),
     db: Session = Depends(get_session),
 ) -> list[KnowledgeDocumentRead]:
     ensure_tenant(db, tenant_id)
     visible_version_ids = visible_knowledge_base_version_ids(db, tenant_id, agent_id)
     stmt = select(KnowledgeDocument).where(KnowledgeDocument.tenant_id == tenant_id)
-    if knowledge_base_id:
+    if include_all_versions:
+        if knowledge_base_id:
+            stmt = stmt.where(KnowledgeDocument.knowledge_base_id == knowledge_base_id)
+        elif agent_id:
+            agent = get_agent(db, tenant_id, agent_id)
+            if agent and not agent.is_overall:
+                branches = db.exec(
+                    select(AgentKnowledgeBranch).where(
+                        AgentKnowledgeBranch.tenant_id == tenant_id,
+                        AgentKnowledgeBranch.agent_id == agent.id,
+                        AgentKnowledgeBranch.status != "deleted",
+                    )
+                ).all()
+                knowledge_base_ids = [branch.knowledge_base_id for branch in branches]
+                stmt = stmt.where(
+                    KnowledgeDocument.knowledge_base_id.in_(knowledge_base_ids)
+                    if knowledge_base_ids
+                    else KnowledgeDocument.knowledge_base_id == "__none__"
+                )
+    elif knowledge_base_id:
         stmt = stmt.where(KnowledgeDocument.knowledge_base_id == knowledge_base_id)
     elif agent_id:
         agent = get_agent(db, tenant_id, agent_id)
