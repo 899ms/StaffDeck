@@ -742,13 +742,20 @@ textarea,
   padding: 2px;
 }
 
+.new-session-agent-group-title {
+  margin: 6px 2px 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 780;
+}
+
 .new-session-agent-card {
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 12px;
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-columns: 38px minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   text-align: left;
@@ -826,6 +833,18 @@ textarea,
   line-height: 1.45;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.new-session-agent-badge {
+  align-self: start;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: 999px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 58%, transparent);
+  font-size: 11px;
+  font-weight: 760;
   white-space: nowrap;
 }
 

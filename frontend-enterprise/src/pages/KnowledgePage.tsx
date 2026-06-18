@@ -276,7 +276,7 @@ export default function KnowledgeManagePage() {
       return;
     }
     if (!importSourceAgentId) {
-      message.warning('请选择来源员工');
+      message.warning('请选择知识库广场或来源员工');
       return;
     }
     if (importSelectedKnowledgeBaseIds.length === 0) {
@@ -300,7 +300,7 @@ export default function KnowledgeManagePage() {
       setImportOpen(false);
       await refresh();
     } catch (error) {
-      message.error(error instanceof Error ? error.message : '导入失败');
+      message.error(error instanceof Error ? error.message : '学习业务资料失败');
     } finally {
       setImportLoading(false);
     }
@@ -392,7 +392,7 @@ export default function KnowledgeManagePage() {
     }
     try {
       await api.post(`/api/enterprise/knowledge-bases/${row.id}/sync-from-overall?tenant_id=${TENANT_ID}&agent_id=${encodeURIComponent(agentId)}`);
-      message.success('已同步组织业务资料');
+      message.success('已从知识库广场同步');
       await refresh();
     } catch (error) {
       message.error(error instanceof Error ? error.message : '同步失败');
@@ -406,7 +406,7 @@ export default function KnowledgeManagePage() {
     }
     try {
       await api.post(`/api/enterprise/knowledge-bases/${row.id}/promote-to-overall?tenant_id=${TENANT_ID}&agent_id=${encodeURIComponent(agentId)}`);
-      message.success('已沉淀到组织业务资料');
+      message.success('已分享到知识库广场');
       await refresh();
     } catch (error) {
       message.error(error instanceof Error ? error.message : '推送失败');
@@ -564,8 +564,8 @@ export default function KnowledgeManagePage() {
                             items: [
                               { key: 'edit', icon: <EditOutlined />, label: '详情' },
                               { key: 'versions', icon: <HistoryOutlined />, label: '版本管理' },
-                              !isOverallAgent ? { key: 'sync', label: '同步组织版' } : null,
-                              !isOverallAgent ? { key: 'promote', label: '沉淀到组织' } : null,
+                              !isOverallAgent ? { key: 'sync', label: '从知识库广场同步' } : null,
+                              !isOverallAgent ? { key: 'promote', label: '分享到广场' } : null,
                               item.status === 'archived'
                                 ? { key: 'publish', icon: <PlayCircleOutlined />, label: '上线' }
                                 : { key: 'archive', icon: <PauseCircleOutlined />, label: '下线' },
@@ -642,7 +642,7 @@ export default function KnowledgeManagePage() {
 
       <Modal
         open={importOpen}
-        title="向其他员工学习业务资料"
+        title="从知识库广场新增业务资料"
         width={720}
         okText="学习"
         cancelText="取消"
@@ -653,7 +653,7 @@ export default function KnowledgeManagePage() {
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
           <Select
             value={importSourceAgentId || undefined}
-            placeholder="选择来源员工"
+            placeholder="选择知识库广场或来源员工"
             onChange={(value) => {
               setImportSourceAgentId(value);
               void loadImportSourceKnowledgeBases(value);
@@ -662,7 +662,7 @@ export default function KnowledgeManagePage() {
               .filter((item) => item.id !== agentId)
               .map((item) => ({
                 value: item.id,
-                label: `${item.name}${item.is_overall ? '（组织资源库）' : ''}`,
+                label: `${item.name}${item.is_overall ? '（知识库广场）' : ''}`,
               }))}
             style={{ width: '100%' }}
           />
@@ -679,7 +679,7 @@ export default function KnowledgeManagePage() {
             style={{ width: '100%' }}
           />
           <Typography.Text type="secondary">
-            学习会复制来源员工中选中业务资料的员工版本；目标为组织资源库时，会将员工版本沉淀为组织资料新版本。
+            学习会复制知识库广场或来源员工中选中的业务资料；分享到广场后，其他员工可继续复用。
           </Typography.Text>
         </Space>
       </Modal>

@@ -1,5 +1,6 @@
 import {
   DeleteOutlined,
+  GlobalOutlined,
   MoreOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
@@ -9,12 +10,19 @@ import { Avatar, Button, Card, Dropdown, Modal, Space, Tag, Typography, message 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, TENANT_ID } from '../api/client';
+import { isEmployeeOwnedBy, isGalleryEmployee, type EnterpriseAuthUser } from '../auth';
 import { employeeDisplayName, employeeProfile, resourceCount } from '../employee';
 import type { AgentProfileRead } from '../types';
 
 const ENTERPRISE_AGENT_STORAGE_KEY = 'ultrarag_enterprise_agent_scope';
 
-export default function AgentsPage() {
+export default function AgentsPage({
+  currentUser,
+  isAdmin = false,
+}: {
+  currentUser?: EnterpriseAuthUser;
+  isAdmin?: boolean;
+}) {
   const [agents, setAgents] = useState<AgentProfileRead[]>([]);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
@@ -36,7 +44,12 @@ export default function AgentsPage() {
   }, []);
 
   const overallAgent = agents.find((item) => item.is_overall);
-  const employees = useMemo(() => agents.filter((item) => !item.is_overall), [agents]);
+  const employees = useMemo(
+    () => agents.filter((item) => (
+      !item.is_overall && (isAdmin || isEmployeeOwnedBy(item, currentUser) || isGalleryEmployee(item))
+    )),
+    [agents, currentUser, isAdmin],
+  );
 
   function selectEmployee(row: AgentProfileRead) {
     window.localStorage.setItem(ENTERPRISE_AGENT_STORAGE_KEY, row.id);
@@ -56,6 +69,26 @@ export default function AgentsPage() {
       window.dispatchEvent(new Event('ultrarag-enterprise-agent-scope-refresh'));
     } catch (error) {
       message.error(error instanceof Error ? error.message : '更新员工状态失败');
+    }
+  }
+
+  async function updateGalleryState(row: AgentProfileRead, published: boolean) {
+    try {
+      const metadata = {
+        ...(row.metadata || {}),
+        published_to_gallery: published,
+        gallery_published_at: published ? new Date().toISOString() : undefined,
+        gallery_published_by: published ? currentUser?.username : undefined,
+      };
+      await api.put<AgentProfileRead>(`/api/enterprise/agents/${row.id}`, {
+        tenant_id: TENANT_ID,
+        metadata,
+      });
+      message.success(published ? '已发布到员工广场' : '已从员工广场下架');
+      await load();
+      window.dispatchEvent(new Event('ultrarag-enterprise-agent-scope-refresh'));
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '更新员工广场状态失败');
     }
   }
 
@@ -96,15 +129,22 @@ export default function AgentsPage() {
       </div>
 
       <div className="agents-summary-grid">
-        <Card className="agent-summary-card">
-          <span>组织资源库</span>
-          <strong>{overallAgent ? '组织资源库' : '-'}</strong>
-          <small>资料、SOP、技能和工具的组织级底座</small>
-        </Card>
+        {isAdmin && (
+          <Card className="agent-summary-card">
+            <span>组织资源库</span>
+            <strong>{overallAgent ? '组织资源库' : '-'}</strong>
+            <small>资料、SOP、技能和工具的组织级底座</small>
+          </Card>
+        )}
         <Card className="agent-summary-card">
           <span>员工总数</span>
           <strong>{employees.length}</strong>
           <small>{employees.filter((item) => item.status === 'active').length} 位在线</small>
+        </Card>
+        <Card className="agent-summary-card">
+          <span>员工广场</span>
+          <strong>{employees.filter(isGalleryEmployee).length}</strong>
+          <small>已开放给任务派发台选择</small>
         </Card>
         <Card className="agent-summary-card">
           <span>下线员工</span>
@@ -118,8 +158,10 @@ export default function AgentsPage() {
           <EmployeeCard
             key={employee.id}
             employee={employee}
+            canManage={isAdmin || isEmployeeOwnedBy(employee, currentUser)}
             onOpen={() => selectEmployee(employee)}
             onStatus={(status) => void updateStatus(employee, status)}
+            onGallery={(published) => void updateGalleryState(employee, published)}
             onDelete={() => deleteEmployee(employee)}
           />
         ))}
@@ -130,19 +172,24 @@ export default function AgentsPage() {
 
 function EmployeeCard({
   employee,
+  canManage,
   onOpen,
   onStatus,
+  onGallery,
   onDelete,
 }: {
   employee: AgentProfileRead;
+  canManage: boolean;
   onOpen: () => void;
   onStatus: (status: 'active' | 'archived') => void;
+  onGallery: (published: boolean) => void;
   onDelete: () => void;
 }) {
   const profile = employeeProfile(employee);
   const sopCount = resourceCount(employee.resources, 'skill');
   const skillCount = resourceCount(employee.resources, 'general_skill');
   const kbCount = resourceCount(employee.resources, 'knowledge_base');
+  const galleryPublished = isGalleryEmployee(employee);
   return (
     <Card className="employee-roster-card" hoverable onClick={onOpen}>
       <div className="employee-roster-head">
@@ -156,14 +203,21 @@ function EmployeeCard({
           menu={{
             items: [
               employee.status === 'active'
-                ? { key: 'archive', icon: <PauseCircleOutlined />, label: '下线' }
-                : { key: 'active', icon: <PlayCircleOutlined />, label: '上线' },
-              { key: 'delete', icon: <DeleteOutlined />, label: '删除', danger: true },
+                ? { key: 'archive', icon: <PauseCircleOutlined />, label: '下线', disabled: !canManage }
+                : { key: 'active', icon: <PlayCircleOutlined />, label: '上线', disabled: !canManage },
+              {
+                key: 'gallery',
+                icon: <GlobalOutlined />,
+                label: galleryPublished ? '从员工广场下架' : '发布到员工广场',
+                disabled: !canManage,
+              },
+              { key: 'delete', icon: <DeleteOutlined />, label: '删除', danger: true, disabled: !canManage },
             ],
             onClick: ({ key, domEvent }) => {
               domEvent.stopPropagation();
               if (key === 'active') onStatus('active');
               if (key === 'archive') onStatus('archived');
+              if (key === 'gallery') onGallery(!galleryPublished);
               if (key === 'delete') onDelete();
             },
           }}
@@ -181,6 +235,7 @@ function EmployeeCard({
       </Typography.Paragraph>
       <Space wrap className="employee-roster-tags">
         <Tag color={employee.status === 'active' ? 'green' : 'default'}>{employee.status === 'active' ? '在线' : '下线'}</Tag>
+        {galleryPublished && <Tag color="cyan">员工广场</Tag>}
         <Tag>SOP {sopCount}</Tag>
         <Tag>技能 {skillCount}</Tag>
         <Tag>资料 {kbCount}</Tag>

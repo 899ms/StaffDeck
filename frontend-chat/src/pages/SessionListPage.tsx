@@ -12,7 +12,7 @@ import type { MouseEvent } from 'react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, clearAuthSession, getAuthSession, isAuthError } from '../api/client';
-import { employeeDisplayName, employeeProfile } from '../employee';
+import { employeeDisplayName, employeeProfile, isEmployeeOwnedBy, isGalleryEmployee, visibleChatEmployees } from '../employee';
 import { ThemeToggleButton } from '../theme';
 import type { AgentProfileRead, ChatSession } from '../types';
 
@@ -39,6 +39,8 @@ export default function SessionListPage() {
     window.localStorage.getItem('skill_agent_sidebar_collapsed') === 'true'
   ));
   const tenantId = auth?.user.tenant_id || 'tenant_demo';
+  const personalAgents = agents.filter((agent) => isEmployeeOwnedBy(agent, auth?.user));
+  const galleryAgents = agents.filter((agent) => isGalleryEmployee(agent) && !isEmployeeOwnedBy(agent, auth?.user));
 
   const load = () =>
     api
@@ -61,7 +63,7 @@ export default function SessionListPage() {
     api
       .get<AgentProfileRead[]>(`/api/chat/agents?tenant_id=${tenantId}`)
       .then((rows) => {
-        const employeeRows = rows.filter((item) => !item.is_overall);
+        const employeeRows = visibleChatEmployees(rows, auth?.user);
         setAgents(employeeRows);
         setSelectedAgentId((current) => {
           if (current && employeeRows.some((item) => item.id === current)) return current;
@@ -76,7 +78,7 @@ export default function SessionListPage() {
         ));
       })
       .catch(() => setAgents([]));
-  }, [selectedAgentId, tenantId]);
+  }, [auth?.user, selectedAgentId, tenantId]);
 
   function openCreateSession() {
     const fallbackAgentId = selectedAgentId && agents.some((agent) => agent.id === selectedAgentId)
@@ -262,23 +264,46 @@ export default function SessionListPage() {
           {agents.length === 0 ? (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无可用员工" />
           ) : (
-            agents.map((agent) => {
-              const profile = employeeProfile(agent);
-              return (
-                <button
-                  key={agent.id}
-                  type="button"
-                  className={`new-session-agent-card ${newSessionAgentId === agent.id ? 'selected' : ''}`}
-                  onClick={() => setNewSessionAgentId(agent.id)}
-                >
-                  <span className={`new-session-agent-logo tone-${profile.avatarTone}`}>{profile.avatarText}</span>
-                  <span className="new-session-agent-info">
-                    <span className="new-session-agent-name">{employeeDisplayName(agent)}</span>
-                    <span className="new-session-agent-desc">{profile.roleName} · {agent.description || '使用该员工的技能、SOP、业务资料和岗位人设'}</span>
-                  </span>
-                </button>
-              );
-            })
+            <>
+              {personalAgents.length > 0 && <div className="new-session-agent-group-title">个人员工</div>}
+              {personalAgents.map((agent) => {
+                const profile = employeeProfile(agent);
+                return (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    className={`new-session-agent-card ${newSessionAgentId === agent.id ? 'selected' : ''}`}
+                    onClick={() => setNewSessionAgentId(agent.id)}
+                  >
+                    <span className={`new-session-agent-logo tone-${profile.avatarTone}`}>{profile.avatarText}</span>
+                    <span className="new-session-agent-info">
+                      <span className="new-session-agent-name">{employeeDisplayName(agent)}</span>
+                      <span className="new-session-agent-desc">{profile.roleName} · {agent.description || '使用该员工的技能、SOP、业务资料和岗位人设'}</span>
+                    </span>
+                    {isGalleryEmployee(agent) && <span className="new-session-agent-badge">已开放</span>}
+                  </button>
+                );
+              })}
+              {galleryAgents.length > 0 && <div className="new-session-agent-group-title">员工广场</div>}
+              {galleryAgents.map((agent) => {
+                const profile = employeeProfile(agent);
+                return (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    className={`new-session-agent-card ${newSessionAgentId === agent.id ? 'selected' : ''}`}
+                    onClick={() => setNewSessionAgentId(agent.id)}
+                  >
+                    <span className={`new-session-agent-logo tone-${profile.avatarTone}`}>{profile.avatarText}</span>
+                    <span className="new-session-agent-info">
+                      <span className="new-session-agent-name">{employeeDisplayName(agent)}</span>
+                      <span className="new-session-agent-desc">{profile.roleName} · {agent.description || '员工广场开放的数字员工'}</span>
+                    </span>
+                    <span className="new-session-agent-badge">广场</span>
+                  </button>
+                );
+              })}
+            </>
           )}
         </div>
       </Modal>

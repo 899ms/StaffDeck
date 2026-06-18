@@ -7,6 +7,7 @@ const resolveApiBase = () => {
 };
 
 const API_BASE = resolveApiBase();
+const AUTH_STORAGE_KEY = 'ultrarag_enterprise_auth';
 
 export const TENANT_ID = import.meta.env.VITE_TENANT_ID || 'tenant_demo';
 
@@ -14,6 +15,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
       'Content-Type': 'application/json',
+      ...authHeader(),
       ...(options.headers || {}),
     },
     ...options,
@@ -23,6 +25,17 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     throw new Error(parseErrorMessage(text) || response.statusText);
   }
   return response.json() as Promise<T>;
+}
+
+function authHeader(): Record<string, string> {
+  const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as { token?: string };
+    return parsed.token ? { Authorization: `Bearer ${parsed.token}` } : {};
+  } catch {
+    return {};
+  }
 }
 
 export const api = {

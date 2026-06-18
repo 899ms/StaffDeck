@@ -429,7 +429,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
         status: 'published',
         original_slug: editingSlug || undefined,
       });
-      message.success(editingSlug ? `已保存 ${row.name}` : `已导入 ${row.name}`);
+      message.success(editingSlug ? `已保存 ${row.name}` : `已新增 ${row.name}`);
       setSelectedSlug(row.slug);
       setEditingSlug(row.slug);
       setMarkdown(row.skill_markdown);
@@ -626,7 +626,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
       return;
     }
     if (!agentImportSourceAgentId) {
-      message.warning('请选择来源员工');
+      message.warning('请选择技能知识库广场或来源员工');
       return;
     }
     if (!agentImportSelectedSkillIds.length) {
@@ -653,7 +653,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
 
   async function importClawHubSource() {
     if (!clawhubSource.trim()) {
-      message.warning('请输入 ClawHub/GitHub/zip 来源');
+      message.warning('请输入技能知识库广场、GitHub 或 zip 来源');
       return;
     }
     setClawhubLoading(true);
@@ -663,14 +663,14 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
         source: clawhubSource.trim(),
         status: 'published',
       });
-      message.success(`已导入 ${row.name}`);
+      message.success(`已新增 ${row.name}`);
       setRows((current) => [row, ...current.filter((item) => item.id !== row.id && item.slug !== row.slug)]);
       setSelectedSlug(row.slug);
       editSkill(row);
       setClawhubModalOpen(false);
       void load();
     } catch (error) {
-      message.error(error instanceof Error ? error.message : 'ClawHub 导入失败');
+      message.error(error instanceof Error ? error.message : '从技能知识库广场新增失败');
     } finally {
       setClawhubLoading(false);
     }
@@ -974,7 +974,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
                     items: [
                       { key: 'file', label: '选择文件' },
                       { key: 'folder', label: '选择文件夹' },
-                      { key: 'clawhub', label: '从 ClawHub / GitHub 导入' },
+                      { key: 'clawhub', label: '从技能知识库广场新增' },
                       { key: 'agent', label: '向其他员工学习技能' },
                     ],
                     onClick: ({ key }) => {
@@ -1321,17 +1321,17 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
         </aside>
       </div>
       <Modal
-        title="从 ClawHub / GitHub 导入技能"
+        title="从技能知识库广场新增技能"
         open={clawhubModalOpen}
         onOk={importClawHubSource}
         confirmLoading={clawhubLoading}
         onCancel={() => setClawhubModalOpen(false)}
-        okText="导入"
+        okText="新增"
         cancelText="取消"
       >
         <Space direction="vertical" size={10} style={{ width: '100%' }}>
           <Typography.Text type="secondary">
-            支持 GitHub repo/tree/raw SKILL.md、zip 包地址，或 owner/repo 形式。导入会新建技能，不覆盖当前内容。
+            支持 GitHub repo/tree/raw SKILL.md、zip 包地址，或 owner/repo 形式。新增会进入当前员工的已掌握技能，不覆盖当前内容。
           </Typography.Text>
           <Input
             value={clawhubSource}
@@ -1343,7 +1343,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
       <Modal
         title="向其他员工学习技能"
         open={agentImportOpen}
-        okText="导入"
+        okText="学习"
         cancelText="取消"
         confirmLoading={agentImportLoading}
         onOk={() => void submitAgentImportSkills()}
@@ -1351,18 +1351,18 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
       >
         <Space direction="vertical" size={14} style={{ width: '100%' }}>
           <Typography.Text type="secondary">
-            学习会把来源员工可见的技能绑定到当前员工；不会覆盖当前编辑区内容。
+            学习会把来源员工或技能知识库广场可见的技能绑定到当前员工；不会覆盖当前编辑区内容。
           </Typography.Text>
           <Select
             value={agentImportSourceAgentId || undefined}
-            placeholder="选择来源员工"
+            placeholder="选择技能知识库广场或来源员工"
             onChange={(value) => {
               setAgentImportSourceAgentId(value);
               void loadAgentImportSourceSkills(value);
             }}
             options={agentImportAgents.map((item) => ({
               value: item.id,
-              label: `${item.name}${item.is_overall ? '（整体）' : ''}`,
+              label: `${item.name}${item.is_overall ? '（技能知识库广场）' : ''}`,
             }))}
             style={{ width: '100%' }}
           />

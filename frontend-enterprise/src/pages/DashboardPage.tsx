@@ -10,11 +10,12 @@ import {
   RightOutlined,
   ToolOutlined,
 } from '@ant-design/icons';
-import { Avatar, Card, Space, Tag, Typography, message } from 'antd';
+import { Avatar, Button, Card, Space, Tag, Typography, message } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, TENANT_ID } from '../api/client';
+import { isEmployeeOwnedBy, isGalleryEmployee, type EnterpriseAuthUser } from '../auth';
 import { activeResourceCount, employeeDisplayName, employeeProfile, resourceCount } from '../employee';
 import type {
   AgentProfileRead,
@@ -45,7 +46,13 @@ type GrowthEvent = {
   tone: string;
 };
 
-export default function DashboardPage() {
+export default function DashboardPage({
+  currentUser,
+  isAdmin = false,
+}: {
+  currentUser?: EnterpriseAuthUser;
+  isAdmin?: boolean;
+}) {
   const navigate = useNavigate();
   const [agents, setAgents] = useState<AgentProfileRead[]>([]);
   const [skills, setSkills] = useState<SkillRead[]>([]);
@@ -78,7 +85,10 @@ export default function DashboardPage() {
       api.get<FeedbackSummaryRead>(`/api/enterprise/feedback/summary?tenant_id=${TENANT_ID}`),
     ])
       .then(([agentRows, skillRows, generalSkillRows, kbRows, modelRows, toolRows, sessionRows, feedbackRows]) => {
-        setAgents(agentRows);
+        const visibleAgents = agentRows.filter((item) => (
+          isAdmin || (!item.is_overall && (isEmployeeOwnedBy(item, currentUser) || isGalleryEmployee(item)))
+        ));
+        setAgents(visibleAgents);
         setSkills(skillRows);
         setGeneralSkills(generalSkillRows);
         setKnowledgeBases(kbRows);
@@ -86,15 +96,24 @@ export default function DashboardPage() {
         setTools(toolRows);
         setSessions(sessionRows);
         setFeedbackSummary(feedbackRows);
-        if (!agentId) {
-          const next = agentRows.find((item) => item.is_overall)?.id || agentRows[0]?.id || '';
-          if (next) setAgentId(next);
+        if (!agentId || !visibleAgents.some((item) => item.id === agentId)) {
+          const next = isAdmin
+            ? visibleAgents.find((item) => item.is_overall)?.id || visibleAgents[0]?.id || ''
+            : visibleAgents.find((item) => !item.is_overall && isEmployeeOwnedBy(item, currentUser))?.id
+              || visibleAgents.find((item) => !item.is_overall)?.id
+              || '';
+          if (next) {
+            window.localStorage.setItem(ENTERPRISE_AGENT_STORAGE_KEY, next);
+            window.dispatchEvent(new CustomEvent('ultrarag-enterprise-agent-scope-change', { detail: { agentId: next } }));
+            setAgentId(next);
+          }
         }
       })
       .catch((error) => message.error(error instanceof Error ? error.message : '加载看板失败'));
-  }, [agentId]);
+  }, [agentId, currentUser, isAdmin]);
 
-  const selectedAgent = agents.find((item) => item.id === agentId) || agents.find((item) => item.is_overall) || null;
+  const selectedAgent = agents.find((item) => item.id === agentId)
+    || (isAdmin ? agents.find((item) => item.is_overall) || null : agents.find((item) => !item.is_overall) || null);
   const employeeSessions = selectedAgent?.is_overall
     ? sessions
     : sessions.filter((item) => item.agent_id === selectedAgent?.id);
@@ -138,6 +157,23 @@ export default function DashboardPage() {
   const totalCalls = skills.reduce((sum, item) => sum + (item.total_call_count || item.call_count || 0), 0);
   const positiveFeedback = skills.reduce((sum, item) => sum + (item.total_positive_feedback_count || 0), 0);
   const negativeFeedback = skills.reduce((sum, item) => sum + (item.total_negative_feedback_count || 0), 0);
+
+  if (!selectedAgent && !isAdmin) {
+    return (
+      <div className="page dashboard-page">
+        <Card className="empty-workspace-card">
+          <Typography.Title level={3}>个人员工工作域</Typography.Title>
+          <Typography.Paragraph type="secondary">
+            当前账号还没有可用员工。请联系管理员创建员工，或在员工广场开放员工后再派发任务。
+          </Typography.Paragraph>
+          <Space>
+            <Button type="primary" onClick={() => navigate('/enterprise/agents')}>查看员工名册</Button>
+            <Button onClick={() => navigate('/enterprise/feedback')}>查看对话日志</Button>
+          </Space>
+        </Card>
+      </div>
+    );
+  }
 
   if (!selectedAgent || selectedAgent.is_overall) {
     return (

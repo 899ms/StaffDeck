@@ -4,6 +4,7 @@ import {
   DashboardOutlined,
   DatabaseOutlined,
   FileSearchOutlined,
+  LogoutOutlined,
   MessageOutlined,
   PlusOutlined,
   ProfileOutlined,
@@ -11,12 +12,22 @@ import {
   SolutionOutlined,
   TeamOutlined,
   ToolOutlined,
+  UserAddOutlined,
 } from '@ant-design/icons';
 import { Button, ConfigProvider, Input, Layout, Menu, Modal, Radio, Select, Typography, message, theme as antdTheme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { api, TENANT_ID } from './api/client';
+import {
+  clearEnterpriseAuthSession,
+  getEnterpriseAuthSession,
+  isEmployeeOwnedBy,
+  isEnterpriseAdmin,
+  isGalleryEmployee,
+  setEnterpriseAuthSession,
+  type EnterpriseAuthSession,
+} from './auth';
 import { EMPLOYEE_TEMPLATES, employeeDisplayName, employeeMetadataFromTemplate, employeeProfile } from './employee';
 import AgentsPage from './pages/AgentsPage';
 import DashboardPage from './pages/DashboardPage';
@@ -44,6 +55,17 @@ type AgentCreateFormState = {
   copyFromAgentId: string;
 };
 
+type AccountCreateFormState = {
+  username: string;
+  displayName: string;
+  password: string;
+};
+
+type LoginFormState = {
+  username: string;
+  password: string;
+};
+
 const EMPTY_AGENT_FORM: AgentCreateFormState = {
   name: '',
   description: '',
@@ -52,13 +74,31 @@ const EMPTY_AGENT_FORM: AgentCreateFormState = {
   copyFromAgentId: '',
 };
 
-function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
+const EMPTY_ACCOUNT_FORM: AccountCreateFormState = {
+  username: '',
+  displayName: '',
+  password: 'demo',
+};
+
+function Shell({
+  effectiveTheme,
+  auth,
+  onLogout,
+}: {
+  effectiveTheme: EffectiveTheme;
+  auth: EnterpriseAuthSession;
+  onLogout: () => void;
+}) {
   const navigate = useNavigate();
   const location = useLocation();
   const [agents, setAgents] = useState<AgentProfileRead[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState(() => window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY) || '');
   const [agentCreateOpen, setAgentCreateOpen] = useState(false);
   const [agentForm, setAgentForm] = useState<AgentCreateFormState>(EMPTY_AGENT_FORM);
+  const [accountCreateOpen, setAccountCreateOpen] = useState(false);
+  const [accountForm, setAccountForm] = useState<AccountCreateFormState>(EMPTY_ACCOUNT_FORM);
+  const [accountSaving, setAccountSaving] = useState(false);
+  const isAdmin = isEnterpriseAdmin(auth.user);
   const selected = location.pathname === '/enterprise'
     ? '/enterprise/dashboard'
     : location.pathname.startsWith('/enterprise/knowledge')
@@ -92,14 +132,30 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
       .get<AgentProfileRead[]>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`)
       .then((rows) => {
         setAgents(rows);
+        const selectableRows = rows.filter((item) => canUseAgentScope(item));
         setSelectedAgentId((current) => {
-          if (current && rows.some((item) => item.id === current)) return current;
-          const next = rows.find((item) => item.is_overall)?.id || rows[0]?.id || '';
-          if (next) window.localStorage.setItem(ENTERPRISE_AGENT_STORAGE_KEY, next);
+          if (current && selectableRows.some((item) => item.id === current)) return current;
+          const next = isAdmin
+            ? selectableRows.find((item) => item.is_overall)?.id || selectableRows[0]?.id || ''
+            : selectableRows.find((item) => !item.is_overall && isEmployeeOwnedBy(item, auth.user))?.id
+              || selectableRows.find((item) => !item.is_overall)?.id
+              || '';
+          if (next) {
+            window.localStorage.setItem(ENTERPRISE_AGENT_STORAGE_KEY, next);
+            if (next !== current) {
+              window.dispatchEvent(new CustomEvent('ultrarag-enterprise-agent-scope-change', { detail: { agentId: next } }));
+            }
+          }
           return next;
         });
       })
       .catch(() => setAgents([]));
+  }
+
+  function canUseAgentScope(agent: AgentProfileRead): boolean {
+    if (isAdmin) return true;
+    if (agent.is_overall) return false;
+    return isEmployeeOwnedBy(agent, auth.user) || isGalleryEmployee(agent);
   }
 
   function changeAgentScope(agentId: string) {
@@ -109,13 +165,20 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
   }
 
   const selectedAgent = agents.find((item) => item.id === selectedAgentId);
+  const scopeAgents = agents.filter(canUseAgentScope);
+  const sourceAgents = isAdmin ? scopeAgents : scopeAgents.filter((item) => !item.is_overall);
 
   function openCreateAgentModal() {
     setAgentForm({
       ...EMPTY_AGENT_FORM,
-      copyFromAgentId: selectedAgentId || agents.find((item) => item.is_overall)?.id || '',
+      copyFromAgentId: selectedAgentId || sourceAgents[0]?.id || '',
     });
     setAgentCreateOpen(true);
+  }
+
+  function openCreateAccountModal() {
+    setAccountForm(EMPTY_ACCOUNT_FORM);
+    setAccountCreateOpen(true);
   }
 
   async function saveAgentCreateModal() {
@@ -133,11 +196,38 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
       copy_from_agent_id: agentForm.sourceMode === 'copy' ? agentForm.copyFromAgentId || undefined : undefined,
       metadata: employeeMetadataFromTemplate(agentForm.roleKey, {
         system_prompt_summary: agentForm.description || template.description,
+        owner_user_id: auth.user.id,
+        owner_username: auth.user.username,
+        owner_display_name: auth.user.display_name || auth.user.username,
       }),
     });
     await loadAgents();
     changeAgentScope(created.id);
     setAgentCreateOpen(false);
+  }
+
+  async function saveAccountCreateModal() {
+    const username = accountForm.username.trim();
+    const password = accountForm.password.trim();
+    if (!username || !password) {
+      message.error('请填写账号和密码');
+      return;
+    }
+    setAccountSaving(true);
+    try {
+      await api.post('/api/auth/users', {
+        tenant_id: TENANT_ID,
+        username,
+        password,
+        display_name: accountForm.displayName.trim() || username,
+      });
+      message.success('账号已创建');
+      setAccountCreateOpen(false);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '创建账号失败');
+    } finally {
+      setAccountSaving(false);
+    }
   }
 
   return (
@@ -206,7 +296,7 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
               value={selectedAgentId || undefined}
               placeholder="选择员工"
               popupMatchSelectWidth={260}
-              options={agents.map((agent) => ({
+              options={scopeAgents.map((agent) => ({
                 value: agent.id,
                 label: agent.is_overall ? '组织资源库' : `${employeeDisplayName(agent)} · ${employeeProfile(agent).roleName}`,
               }))}
@@ -218,6 +308,11 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
                     <Button type="text" block icon={<PlusOutlined />} onClick={openCreateAgentModal}>
                       新员工入职
                     </Button>
+                    {isAdmin && (
+                      <Button type="text" block icon={<UserAddOutlined />} onClick={openCreateAccountModal}>
+                        新增账号
+                      </Button>
+                    )}
                   </div>
                 </>
               )}
@@ -234,7 +329,14 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
             </div>
           </div>
           <div className="topbar-actions">
+            {isAdmin && (
+              <Button icon={<UserAddOutlined />} onClick={openCreateAccountModal}>
+                新增账号
+              </Button>
+            )}
+            <span className="account-chip">{auth.user.display_name || auth.user.username}</span>
             <ThemeToggleButton />
+            <Button icon={<LogoutOutlined />} onClick={onLogout} aria-label="退出登录" />
           </div>
         </Header>
         <Content className="content">
@@ -244,8 +346,8 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
           {!isDistillRoute && (
             <Routes>
               <Route path="/enterprise" element={<Navigate to="/enterprise/dashboard" replace />} />
-              <Route path="/enterprise/dashboard" element={<DashboardPage />} />
-              <Route path="/enterprise/agents" element={<AgentsPage />} />
+              <Route path="/enterprise/dashboard" element={<DashboardPage currentUser={auth.user} isAdmin={isAdmin} />} />
+              <Route path="/enterprise/agents" element={<AgentsPage currentUser={auth.user} isAdmin={isAdmin} />} />
               <Route path="/enterprise/memories" element={<MemoriesPage />} />
               <Route path="/enterprise/knowledge" element={<KnowledgeManagePage />} />
               <Route path="/enterprise/knowledge/new" element={<KnowledgeAddPage />} />
@@ -278,7 +380,7 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
               optionType="button"
               buttonStyle="solid"
               options={[
-                { label: '继承组织资源', value: 'copy' },
+                { label: isAdmin ? '继承组织资源' : '从员工广场学习', value: 'copy' },
                 { label: '空白入职', value: 'blank' },
               ]}
             />
@@ -306,10 +408,12 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
               学习来源
               <Select
                 value={agentForm.copyFromAgentId || undefined}
-                placeholder="选择组织资源库或已有员工"
-                options={agents.map((agent) => ({
+                placeholder={isAdmin ? '选择组织资源库或已有员工' : '选择个人员工或员工广场员工'}
+                options={sourceAgents.map((agent) => ({
                   value: agent.id,
-                  label: agent.is_overall ? '组织资源库' : `${employeeDisplayName(agent)} · ${employeeProfile(agent).roleName}`,
+                  label: agent.is_overall
+                    ? '组织资源库'
+                    : `${employeeDisplayName(agent)} · ${employeeProfile(agent).roleName}${isGalleryEmployee(agent) ? ' · 员工广场' : ''}`,
                 }))}
                 onChange={(value) => setAgentForm((prev) => ({ ...prev, copyFromAgentId: value }))}
               />
@@ -333,13 +437,124 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
           </label>
         </div>
       </Modal>
+      <Modal
+        title="新增账号"
+        open={accountCreateOpen}
+        onCancel={() => setAccountCreateOpen(false)}
+        onOk={saveAccountCreateModal}
+        okText="创建"
+        cancelText="取消"
+        confirmLoading={accountSaving}
+      >
+        <div className="agent-editor-form">
+          <label>
+            登录账号
+            <Input
+              value={accountForm.username}
+              onChange={(event) => setAccountForm((prev) => ({ ...prev, username: event.target.value }))}
+              placeholder="例如 service_a"
+            />
+          </label>
+          <label>
+            显示名称
+            <Input
+              value={accountForm.displayName}
+              onChange={(event) => setAccountForm((prev) => ({ ...prev, displayName: event.target.value }))}
+              placeholder="例如 华东客服主管"
+            />
+          </label>
+          <label>
+            初始密码
+            <Input.Password
+              value={accountForm.password}
+              onChange={(event) => setAccountForm((prev) => ({ ...prev, password: event.target.value }))}
+            />
+          </label>
+          <div className="agent-definition-note">管理员创建账号后，用户可在员工名册中管理并发布自己的员工。</div>
+        </div>
+      </Modal>
     </Layout>
+  );
+}
+
+function EnterpriseLogin({
+  onLogin,
+}: {
+  onLogin: (session: EnterpriseAuthSession) => void;
+}) {
+  const [form, setForm] = useState<LoginFormState>({ username: 'admin', password: 'admin' });
+  const [loading, setLoading] = useState(false);
+
+  async function login() {
+    const username = form.username.trim();
+    const password = form.password.trim();
+    if (!username || !password) {
+      message.error('请填写账号和密码');
+      return;
+    }
+    setLoading(true);
+    try {
+      const session = await api.post<EnterpriseAuthSession>('/api/auth/login', {
+        tenant_id: TENANT_ID,
+        username,
+        password,
+        display_name: username === 'admin' ? '管理员' : undefined,
+      });
+      setEnterpriseAuthSession(session);
+      onLogin(session);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '登录失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="enterprise-login-page">
+      <section className="enterprise-login-card">
+        <span className="brand-mark">UR</span>
+        <div>
+          <Typography.Title level={2}>UltraRAG4 数字员工运营台</Typography.Title>
+          <Typography.Paragraph type="secondary">
+            使用管理员账号进入组织资源库和账号管理，普通账号进入自己的员工工作域。
+          </Typography.Paragraph>
+        </div>
+        <div className="enterprise-login-form">
+          <label>
+            账号
+            <Input
+              value={form.username}
+              onChange={(event) => setForm((prev) => ({ ...prev, username: event.target.value }))}
+              onPressEnter={login}
+            />
+          </label>
+          <label>
+            密码
+            <Input.Password
+              value={form.password}
+              onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
+              onPressEnter={login}
+            />
+          </label>
+          <Button type="primary" size="large" loading={loading} onClick={login}>
+            登录
+          </Button>
+        </div>
+        <div className="enterprise-login-hint">管理员账号：admin / admin</div>
+      </section>
+    </div>
   );
 }
 
 export default function App() {
   const { effectiveTheme } = useThemeController();
   const isDark = effectiveTheme === 'dark';
+  const [auth, setAuth] = useState<EnterpriseAuthSession | null>(() => getEnterpriseAuthSession());
+
+  function logout() {
+    clearEnterpriseAuthSession();
+    setAuth(null);
+  }
 
   return (
     <ConfigProvider
@@ -363,7 +578,11 @@ export default function App() {
       }}
     >
       <BrowserRouter>
-        <Shell effectiveTheme={effectiveTheme} />
+        {auth ? (
+          <Shell effectiveTheme={effectiveTheme} auth={auth} onLogout={logout} />
+        ) : (
+          <EnterpriseLogin onLogin={setAuth} />
+        )}
       </BrowserRouter>
     </ConfigProvider>
   );

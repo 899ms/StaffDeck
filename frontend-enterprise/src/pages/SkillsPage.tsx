@@ -176,8 +176,8 @@ export default function SkillsPage() {
                   : { key: 'publish', icon: <CheckCircleOutlined />, label: isOverallAgent ? '启用' : '启用学习结果' },
                 ...(!isOverallAgent
                   ? [
-                      { key: 'sync', icon: <SyncOutlined />, label: '同步组织版' },
-                      { key: 'promote', icon: <UploadOutlined />, label: '沉淀到组织' },
+                      { key: 'sync', icon: <SyncOutlined />, label: '从 SOP 广场同步' },
+                      { key: 'promote', icon: <UploadOutlined />, label: '分享到广场' },
                       { key: 'delete', icon: <DeleteOutlined />, label: '从当前员工移除', danger: true },
                     ]
                   : [{ key: 'delete', icon: <DeleteOutlined />, label: '删除', danger: true }]),
@@ -408,20 +408,20 @@ export default function SkillsPage() {
   async function syncFromOverall(row: SkillRead) {
     if (!agentId) return;
     await api.post(`/api/enterprise/agents/${agentId}/skills/${encodeURIComponent(row.skill_id)}/sync-from-overall?tenant_id=${TENANT_ID}`);
-    message.success('已同步组织版');
+    message.success('已从 SOP 广场同步');
     load();
   }
 
   async function promoteToOverall(row: SkillRead) {
     if (!agentId) return;
     Modal.confirm({
-      title: `将「${row.name}」沉淀到组织资源库？`,
-      content: '这会把当前员工的学习结果沉淀为组织级 SOP 新版本。',
-      okText: '推送',
+      title: `将「${row.name}」分享到 SOP 广场？`,
+      content: '这会把当前员工的学习结果发布为广场可复用的 SOP 新版本。',
+      okText: '分享',
       cancelText: '取消',
       onOk: async () => {
         await api.post(`/api/enterprise/agents/${agentId}/skills/${encodeURIComponent(row.skill_id)}/promote-to-overall?tenant_id=${TENANT_ID}`);
-        message.success('已沉淀到组织资源库');
+        message.success('已分享到 SOP 广场');
         load();
       },
     });
@@ -547,7 +547,7 @@ export default function SkillsPage() {
               .filter((item) => item.id !== agentId)
               .map((item) => ({
                 value: item.id,
-                label: `${item.name}${item.is_overall ? '（组织资源库）' : ''}`,
+                label: `${item.name}${item.is_overall ? '（SOP 广场）' : ''}`,
               }))}
             style={{ width: '100%' }}
           />
@@ -564,7 +564,7 @@ export default function SkillsPage() {
             style={{ width: '100%' }}
           />
           <Typography.Text type="secondary">
-            学习会复制来源员工中的 SOP 版本和启用状态；目标为组织资源库时，会把员工版本沉淀为组织 SOP 新版本。
+            学习会复制来源员工或 SOP 广场中的版本和启用状态；管理员分享到广场后，其他员工可继续学习复用。
           </Typography.Text>
         </Space>
       </Modal>
