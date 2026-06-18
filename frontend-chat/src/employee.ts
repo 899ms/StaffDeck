@@ -37,7 +37,6 @@ export function isEmployeeOwnedBy(agent: AgentProfileRead, user?: AuthUser | nul
   if (!user) return false;
   const ownerUserId = agent.metadata?.owner_user_id;
   const ownerUsername = agent.metadata?.owner_username;
-  if (!ownerUserId && !ownerUsername) return !isGalleryEmployee(agent);
   return ownerUserId === user.id || ownerUsername === user.username;
 }
 

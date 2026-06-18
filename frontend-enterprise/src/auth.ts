@@ -49,6 +49,5 @@ export function isEmployeeOwnedBy(
   const metadata = agent.metadata || {};
   const ownerUserId = metadata.owner_user_id;
   const ownerUsername = metadata.owner_username;
-  if (!ownerUserId && !ownerUsername) return !isGalleryEmployee(agent);
   return ownerUserId === user.id || ownerUsername === user.username;
 }
