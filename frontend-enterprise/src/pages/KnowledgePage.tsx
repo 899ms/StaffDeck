@@ -276,7 +276,7 @@ export default function KnowledgeManagePage() {
       return;
     }
     if (!importSourceAgentId) {
-      message.warning('请选择开放平台广场或来源员工');
+      message.warning('请选择开放广场平台或来源员工');
       return;
     }
     if (importSelectedKnowledgeBaseIds.length === 0) {
@@ -354,8 +354,8 @@ export default function KnowledgeManagePage() {
     Modal.confirm({
       title: branchMode ? `从当前员工移除业务资料：${row.name}` : `删除业务资料：${row.name}`,
       content: branchMode
-        ? '这只会在当前员工中隐藏该业务资料；开放平台广场和其他员工仍然保留。'
-        : '开放平台广场会永久删除该业务资料及其文档、桶、片段和版本记录。',
+        ? '这只会在当前员工中隐藏该业务资料；开放广场平台和其他员工仍然保留。'
+        : '开放广场平台会永久删除该业务资料及其文档、桶、片段和版本记录。',
       okText: branchMode ? '移除' : '删除',
       okButtonProps: { danger: true },
       cancelText: '取消',
@@ -392,7 +392,7 @@ export default function KnowledgeManagePage() {
     }
     try {
       await api.post(`/api/enterprise/knowledge-bases/${row.id}/sync-from-overall?tenant_id=${TENANT_ID}&agent_id=${encodeURIComponent(agentId)}`);
-      message.success('已从开放平台广场同步');
+      message.success('已从开放广场平台同步');
       await refresh();
     } catch (error) {
       message.error(error instanceof Error ? error.message : '同步失败');
@@ -406,7 +406,7 @@ export default function KnowledgeManagePage() {
     }
     try {
       await api.post(`/api/enterprise/knowledge-bases/${row.id}/promote-to-overall?tenant_id=${TENANT_ID}&agent_id=${encodeURIComponent(agentId)}`);
-      message.success('已分享到开放平台广场');
+      message.success('已分享到开放广场平台');
       await refresh();
     } catch (error) {
       message.error(error instanceof Error ? error.message : '推送失败');
@@ -509,7 +509,7 @@ export default function KnowledgeManagePage() {
         </div>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => refresh()} loading={loading}>刷新</Button>
-          <Button onClick={() => void openImportKnowledgeBases()}>{isOverallAgent ? '从开放平台广场新增' : '向其他员工学习资料'}</Button>
+          <Button onClick={() => void openImportKnowledgeBases()}>{isOverallAgent ? '从开放广场平台新增' : '向其他员工学习资料'}</Button>
           <Button type="primary" icon={<FileAddOutlined />} onClick={() => navigate('/enterprise/knowledge/new')}>
             新增业务资料
           </Button>
@@ -568,8 +568,8 @@ export default function KnowledgeManagePage() {
                             items: [
                               { key: 'edit', icon: <EditOutlined />, label: '详情' },
                               { key: 'versions', icon: <HistoryOutlined />, label: '版本管理' },
-                              !isOverallAgent ? { key: 'sync', label: '从开放平台广场同步' } : null,
-                              !isOverallAgent ? { key: 'promote', label: '分享到开放平台广场' } : null,
+                              !isOverallAgent ? { key: 'sync', label: '从开放广场平台同步' } : null,
+                              !isOverallAgent ? { key: 'promote', label: '分享到开放广场平台' } : null,
                               item.status === 'archived'
                                 ? { key: 'publish', icon: <PlayCircleOutlined />, label: '上线' }
                                 : { key: 'archive', icon: <PauseCircleOutlined />, label: '下线' },
@@ -646,7 +646,7 @@ export default function KnowledgeManagePage() {
 
       <Modal
         open={importOpen}
-        title="从开放平台广场新增业务资料"
+        title="从开放广场平台新增业务资料"
         width={720}
         okText="学习"
         cancelText="取消"
@@ -657,7 +657,7 @@ export default function KnowledgeManagePage() {
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
           <Select
             value={importSourceAgentId || undefined}
-            placeholder="选择开放平台广场或来源员工"
+            placeholder="选择开放广场平台或来源员工"
             onChange={(value) => {
               setImportSourceAgentId(value);
               void loadImportSourceKnowledgeBases(value);
@@ -666,7 +666,7 @@ export default function KnowledgeManagePage() {
               .filter((item) => item.id !== agentId)
               .map((item) => ({
                 value: item.id,
-                label: `${item.name}${item.is_overall ? '（开放平台广场）' : ''}`,
+                label: `${item.name}${item.is_overall ? '（开放广场平台）' : ''}`,
               }))}
             style={{ width: '100%' }}
           />
@@ -683,7 +683,7 @@ export default function KnowledgeManagePage() {
             style={{ width: '100%' }}
           />
           <Typography.Text type="secondary">
-            学习会复制开放平台广场或来源员工中选中的业务资料；分享到开放平台广场后，其他员工可继续复用。
+            学习会复制开放广场平台或来源员工中选中的业务资料；分享到开放广场平台后，其他员工可继续复用。
           </Typography.Text>
         </Space>
       </Modal>

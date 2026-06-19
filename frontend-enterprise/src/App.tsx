@@ -171,33 +171,36 @@ function Shell({
   const selectedAgent = agents.find((item) => item.id === selectedAgentId);
   const scopeAgents = agents.filter(canUseAgentScope);
   const sourceAgents = isAdmin ? scopeAgents : scopeAgents.filter((item) => !item.is_overall);
-  const openSquareKeys = ['/enterprise/platform', '/enterprise/knowledge', '/enterprise/general-skills', '/enterprise/skills', '/enterprise/tools'];
+  const isOverallScope = Boolean(selectedAgent?.is_overall);
   const navItems = [
-    { key: '/enterprise/agents', icon: <TeamOutlined />, label: isAdmin ? '员工广场' : '员工名册' },
+    { key: '/enterprise/agents', icon: <TeamOutlined />, label: isOverallScope ? '员工广场' : '员工名册' },
     {
       key: 'employees',
       type: 'group' as const,
-      label: '数字员工平台',
+      label: isOverallScope ? '开放广场平台' : '数字员工平台',
       children: [
-        { key: '/enterprise/dashboard', icon: <DashboardOutlined />, label: '员工信息' },
+        {
+          key: '/enterprise/dashboard',
+          icon: isOverallScope ? <GlobalOutlined /> : <DashboardOutlined />,
+          label: isOverallScope ? '开放广场平台' : '员工信息',
+        },
         { key: '/enterprise/memories', icon: <DatabaseOutlined />, label: '员工记忆' },
         { key: '/enterprise/feedback', icon: <CommentOutlined />, label: '对话日志' },
       ],
     },
+    {
+      key: 'employee-capabilities',
+      type: 'group' as const,
+      label: isOverallScope ? '能力建设' : '员工能力',
+      children: [
+        { key: '/enterprise/knowledge', icon: <FileSearchOutlined />, label: isOverallScope ? '业务资料库' : '业务资料' },
+        { key: '/enterprise/general-skills', icon: <SolutionOutlined />, label: '已掌握技能' },
+        { key: '/enterprise/skills', icon: <ProfileOutlined />, label: 'SOP管理' },
+        { key: '/enterprise/tools', icon: <ToolOutlined />, label: '工具箱' },
+      ],
+    },
     ...(isAdmin
       ? [
-          {
-            key: 'open-square',
-            type: 'group' as const,
-            label: '开放平台广场',
-            children: [
-              { key: '/enterprise/platform', icon: <GlobalOutlined />, label: '开放平台广场' },
-              { key: '/enterprise/knowledge', icon: <FileSearchOutlined />, label: '业务资料库' },
-              { key: '/enterprise/general-skills', icon: <SolutionOutlined />, label: '已掌握技能' },
-              { key: '/enterprise/skills', icon: <ProfileOutlined />, label: 'SOP管理' },
-              { key: '/enterprise/tools', icon: <ToolOutlined />, label: '工具箱' },
-            ],
-          },
           {
             key: 'employee-accounts',
             type: 'group' as const,
@@ -208,23 +211,11 @@ function Shell({
             ],
           },
         ]
-      : [
-          {
-            key: 'employee-capabilities',
-            type: 'group' as const,
-            label: '员工能力',
-            children: [
-              { key: '/enterprise/knowledge', icon: <FileSearchOutlined />, label: '业务资料' },
-              { key: '/enterprise/general-skills', icon: <SolutionOutlined />, label: '已掌握技能' },
-              { key: '/enterprise/skills', icon: <ProfileOutlined />, label: 'SOP管理' },
-              { key: '/enterprise/tools', icon: <ToolOutlined />, label: '工具箱' },
-            ],
-          },
-        ]),
+      : []),
   ];
 
   function handleMenuClick(key: string) {
-    if (isAdmin && openSquareKeys.includes(key)) {
+    if (isAdmin && key === '/enterprise/platform') {
       const overallAgent = agents.find((item) => item.is_overall);
       if (overallAgent && overallAgent.id !== selectedAgentId) {
         changeAgentScope(overallAgent.id);
@@ -302,7 +293,7 @@ function Shell({
               popupMatchSelectWidth={260}
               options={scopeAgents.map((agent) => ({
                 value: agent.id,
-                label: agent.is_overall ? '开放平台广场' : `${employeeDisplayName(agent)} · ${employeeProfile(agent).roleName}`,
+                label: agent.is_overall ? '开放广场平台' : `${employeeDisplayName(agent)} · ${employeeProfile(agent).roleName}`,
               }))}
               onChange={changeAgentScope}
               popupRender={(menu) => (
@@ -324,7 +315,7 @@ function Shell({
           <div className="topbar-scope">
             <Typography.Text strong>{employeeDisplayName(selectedAgent)}</Typography.Text>
             <div className="topbar-subtitle">
-              {selectedAgent?.is_overall ? '开放平台广场' : `${employeeProfile(selectedAgent).roleName} · ${selectedAgent?.description || '员工工作域'}`}
+              {selectedAgent?.is_overall ? '开放广场平台' : `${employeeProfile(selectedAgent).roleName} · ${selectedAgent?.description || '员工工作域'}`}
             </div>
           </div>
           <div className="topbar-actions">
@@ -376,7 +367,7 @@ function Shell({
               optionType="button"
               buttonStyle="solid"
               options={[
-                { label: isAdmin ? '继承开放平台广场' : '从员工广场学习', value: 'copy' },
+                { label: isAdmin ? '继承开放广场平台' : '从员工广场学习', value: 'copy' },
                 { label: '空白入职', value: 'blank' },
               ]}
             />
@@ -404,11 +395,11 @@ function Shell({
               学习来源
               <Select
                 value={agentForm.copyFromAgentId || undefined}
-                placeholder={isAdmin ? '选择开放平台广场或已有员工' : '选择个人员工或员工广场员工'}
+                placeholder={isAdmin ? '选择开放广场平台或已有员工' : '选择个人员工或员工广场员工'}
                 options={sourceAgents.map((agent) => ({
                   value: agent.id,
                   label: agent.is_overall
-                    ? '开放平台广场'
+                    ? '开放广场平台'
                     : `${employeeDisplayName(agent)} · ${employeeProfile(agent).roleName}${isGalleryEmployee(agent) ? ' · 员工广场' : ''}`,
                 }))}
                 onChange={(value) => setAgentForm((prev) => ({ ...prev, copyFromAgentId: value }))}
@@ -476,7 +467,7 @@ function EnterpriseLogin({
         <div>
           <Typography.Title level={2}>UltraRAG4 数字员工运营台</Typography.Title>
           <Typography.Paragraph type="secondary">
-            使用管理员账号进入开放平台广场和员工平台，员工账号进入自己的员工工作域。
+            使用管理员账号进入开放广场平台和员工平台，员工账号进入自己的员工工作域。
           </Typography.Paragraph>
         </div>
         <div className="enterprise-login-form">

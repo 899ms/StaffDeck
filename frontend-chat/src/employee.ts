@@ -14,7 +14,7 @@ function stringFromMeta(metadata: Record<string, unknown> | undefined, key: stri
 
 export function employeeProfile(agent?: AgentProfileRead | null): EmployeeProfile {
   if (agent?.is_overall) {
-    return { roleName: '开放平台广场', avatarText: '广', avatarTone: 'overall' };
+    return { roleName: '开放广场平台', avatarText: '广', avatarTone: 'overall' };
   }
   return {
     roleName: stringFromMeta(agent?.metadata, 'role_name') || '在线客服员工',
@@ -25,7 +25,7 @@ export function employeeProfile(agent?: AgentProfileRead | null): EmployeeProfil
 
 export function employeeDisplayName(agent?: AgentProfileRead | null): string {
   if (!agent) return '数字员工';
-  if (agent.is_overall) return '开放平台广场';
+  if (agent.is_overall) return '开放广场平台';
   return (agent.name || '数字员工').replace(/智能体/g, '员工');
 }
 

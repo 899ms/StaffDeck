@@ -84,7 +84,7 @@ export function employeeProfile(agent?: AgentProfileRead | null): EmployeeProfil
   const isOverall = Boolean(agent?.is_overall);
   return {
     roleKey: stringFromMeta(metadata, 'role_key') || template.key,
-    roleName: isOverall ? '开放平台广场' : stringFromMeta(metadata, 'role_name') || template.roleName,
+    roleName: isOverall ? '开放广场平台' : stringFromMeta(metadata, 'role_name') || template.roleName,
     avatarText: isOverall ? '广' : stringFromMeta(metadata, 'avatar_text') || template.avatarText,
     avatarTone: isOverall ? 'overall' : stringFromMeta(metadata, 'avatar_tone') || template.avatarTone,
     onboardedAt: stringFromMeta(metadata, 'onboarded_at') || agent?.created_at?.slice(0, 10) || '-',
@@ -96,7 +96,7 @@ export function employeeProfile(agent?: AgentProfileRead | null): EmployeeProfil
 
 export function employeeDisplayName(agent?: AgentProfileRead | null): string {
   if (!agent) return '数字员工';
-  if (agent.is_overall) return '开放平台广场';
+  if (agent.is_overall) return '开放广场平台';
   return (agent.name || '数字员工').replace(/智能体/g, '员工');
 }
 

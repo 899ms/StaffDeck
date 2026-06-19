@@ -190,14 +190,14 @@ export default function DashboardPage({
     return (
       <div className="page dashboard-page">
         <div className="page-title">
-          <Typography.Title level={3}>开放平台广场</Typography.Title>
+          <Typography.Title level={3}>开放广场平台</Typography.Title>
         </div>
         <section className="employee-hero org-hero">
           <div>
-            <span className="section-kicker">开放平台广场</span>
-            <Typography.Title level={2}>开放平台广场</Typography.Title>
+            <span className="section-kicker">开放广场平台</span>
+            <Typography.Title level={2}>开放广场平台</Typography.Title>
             <Typography.Paragraph>
-              统一管理可开放复用的业务资料、已掌握技能、SOP 和工具箱，让员工账号从开放平台广场学习并形成自己的服务能力。
+              统一管理可开放复用的业务资料、已掌握技能、SOP 和工具箱，让员工账号从开放广场平台学习并形成自己的服务能力。
             </Typography.Paragraph>
           </div>
           <div className="employee-hero-metrics">

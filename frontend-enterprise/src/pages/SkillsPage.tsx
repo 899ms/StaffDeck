@@ -176,8 +176,8 @@ export default function SkillsPage() {
                   : { key: 'publish', icon: <CheckCircleOutlined />, label: isOverallAgent ? '启用' : '启用学习结果' },
                 ...(!isOverallAgent
                   ? [
-                      { key: 'sync', icon: <SyncOutlined />, label: '从开放平台广场同步' },
-                      { key: 'promote', icon: <UploadOutlined />, label: '分享到开放平台广场' },
+                      { key: 'sync', icon: <SyncOutlined />, label: '从开放广场平台同步' },
+                      { key: 'promote', icon: <UploadOutlined />, label: '分享到开放广场平台' },
                       { key: 'delete', icon: <DeleteOutlined />, label: '从当前员工移除', danger: true },
                     ]
                   : [{ key: 'delete', icon: <DeleteOutlined />, label: '删除', danger: true }]),
@@ -382,7 +382,7 @@ export default function SkillsPage() {
     Modal.confirm({
       title: branchMode ? `从当前员工移除 SOP「${row.name}」？` : `删除 SOP「${row.name}」？`,
       content: branchMode
-        ? '这只会在当前员工的工作域中隐藏该 SOP；开放平台广场和其他员工仍然保留。'
+        ? '这只会在当前员工的工作域中隐藏该 SOP；开放广场平台和其他员工仍然保留。'
         : '删除后不会移除历史对话记录，但组织 SOP 列表中将不再显示该流程。',
       okText: branchMode ? '移除' : '删除',
       okButtonProps: { danger: true },
@@ -408,20 +408,20 @@ export default function SkillsPage() {
   async function syncFromOverall(row: SkillRead) {
     if (!agentId) return;
     await api.post(`/api/enterprise/agents/${agentId}/skills/${encodeURIComponent(row.skill_id)}/sync-from-overall?tenant_id=${TENANT_ID}`);
-    message.success('已从开放平台广场同步');
+    message.success('已从开放广场平台同步');
     load();
   }
 
   async function promoteToOverall(row: SkillRead) {
     if (!agentId) return;
     Modal.confirm({
-      title: `将「${row.name}」分享到开放平台广场？`,
+      title: `将「${row.name}」分享到开放广场平台？`,
       content: '这会把当前员工的学习结果发布为广场可复用的 SOP 新版本。',
       okText: '分享',
       cancelText: '取消',
       onOk: async () => {
         await api.post(`/api/enterprise/agents/${agentId}/skills/${encodeURIComponent(row.skill_id)}/promote-to-overall?tenant_id=${TENANT_ID}`);
-        message.success('已分享到开放平台广场');
+        message.success('已分享到开放广场平台');
         load();
       },
     });
@@ -448,7 +448,7 @@ export default function SkillsPage() {
         title="员工已学习的业务 SOP"
         extra={(
           <Space>
-            <Button onClick={() => void openImport()}>{isOverallAgent ? '从开放平台广场新增' : '向其他员工学习 SOP'}</Button>
+            <Button onClick={() => void openImport()}>{isOverallAgent ? '从开放广场平台新增' : '向其他员工学习 SOP'}</Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
               新建 SOP
             </Button>
@@ -554,7 +554,7 @@ export default function SkillsPage() {
               .filter((item) => item.id !== agentId)
               .map((item) => ({
                 value: item.id,
-                label: `${item.name}${item.is_overall ? '（开放平台广场）' : ''}`,
+                label: `${item.name}${item.is_overall ? '（开放广场平台）' : ''}`,
               }))}
             style={{ width: '100%' }}
           />
@@ -571,7 +571,7 @@ export default function SkillsPage() {
             style={{ width: '100%' }}
           />
           <Typography.Text type="secondary">
-            学习会复制来源员工或开放平台广场中的版本和启用状态；管理员分享到开放平台广场后，其他员工可继续学习复用。
+            学习会复制来源员工或开放广场平台中的版本和启用状态；管理员分享到开放广场平台后，其他员工可继续学习复用。
           </Typography.Text>
         </Space>
       </Modal>

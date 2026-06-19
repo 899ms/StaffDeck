@@ -509,7 +509,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
     Modal.confirm({
       title: branchMode ? `从当前员工移除技能：${row.name}` : `删除技能：${row.name}`,
       content: branchMode
-        ? '这只会在当前员工中隐藏该技能；开放平台广场和其他员工仍然保留。'
+        ? '这只会在当前员工中隐藏该技能；开放广场平台和其他员工仍然保留。'
         : '删除后该技能不会再出现在组织技能库中，此操作不可撤销。',
       okText: branchMode ? '移除' : '删除',
       okButtonProps: { danger: true },
@@ -626,7 +626,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
       return;
     }
     if (!agentImportSourceAgentId) {
-      message.warning('请选择开放平台广场或来源员工');
+      message.warning('请选择开放广场平台或来源员工');
       return;
     }
     if (!agentImportSelectedSkillIds.length) {
@@ -653,7 +653,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
 
   async function importClawHubSource() {
     if (!clawhubSource.trim()) {
-      message.warning('请输入开放平台广场、GitHub 或 zip 来源');
+      message.warning('请输入开放广场平台、GitHub 或 zip 来源');
       return;
     }
     setClawhubLoading(true);
@@ -670,7 +670,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
       setClawhubModalOpen(false);
       void load();
     } catch (error) {
-      message.error(error instanceof Error ? error.message : '从开放平台广场新增失败');
+      message.error(error instanceof Error ? error.message : '从开放广场平台新增失败');
     } finally {
       setClawhubLoading(false);
     }
@@ -978,7 +978,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
                     items: [
                       { key: 'file', label: '选择文件' },
                       { key: 'folder', label: '选择文件夹' },
-                      { key: 'clawhub', label: '从开放平台广场新增' },
+                      { key: 'clawhub', label: '从开放广场平台新增' },
                       { key: 'agent', label: '向其他员工学习技能' },
                     ],
                     onClick: ({ key }) => {
@@ -1325,7 +1325,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
         </aside>
       </div>
       <Modal
-        title="从开放平台广场新增技能"
+        title="从开放广场平台新增技能"
         open={clawhubModalOpen}
         onOk={importClawHubSource}
         confirmLoading={clawhubLoading}
@@ -1355,18 +1355,18 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
       >
         <Space direction="vertical" size={14} style={{ width: '100%' }}>
           <Typography.Text type="secondary">
-            学习会把来源员工或开放平台广场可见的技能绑定到当前员工；不会覆盖当前编辑区内容。
+            学习会把来源员工或开放广场平台可见的技能绑定到当前员工；不会覆盖当前编辑区内容。
           </Typography.Text>
           <Select
             value={agentImportSourceAgentId || undefined}
-            placeholder="选择开放平台广场或来源员工"
+            placeholder="选择开放广场平台或来源员工"
             onChange={(value) => {
               setAgentImportSourceAgentId(value);
               void loadAgentImportSourceSkills(value);
             }}
             options={agentImportAgents.map((item) => ({
               value: item.id,
-              label: `${item.name}${item.is_overall ? '（开放平台广场）' : ''}`,
+              label: `${item.name}${item.is_overall ? '（开放广场平台）' : ''}`,
             }))}
             style={{ width: '100%' }}
           />
