@@ -3969,7 +3969,7 @@ class AgentLoop:
             if knowledge_item:
                 self._record_knowledge_results(chat_session, knowledge_item)
                 knowledge_results = [knowledge_item]
-        citations = knowledge_citations_from_results(knowledge_results)
+        citations = self._dedupe_knowledge_citations(knowledge_citations_from_results(knowledge_results))
         if not citations:
             return {}
         first_query = next(
@@ -3980,6 +3980,34 @@ class AgentLoop:
             "knowledge_citations": citations,
             "knowledge_query": first_query or {},
         }
+
+    def _dedupe_knowledge_citations(self, citations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        seen: set[str] = set()
+        result: list[dict[str, Any]] = []
+        for citation in citations:
+            if not isinstance(citation, dict):
+                continue
+            identity = str(
+                citation.get("title")
+                or citation.get("section_path")
+                or citation.get("summary")
+                or citation.get("excerpt")
+                or citation.get("source_path")
+                or citation.get("concept_id")
+                or citation.get("id")
+                or ""
+            )
+            identity = re.sub(r"/\s*evidence\s*\d+", "", identity, flags=re.IGNORECASE)
+            identity = re.split(r"在第\s*\d+\s*章第\s*\d+\s*节", identity)[0]
+            identity = identity.split("。")[0]
+            key = re.sub(r"\s+", " ", identity).strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            result.append({**citation, "label": f"[{len(result) + 1}]"})
+            if len(result) >= 4:
+                break
+        return result
 
     def _append_message(
         self,
@@ -4230,6 +4258,7 @@ class AgentLoop:
         chat_session.updated_at = utc_now()
         metadata = self._assistant_message_metadata(step_result, chat_session, source_message)
         reply = self._normalize_reply_citation_labels(reply, metadata.get("knowledge_citations"))
+        reply = self._ensure_reply_citation_labels(reply, metadata.get("knowledge_citations"))
         chat_session.summary = f"最近回复：{reply[:120]}"
         self._append_message(tenant_id, chat_session.id, "assistant", reply, metadata=metadata)
         event_payload: dict[str, Any] = {"reply": reply}
@@ -4263,3 +4292,27 @@ class AgentLoop:
             return f"[{max_label if max_label > 1 else 1}]"
 
         return re.sub(r"\[(\d+)\]", replace, reply)
+
+    def _ensure_reply_citation_labels(self, reply: str, citations: object) -> str:
+        if not isinstance(citations, list) or not citations:
+            return reply
+        max_label = len(citations)
+        used: set[int] = set()
+        for match in re.finditer(r"\[(\d+)\]", reply):
+            try:
+                label = int(match.group(1))
+            except ValueError:
+                continue
+            if 1 <= label <= max_label:
+                used.add(label)
+        missing = [label for label in range(1, max_label + 1) if label not in used]
+        if not missing:
+            return reply
+
+        labels = "".join(f"[{label}]" for label in missing)
+        sequences = list(re.finditer(r"(?:\[\d+\]\s*)+", reply))
+        if sequences:
+            last = sequences[-1]
+            return f"{reply[:last.end()].rstrip()}{labels}{reply[last.end():]}"
+        all_labels = "".join(f"[{label}]" for label in range(1, max_label + 1))
+        return f"{reply.rstrip()}\n\n参考资料：{all_labels}"

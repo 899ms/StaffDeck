@@ -385,6 +385,7 @@ function publicStreamPhase(data: Record<string, unknown>): string {
   const phase = typeof data.phase === 'string' ? data.phase : '';
   const text = typeof data.text === 'string' ? data.text : '';
   if (phase === 'error') return text || '请求失败';
+  if (phase === 'scheduled_task_draft') return text || '已识别自动任务草案';
   if (isKnowledgeTracePhase(phase)) return text || knowledgeTraceText(data);
   return '正在思考';
 }
@@ -658,6 +659,66 @@ function knowledgeCitations(item: ChatMessage): KnowledgeCitation[] {
   return result.slice(0, 4);
 }
 
+function contentWithVisibleCitationLabels(content: string, citations: KnowledgeCitation[]): string {
+  if (!content || citations.length === 0) return content;
+  const visibleCount = citations.length;
+  const used = new Set<number>();
+  content.replace(/\[(\d+)\]/g, (_match, value: string) => {
+    const label = Number(value);
+    if (Number.isInteger(label) && label >= 1 && label <= visibleCount) {
+      used.add(label);
+    }
+    return _match;
+  });
+  const missing = Array.from({ length: visibleCount }, (_, index) => index + 1).filter((label) => !used.has(label));
+  if (missing.length === 0) return content;
+
+  const missingLabels = missing.map((label) => `[${label}]`).join('');
+  const sequences = Array.from(content.matchAll(/(?:\[\d+\]\s*)+/g));
+  if (sequences.length > 0) {
+    const last = sequences[sequences.length - 1];
+    const start = last.index ?? 0;
+    const end = start + last[0].length;
+    return `${content.slice(0, end).trimEnd()}${missingLabels}${content.slice(end)}`;
+  }
+  const allLabels = Array.from({ length: visibleCount }, (_, index) => `[${index + 1}]`).join('');
+  return `${content.trimEnd()}\n\n参考资料：${allLabels}`;
+}
+
+function scheduledDraftForMessage(item: ChatMessage): ScheduledTaskDraftRead | null {
+  const draft = item.metadata?.scheduled_task_draft;
+  if (!isPlainRecord(draft) || draft.should_create === false) return null;
+  if (typeof draft.title !== 'string' || typeof draft.prompt !== 'string' || typeof draft.agent_id !== 'string') {
+    return null;
+  }
+  return draft as unknown as ScheduledTaskDraftRead;
+}
+
+function ScheduledDraftCard({
+  draft,
+  onConfirm,
+  onDismiss,
+}: {
+  draft: ScheduledTaskDraftRead;
+  onConfirm: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="scheduled-draft-card">
+      <div className="scheduled-draft-icon"><ClockCircleOutlined /></div>
+      <div className="scheduled-draft-main">
+        <div className="scheduled-draft-kicker">识别到自动任务草案</div>
+        <strong>{draft.title}</strong>
+        <span>{formatDraftSchedule(draft)} · {draft.prompt}</span>
+      </div>
+      <div className="scheduled-draft-actions">
+        <Button size="small" type="primary" onClick={onConfirm}>确认创建</Button>
+        <Button size="small" type="text" onClick={onDismiss}>忽略</Button>
+      </div>
+    </div>
+  );
+}
+
 function citationKindLabel(citation: KnowledgeCitation): string {
   if (citation.kind === 'concept') return 'Wiki 概念';
   if (citation.kind === 'okf') return 'OKF 引用';
@@ -706,6 +767,7 @@ export default function ChatWindowPage() {
   const [traceTick, setTraceTick] = useState(0);
   const [expandedTraceIds, setExpandedTraceIds] = useState<string[]>([]);
   const [scheduledDrafts, setScheduledDrafts] = useState<Record<string, ScheduledTaskDraftRead>>({});
+  const [dismissedDraftMessageIds, setDismissedDraftMessageIds] = useState<string[]>([]);
   const [activeCitation, setActiveCitation] = useState<KnowledgeCitation | null>(null);
   const [isComposing, setIsComposing] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => (
@@ -859,6 +921,11 @@ export default function ChatWindowPage() {
     return sessionId ? getStreamSlot(sessionId) : createStreamSlot();
   }, [getStreamSlot, sessionId, streamTick]);
   const currentScheduledDraft = sessionId ? scheduledDrafts[sessionId] : undefined;
+  const hasVisibleMessageScheduledDraft = displayedMessages.some((item) => (
+    item.role === 'assistant'
+    && !dismissedDraftMessageIds.includes(item.id)
+    && Boolean(scheduledDraftForMessage(item))
+  ));
 
   const loadSessions = useCallback(() => {
     api
@@ -1195,13 +1262,16 @@ export default function ChatWindowPage() {
     }
   }
 
-  function dismissScheduledTaskDraft() {
+  function dismissScheduledTaskDraft(messageId?: string) {
     if (!sessionId) return;
     setScheduledDrafts((prev) => {
       const next = { ...prev };
       delete next[sessionId];
       return next;
     });
+    if (messageId) {
+      setDismissedDraftMessageIds((prev) => (prev.includes(messageId) ? prev : [...prev, messageId]));
+    }
   }
 
   async function send() {
@@ -1346,7 +1416,7 @@ export default function ChatWindowPage() {
           upsertTraceLine(turnId, {
             id: 'knowledge_lookup',
             kind: 'knowledge',
-            text: '查询业务资料',
+            text: '读取业务资料',
             detail: knowledgeResultTraceDetail(item.data),
             state: 'completed',
           });
@@ -1438,6 +1508,14 @@ export default function ChatWindowPage() {
             upsertTraceLine(turnId, { id: 'reflection', kind: 'decision', text: '正在反思', state: 'running' });
           } else if (phase === 'responding') {
             upsertTraceLine(turnId, { id: 'decision_responding', kind: 'decision', text: '组织回复', state: 'running' });
+          } else if (phase === 'scheduled_task_draft') {
+            upsertTraceLine(turnId, {
+              id: 'scheduled_task_draft',
+              kind: 'decision',
+              text: '生成自动任务草案',
+              detail: '识别到自动任务需求，等待用户确认后启用',
+              state: 'completed',
+            });
           } else if (phase !== 'received') {
             upsertTraceLine(turnId, {
               id: `decision_status_${phase}`,
@@ -1665,6 +1743,12 @@ export default function ChatWindowPage() {
               const details = traceDetails(visibleTrace);
               const expanded = expandedTraceIds.includes(turnId);
               const citations = knowledgeCitations(item);
+              const visibleContent = item.role === 'assistant'
+                ? contentWithVisibleCitationLabels(item.content, citations)
+                : item.content;
+              const scheduledDraft = item.role === 'assistant' && !dismissedDraftMessageIds.includes(item.id)
+                ? scheduledDraftForMessage(item)
+                : null;
               void traceTick;
               return (
                 <div key={item.id} className="message-item">
@@ -1724,11 +1808,11 @@ export default function ChatWindowPage() {
                           )}
                         </div>
                       )}
-                      {item.content ? (
+                      {visibleContent ? (
                         item.role === 'assistant' ? (
-                          <MarkdownMessage content={item.content} />
+                          <MarkdownMessage content={visibleContent} />
                         ) : (
-                          <div className="plain-answer">{item.content}</div>
+                          <div className="plain-answer">{visibleContent}</div>
                         )
                       ) : item.role === 'assistant' && item.isStreaming && !summary ? (
                         <span className="typing-caret" />
@@ -1753,6 +1837,13 @@ export default function ChatWindowPage() {
                             ))}
                           </div>
                         </div>
+                      )}
+                      {scheduledDraft && (
+                        <ScheduledDraftCard
+                          draft={scheduledDraft}
+                          onConfirm={() => void confirmScheduledTask(scheduledDraft)}
+                          onDismiss={() => dismissScheduledTaskDraft(item.id)}
+                        />
                       )}
                       {canRateMessage(item) && (
                         <div className="message-feedback">
@@ -1780,19 +1871,12 @@ export default function ChatWindowPage() {
               );
             })}
           </div>
-          {currentScheduledDraft && (
-            <div className="scheduled-draft-card">
-              <div className="scheduled-draft-icon"><ClockCircleOutlined /></div>
-              <div className="scheduled-draft-main">
-                <div className="scheduled-draft-kicker">识别到自动任务草案</div>
-                <strong>{currentScheduledDraft.title}</strong>
-                <span>{formatDraftSchedule(currentScheduledDraft)} · {currentScheduledDraft.prompt}</span>
-              </div>
-              <div className="scheduled-draft-actions">
-                <Button size="small" type="primary" onClick={() => void confirmScheduledTask(currentScheduledDraft)}>确认创建</Button>
-                <Button size="small" type="text" onClick={dismissScheduledTaskDraft}>忽略</Button>
-              </div>
-            </div>
+          {currentScheduledDraft && !hasVisibleMessageScheduledDraft && (
+            <ScheduledDraftCard
+              draft={currentScheduledDraft}
+              onConfirm={() => void confirmScheduledTask(currentScheduledDraft)}
+              onDismiss={() => dismissScheduledTaskDraft()}
+            />
           )}
           {SHOW_DEBUG && lastTurn && <pre className="debug-panel">{JSON.stringify(lastTurn.session_state, null, 2)}</pre>}
         </div>
@@ -1895,7 +1979,7 @@ export default function ChatWindowPage() {
       <Modal
         className="knowledge-citation-modal"
         title="引用详情"
-        width="min(960px, calc(100vw - 40px))"
+        width="min(1160px, calc(100vw - 40px))"
         open={Boolean(activeCitation)}
         footer={null}
         onCancel={() => setActiveCitation(null)}

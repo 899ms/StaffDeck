@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from collections.abc import Iterator
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -91,7 +92,10 @@ def _maybe_handle_scheduled_task_request(
 
     reply = _scheduled_task_draft_reply(draft)
     now = utc_now()
-    chat_session.updated_at = now
+    event_time = now + timedelta(microseconds=1)
+    assistant_time = now + timedelta(microseconds=2)
+    state_time = now + timedelta(microseconds=3)
+    chat_session.updated_at = assistant_time
     chat_session.summary = f"最近回复：{reply[:120]}"
     db.add(
         Message(
@@ -104,13 +108,22 @@ def _maybe_handle_scheduled_task_request(
         )
     )
     db.add(
+        AgentEvent(
+            tenant_id=request.tenant_id,
+            session_id=chat_session.id,
+            event_type="user_message_received",
+            payload_json={"message": request.message, "channel": request.channel, "user_id": request.user_id},
+            created_at=now,
+        )
+    )
+    db.add(
         Message(
             tenant_id=request.tenant_id,
             session_id=chat_session.id,
             role="assistant",
             content=reply,
             metadata_json={"scheduled_task_draft": draft.model_dump(mode="json")},
-            created_at=now,
+            created_at=assistant_time,
         )
     )
     db.add(
@@ -119,7 +132,7 @@ def _maybe_handle_scheduled_task_request(
             session_id=chat_session.id,
             event_type="scheduled_task_draft_created",
             payload_json=draft.model_dump(mode="json"),
-            created_at=now,
+            created_at=event_time,
         )
     )
     db.add(
@@ -128,7 +141,7 @@ def _maybe_handle_scheduled_task_request(
             session_id=chat_session.id,
             event_type="assistant_message_created",
             payload_json={"reply": reply, "scheduled_task_draft": draft.model_dump(mode="json")},
-            created_at=now,
+            created_at=assistant_time,
         )
     )
     state = public_session(chat_session)
@@ -138,7 +151,7 @@ def _maybe_handle_scheduled_task_request(
             session_id=chat_session.id,
             event_type="session_state_changed",
             payload_json=state.model_dump(),
-            created_at=now,
+            created_at=state_time,
         )
     )
     db.commit()
@@ -890,15 +903,18 @@ def _build_turn_traces(
     for event in events:
         if event.event_type == "user_message_received":
             if current:
+                _ensure_knowledge_query_line(current["lines"], current.get("_user_message_content"))
                 _finish_trace_if_needed(current, event.created_at)
                 traces.append(current)
             skill_hint = None
+            text = str((event.payload_json or {}).get("message") or "")
             user_message = _matching_user_message(user_messages, user_index, event.payload_json)
             if user_message:
                 user_index = user_messages.index(user_message) + 1
             current = {
                 "turn_id": user_message.id if user_message else event.id,
                 "user_message_id": user_message.id if user_message else None,
+                "_user_message_content": user_message.content if user_message else text,
                 "started_at": event.created_at.isoformat(),
                 "completed_at": None,
                 "lines": [
@@ -914,6 +930,8 @@ def _build_turn_traces(
 
         if not current:
             continue
+        if current.get("completed_at"):
+            continue
 
         if event.event_type == "router_decision_created":
             target_skill_id = str((event.payload_json or {}).get("target_skill_id") or "").strip()
@@ -928,13 +946,61 @@ def _build_turn_traces(
             skill_hint = event_context["skill_id"]
         if event.event_type == "assistant_message_created":
             current["completed_at"] = event.created_at.isoformat()
+            _ensure_knowledge_query_line(current["lines"], current.get("_user_message_content"))
             _complete_trace_lines(current["lines"])
 
     if current:
+        _ensure_knowledge_query_line(current["lines"], current.get("_user_message_content"))
         _finish_trace_if_needed(current, events[-1].created_at if events else None)
         traces.append(current)
 
-    return traces
+    for trace in traces:
+        trace.pop("_user_message_content", None)
+    return _with_scheduled_draft_message_traces(traces, messages)
+
+
+def _with_scheduled_draft_message_traces(traces: list[dict], messages: list[Message]) -> list[dict]:
+    traced_turn_ids = {str(trace.get("turn_id") or "") for trace in traces}
+    next_traces = list(traces)
+    previous_user: Message | None = None
+    for message in messages:
+        if message.role == "user":
+            previous_user = message
+            continue
+        if message.role != "assistant" or not previous_user:
+            continue
+        metadata = message.metadata_json or {}
+        draft = metadata.get("scheduled_task_draft") if isinstance(metadata, dict) else None
+        if not isinstance(draft, dict) or previous_user.id in traced_turn_ids:
+            continue
+        title = str(draft.get("title") or "").strip()
+        detail = " · ".join(part for part in (title, "等待确认后启用") if part)
+        next_traces.append(
+            {
+                "turn_id": previous_user.id,
+                "user_message_id": previous_user.id,
+                "started_at": previous_user.created_at.isoformat(),
+                "completed_at": message.created_at.isoformat(),
+                "lines": [
+                    {
+                        "id": "thinking",
+                        "kind": "thinking",
+                        "text": "已完成思考",
+                        "state": "completed",
+                    },
+                    {
+                        "id": f"scheduled_task_draft_{message.id}",
+                        "kind": "decision",
+                        "text": "生成自动任务草案",
+                        "detail": detail or None,
+                        "state": "completed",
+                    },
+                ],
+            }
+        )
+        traced_turn_ids.add(previous_user.id)
+    next_traces.sort(key=lambda item: str(item.get("started_at") or ""))
+    return next_traces
 
 
 def _fallback_knowledge_citation_traces(messages: list[Message]) -> list[dict]:
@@ -983,9 +1049,16 @@ def _fallback_knowledge_citation_traces(messages: list[Message]) -> list[dict]:
                         "state": "completed",
                     },
                     {
+                        "id": "knowledge_query",
+                        "kind": "knowledge",
+                        "text": "查询业务资料",
+                        "detail": current_user.content if current_user else None,
+                        "state": "completed",
+                    },
+                    {
                         "id": "knowledge_retrieval",
-                        "kind": "tool",
-                        "text": "检索业务资料库",
+                        "kind": "knowledge",
+                        "text": "读取业务资料",
                         "detail": (
                             f"命中 {len(citations)} 条知识引用"
                             + (f"：{citation_summary}" if citation_summary else "")
@@ -1004,6 +1077,27 @@ def _fallback_knowledge_citation_traces(messages: list[Message]) -> list[dict]:
         )
 
     return traces
+
+
+def _ensure_knowledge_query_line(lines: list[dict], user_message: object | None = None) -> None:
+    has_query = any(line.get("text") == "查询业务资料" for line in lines)
+    read_index = next(
+        (index for index, line in enumerate(lines) if line.get("text") == "读取业务资料"),
+        None,
+    )
+    if has_query or read_index is None:
+        return
+    detail = str(user_message or "").strip()
+    lines.insert(
+        read_index,
+        {
+            "id": "knowledge_query_synthetic",
+            "kind": "knowledge",
+            "text": "查询业务资料",
+            "detail": detail or None,
+            "state": "completed",
+        },
+    )
 
 
 def _matching_user_message(
@@ -1088,6 +1182,17 @@ def _event_trace_line(
             "text": "通用技能运行完成" if success else "通用技能运行失败",
             "detail": str(payload.get("skill_slug") or "") or None,
             "state": "completed" if success else "failed",
+        }
+    if event.event_type == "scheduled_task_draft_created":
+        title = str(payload.get("title") or "").strip()
+        schedule = str(payload.get("schedule_label") or "").strip()
+        detail = " · ".join(part for part in (title, schedule, "等待确认后启用") if part)
+        return {
+            "id": f"scheduled_task_draft_{event.id}",
+            "kind": "decision",
+            "text": "生成自动任务草案",
+            "detail": detail or None,
+            "state": "completed",
         }
     if event.event_type == "router_decision_created":
         intent = str(payload.get("user_intent") or "").strip()

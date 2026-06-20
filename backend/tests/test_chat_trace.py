@@ -101,6 +101,7 @@ def test_turn_trace_falls_back_to_knowledge_citations_without_events() -> None:
     assert [line["text"] for line in traces[0]["lines"]] == [
         "执行记录",
         "识别为业务资料问答",
-        "检索业务资料库",
+        "查询业务资料",
+        "读取业务资料",
         "生成带引用回答",
     ]
