@@ -104,26 +104,29 @@ function stringFromMeta(metadata: Record<string, unknown>, key: string): string 
 
 export function employeeProfile(agent?: AgentProfileRead | null): EmployeeProfile {
   const metadata = agent?.metadata || {};
-  const template = EMPLOYEE_TEMPLATES.find((item) => item.key === metadata.role_key) || EMPLOYEE_TEMPLATES[0];
+  const isBlankOnboarding = metadata.blank_onboarding === true;
+  const template = isBlankOnboarding
+    ? undefined
+    : EMPLOYEE_TEMPLATES.find((item) => item.key === metadata.role_key) || EMPLOYEE_TEMPLATES[0];
   const preset = EMPLOYEE_AVATAR_PRESETS.find((item) => item.key === metadata.avatar_preset)
-    || EMPLOYEE_AVATAR_PRESETS.find((item) => item.key === template.avatarPreset)
+    || (template ? EMPLOYEE_AVATAR_PRESETS.find((item) => item.key === template.avatarPreset) : undefined)
     || EMPLOYEE_AVATAR_PRESETS[0];
   const isOverall = Boolean(agent?.is_overall);
   const avatarKind = stringFromMeta(metadata, 'avatar_kind') === 'upload' && stringFromMeta(metadata, 'avatar_image')
     ? 'upload'
     : 'preset';
   return {
-    roleKey: stringFromMeta(metadata, 'role_key') || template.key,
-    roleName: isOverall ? '开放广场平台' : stringFromMeta(metadata, 'role_name') || template.roleName,
-    avatarText: isOverall ? '广' : stringFromMeta(metadata, 'avatar_text') || preset.text || template.avatarText,
-    avatarTone: isOverall ? 'overall' : stringFromMeta(metadata, 'avatar_tone') || preset.tone || template.avatarTone,
+    roleKey: stringFromMeta(metadata, 'role_key') || template?.key || '',
+    roleName: isOverall ? '开放广场平台' : stringFromMeta(metadata, 'role_name') || template?.roleName || '待补充岗位',
+    avatarText: isOverall ? '广' : stringFromMeta(metadata, 'avatar_text') || preset.text || template?.avatarText || '员',
+    avatarTone: isOverall ? 'overall' : stringFromMeta(metadata, 'avatar_tone') || preset.tone || template?.avatarTone || 'teal',
     avatarKind: isOverall ? 'preset' : avatarKind,
     avatarPreset: isOverall ? 'overall' : stringFromMeta(metadata, 'avatar_preset') || preset.key,
     avatarImage: isOverall ? '' : stringFromMeta(metadata, 'avatar_image'),
     onboardedAt: stringFromMeta(metadata, 'onboarded_at') || agent?.created_at?.slice(0, 10) || '-',
-    workStyles: asStringArray(metadata.work_styles).length ? asStringArray(metadata.work_styles) : DEFAULT_WORK_STYLES,
-    expertiseTags: asStringArray(metadata.expertise_tags).length ? asStringArray(metadata.expertise_tags) : DEFAULT_EXPERTISE,
-    workModes: asStringArray(metadata.work_modes).length ? asStringArray(metadata.work_modes) : DEFAULT_WORK_MODES,
+    workStyles: asStringArray(metadata.work_styles).length ? asStringArray(metadata.work_styles) : isBlankOnboarding ? [] : DEFAULT_WORK_STYLES,
+    expertiseTags: asStringArray(metadata.expertise_tags).length ? asStringArray(metadata.expertise_tags) : isBlankOnboarding ? [] : DEFAULT_EXPERTISE,
+    workModes: asStringArray(metadata.work_modes).length ? asStringArray(metadata.work_modes) : isBlankOnboarding ? [] : DEFAULT_WORK_MODES,
   };
 }
 
@@ -155,5 +158,22 @@ export function employeeMetadataFromTemplate(templateKey: string, currentMetadat
     work_styles: template.workStyles,
     expertise_tags: template.expertiseTags,
     work_modes: template.workModes,
+  };
+}
+
+export function employeeBlankMetadata(currentMetadata: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    ...currentMetadata,
+    blank_onboarding: true,
+    role_key: '',
+    role_name: '待补充岗位',
+    avatar_text: '员',
+    avatar_tone: 'teal',
+    avatar_kind: 'preset',
+    avatar_preset: EMPLOYEE_AVATAR_PRESETS[0].key,
+    onboarded_at: currentMetadata.onboarded_at || new Date().toISOString().slice(0, 10),
+    work_styles: [],
+    expertise_tags: [],
+    work_modes: [],
   };
 }

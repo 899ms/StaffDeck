@@ -29,7 +29,7 @@ import {
   type EnterpriseAuthSession,
 } from './auth';
 import EmployeeAvatar from './components/EmployeeAvatar';
-import { EMPLOYEE_TEMPLATES, employeeDisplayName, employeeMetadataFromTemplate, employeeProfile } from './employee';
+import { EMPLOYEE_TEMPLATES, employeeBlankMetadata, employeeDisplayName, employeeMetadataFromTemplate, employeeProfile } from './employee';
 import AccountsPage from './pages/AccountsPage';
 import AgentsPage from './pages/AgentsPage';
 import DashboardPage from './pages/DashboardPage';
@@ -245,18 +245,23 @@ function Shell({
       return;
     }
     const template = EMPLOYEE_TEMPLATES.find((item) => item.key === agentForm.roleKey) || EMPLOYEE_TEMPLATES[0];
+    const isBlankOnboarding = agentForm.sourceMode === 'blank';
+    const description = isBlankOnboarding ? agentForm.description.trim() : agentForm.description.trim() || template.description;
+    const baseMetadata = {
+      system_prompt_summary: description,
+      owner_user_id: auth.user.id,
+      owner_username: auth.user.username,
+      owner_display_name: auth.user.display_name || auth.user.username,
+    };
     const created = await api.post<AgentProfileRead>('/api/enterprise/agents', {
       tenant_id: TENANT_ID,
       name,
-      description: agentForm.description || template.description,
+      description,
       source_mode: agentForm.sourceMode,
       copy_from_agent_id: agentForm.sourceMode === 'copy' ? agentForm.copyFromAgentId || undefined : undefined,
-      metadata: employeeMetadataFromTemplate(agentForm.roleKey, {
-        system_prompt_summary: agentForm.description || template.description,
-        owner_user_id: auth.user.id,
-        owner_username: auth.user.username,
-        owner_display_name: auth.user.display_name || auth.user.username,
-      }),
+      metadata: isBlankOnboarding
+        ? employeeBlankMetadata(baseMetadata)
+        : employeeMetadataFromTemplate(agentForm.roleKey, baseMetadata),
     });
     await loadAgents();
     changeAgentScope(created.id);
@@ -387,24 +392,26 @@ function Shell({
               ]}
             />
           </label>
-          <label>
-            岗位模板
-            <Select
-              value={agentForm.roleKey}
-              options={EMPLOYEE_TEMPLATES.map((template) => ({
-                value: template.key,
-                label: `${template.avatarText} · ${template.roleName}`,
-              }))}
-              onChange={(value) => setAgentForm((prev) => {
-                const template = EMPLOYEE_TEMPLATES.find((item) => item.key === value);
-                return {
-                  ...prev,
-                  roleKey: value,
-                  description: prev.description || template?.description || '',
-                };
-              })}
-            />
-          </label>
+          {agentForm.sourceMode === 'copy' && (
+            <label>
+              岗位模板
+              <Select
+                value={agentForm.roleKey}
+                options={EMPLOYEE_TEMPLATES.map((template) => ({
+                  value: template.key,
+                  label: `${template.avatarText} · ${template.roleName}`,
+                }))}
+                onChange={(value) => setAgentForm((prev) => {
+                  const template = EMPLOYEE_TEMPLATES.find((item) => item.key === value);
+                  return {
+                    ...prev,
+                    roleKey: value,
+                    description: prev.description || template?.description || '',
+                  };
+                })}
+              />
+            </label>
+          )}
           {agentForm.sourceMode === 'copy' && (
             <label>
               学习来源
