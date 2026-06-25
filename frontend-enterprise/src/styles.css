@@ -1584,9 +1584,8 @@ body.skill-distill-fixed .content {
 
 .open-platform-overview-shell {
   display: grid;
-  min-height: min(720px, calc(100vh - 226px));
-  max-height: calc(100vh - 142px);
-  overflow: hidden;
+  min-height: 0;
+  overflow: visible;
 }
 
 .open-platform-grid {
@@ -1594,18 +1593,15 @@ body.skill-distill-fixed .content {
   grid-template-columns: 1fr;
   grid-auto-rows: max-content;
   align-content: start;
-  gap: 12px;
+  gap: 10px;
   min-height: 0;
-  max-height: 100%;
-  overflow-y: auto;
-  padding: 2px 10px 10px 2px;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--accent) 30%, var(--border)) transparent;
+  overflow: visible;
+  padding: 0 2px 6px;
 }
 
 .open-platform-card {
   position: relative;
-  min-height: 214px;
+  min-height: 166px;
   border-color: var(--border);
   border-radius: 20px;
   background:
@@ -1615,12 +1611,12 @@ body.skill-distill-fixed .content {
 }
 
 .open-platform-card .ant-card-body {
-  min-height: 184px;
+  min-height: 142px;
   display: grid;
-  grid-template-columns: 118px minmax(260px, 350px) minmax(560px, 1fr) 144px;
+  grid-template-columns: 104px minmax(240px, 320px) minmax(500px, 1fr) 132px;
   align-items: center;
-  gap: 20px;
-  padding: 24px 26px;
+  gap: 16px;
+  padding: 16px 22px;
 }
 
 .open-platform-row-card {
@@ -1641,8 +1637,8 @@ body.skill-distill-fixed .content {
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  gap: 8px;
-  min-height: 118px;
+  gap: 6px;
+  min-height: 98px;
   border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border-soft));
   border-radius: 18px;
   background:
@@ -1683,7 +1679,7 @@ body.skill-distill-fixed .content {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 7px;
 }
 
 .open-platform-card-copy .ant-typography {
@@ -1694,7 +1690,7 @@ body.skill-distill-fixed .content {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 12px;
+  gap: 10px;
   justify-content: center;
   text-align: right;
 }
@@ -1732,8 +1728,8 @@ body.skill-distill-fixed .content {
 .open-platform-preview-panel {
   min-width: 0;
   display: grid;
-  gap: 12px;
-  padding: 14px 16px;
+  gap: 8px;
+  padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--accent) 9%, var(--border-soft));
   border-radius: 18px;
   background:
@@ -1763,21 +1759,21 @@ body.skill-distill-fixed .content {
   min-width: 0;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
   overflow: hidden;
 }
 
 .open-platform-preview-item {
   width: 100%;
-  min-height: 118px;
+  min-height: 88px;
   display: grid;
-  grid-template-columns: 46px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 8px;
   align-content: stretch;
   align-items: start;
-  padding: 12px;
+  padding: 10px;
   border: 1px solid color-mix(in srgb, var(--accent) 8%, var(--border-soft));
-  border-radius: 16px;
+  border-radius: 14px;
   color: var(--foreground);
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--surface) 94%, transparent), color-mix(in srgb, var(--surface-subtle) 72%, var(--surface)));
@@ -1793,16 +1789,16 @@ body.skill-distill-fixed .content {
 }
 
 .open-platform-preview-media {
-  width: 42px;
-  height: 42px;
+  width: 38px;
+  height: 38px;
   display: grid;
   place-items: center;
   border-radius: 15px;
 }
 
 .open-platform-preview-media > span:not(.employee-avatar) {
-  width: 42px;
-  height: 42px;
+  width: 38px;
+  height: 38px;
   display: grid;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
@@ -1842,11 +1838,11 @@ body.skill-distill-fixed .content {
 
 .open-platform-preview-item small {
   display: -webkit-box;
-  min-height: 32px;
+  min-height: 0;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.35;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
 }
 
@@ -10108,15 +10104,14 @@ pre {
   }
 
   .open-platform-overview-shell {
-    min-height: min(680px, calc(100vh - 210px));
-    max-height: calc(100vh - 136px);
-    overflow: hidden;
+    min-height: 0;
+    overflow: visible;
   }
 
   .open-platform-grid {
-    max-height: 100%;
-    overflow-y: auto;
-    padding: 2px 8px 10px 2px;
+    max-height: none;
+    overflow: visible;
+    padding: 0 2px 6px;
   }
 
   .open-platform-card .ant-card-body {
