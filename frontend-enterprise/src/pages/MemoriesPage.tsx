@@ -103,9 +103,9 @@ export default function MemoriesPage() {
   return (
     <>
       <div className="page-title">
-        <Typography.Title level={3}>记忆</Typography.Title>
+        <Typography.Title level={3}>员工记忆</Typography.Title>
       </div>
-      <Card className="data-card" title={<><DatabaseOutlined /> 记忆查询</>}>
+      <Card className="data-card" title={<><DatabaseOutlined /> 员工记忆查询</>}>
         <Form form={form} layout="inline" className="toolbar-form" onFinish={load}>
           <Form.Item name="username" label="用户名">
             <Input allowClear placeholder="如 user_demo" />
@@ -132,7 +132,7 @@ export default function MemoriesPage() {
         />
       </Card>
       <Drawer
-        title="记忆详情"
+        title="员工记忆详情"
         open={Boolean(detail)}
         width={780}
         onClose={() => setDetail(null)}

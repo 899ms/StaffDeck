@@ -93,6 +93,26 @@ export type ChatSessionEventRead = {
   data: Record<string, unknown>;
 };
 
+export type HumanHandoffRead = {
+  id: string;
+  tenant_id: string;
+  session_id: string;
+  agent_id?: string | null;
+  requester_user_id?: string | null;
+  assignee_user_id?: string | null;
+  trigger_skill_id?: string | null;
+  trigger_step_id?: string | null;
+  context_summary?: string | null;
+  pending_question?: string | null;
+  status: string;
+  human_reply?: string | null;
+  resume_payload?: Record<string, unknown> | null;
+  metadata?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+  answered_at?: string | null;
+};
+
 export type TraceLineRead = {
   id: string;
   kind: 'thinking' | 'decision' | 'skill' | 'tool' | 'code' | 'knowledge';

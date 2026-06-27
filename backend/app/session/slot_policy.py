@@ -4,7 +4,14 @@ from collections.abc import Mapping
 from typing import Any
 
 
-ROUTER_GENERATED_MESSAGE_SLOT_KEYS = {"message_content"}
+ROUTER_GENERATED_MESSAGE_SLOT_KEYS = {
+    "message_content",
+    "user_message",
+    "rewritten_message",
+    "normalized_message",
+    "current_message",
+    "source_message",
+}
 
 
 def strip_router_generated_message_slots(slots: Mapping[str, Any] | None) -> dict[str, Any]:

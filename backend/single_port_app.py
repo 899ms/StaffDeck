@@ -9,6 +9,15 @@ from app.main import app
 ROOT_DIR = Path(__file__).resolve().parents[1]
 ENTERPRISE_DIST = ROOT_DIR / "frontend-enterprise" / "dist"
 CHAT_DIST = ROOT_DIR / "frontend-chat" / "dist"
+SPA_INDEX_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
+def spa_index_response(index_path: Path) -> FileResponse:
+    return FileResponse(index_path, headers=SPA_INDEX_HEADERS)
 
 app.mount(
     "/enterprise/assets",
@@ -26,11 +35,11 @@ def root_redirect() -> RedirectResponse:
 @app.get("/enterprise", include_in_schema=False)
 @app.get("/enterprise/{path:path}", include_in_schema=False)
 def enterprise_app(path: str = "") -> FileResponse:
-    return FileResponse(ENTERPRISE_DIST / "index.html")
+    return spa_index_response(ENTERPRISE_DIST / "index.html")
 
 
 @app.get("/login", include_in_schema=False)
 @app.get("/chat", include_in_schema=False)
 @app.get("/chat/{path:path}", include_in_schema=False)
 def chat_app(path: str = "") -> FileResponse:
-    return FileResponse(CHAT_DIST / "index.html")
+    return spa_index_response(CHAT_DIST / "index.html")

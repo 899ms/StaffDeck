@@ -416,6 +416,61 @@ textarea,
   font-size: 10px;
 }
 
+.sidebar-handoff-entry {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--foreground);
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.sidebar-handoff-entry:hover,
+.sidebar-handoff-entry.has-items {
+  border-color: color-mix(in srgb, var(--warning) 28%, transparent);
+  background: color-mix(in srgb, #fff6df 62%, transparent);
+}
+
+.sidebar-handoff-entry-icon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--warning);
+  background: color-mix(in srgb, #fff3cf 72%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border));
+}
+
+.sidebar-handoff-entry > .anticon {
+  color: var(--muted-soft);
+  font-size: 10px;
+}
+
+.sidebar-handoff-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #7c4a03;
+  background: color-mix(in srgb, #ffd987 76%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--warning) 34%, var(--border));
+  font-size: 11px;
+  font-weight: 820;
+}
+
 .chat-layout.sidebar-collapsed .session-pane {
   padding: 12px 8px;
   align-items: center;
@@ -2038,6 +2093,127 @@ textarea,
   max-height: calc(100vh - 150px);
   overflow: auto;
   padding: 22px 24px 24px;
+}
+
+.handoff-inbox-modal .ant-modal-content {
+  color: var(--foreground);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, var(--surface-subtle)), var(--surface)) !important;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-float);
+}
+
+.handoff-inbox-modal .ant-modal-header {
+  background: transparent !important;
+  border-bottom: 1px solid var(--border);
+}
+
+.handoff-inbox-modal .ant-modal-title {
+  color: var(--foreground);
+  font-weight: 860;
+}
+
+.handoff-inbox-modal .ant-modal-close {
+  color: var(--muted);
+}
+
+.handoff-inbox-modal .ant-modal-close:hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--surface-muted) 72%, transparent);
+}
+
+.handoff-inbox-modal .ant-modal-body {
+  max-height: calc(100vh - 150px);
+  overflow: auto;
+  padding: 18px 20px 22px;
+}
+
+.handoff-inbox-list {
+  display: grid;
+  gap: 12px;
+}
+
+.handoff-inbox-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--warning) 20%, var(--border));
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, #fff9ed 72%, var(--surface)), var(--surface));
+  box-shadow: 0 12px 28px rgba(37, 32, 24, 0.06);
+}
+
+.handoff-inbox-card-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.handoff-inbox-avatar {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+}
+
+.handoff-inbox-card-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.handoff-inbox-card-head strong,
+.handoff-inbox-card-head span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.handoff-inbox-card-head strong {
+  font-size: 15px;
+  font-weight: 860;
+}
+
+.handoff-inbox-card-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.handoff-inbox-block {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-muted) 44%, transparent);
+}
+
+.handoff-inbox-block span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 740;
+}
+
+.handoff-inbox-block p {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.handoff-inbox-card .ant-input {
+  border-radius: 12px;
+}
+
+.handoff-inbox-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .citation-detail {

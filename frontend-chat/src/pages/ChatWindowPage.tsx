@@ -36,6 +36,7 @@ import type {
   ChatSessionEventRead,
   ChatSession,
   ChatTurnResponse,
+  HumanHandoffRead,
   KnowledgeCitation,
   ModelConfigRead,
   ScheduledTaskDraftRead,
@@ -443,6 +444,21 @@ function parseMessageTime(value?: string): number {
   const normalized = /(?:z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : `${value}Z`;
   const time = Date.parse(normalized);
   return Number.isFinite(time) ? time : 0;
+}
+
+function latestUserMessageForTurn(slot: SessionSlot, turnId?: string | null): ChatMessage | undefined {
+  const scoped = [...slot.serverMessages, ...slot.realtimeMessages].filter(
+    (messageItem) => messageItem.role === 'user' && (!turnId || messageItem.turnId === turnId),
+  );
+  const candidates = scoped.length
+    ? scoped
+    : [...slot.serverMessages, ...slot.realtimeMessages].filter((messageItem) => messageItem.role === 'user');
+  return candidates.sort((left, right) => parseMessageTime(right.created_at) - parseMessageTime(left.created_at))[0];
+}
+
+function timestampAfterMessage(messageItem?: ChatMessage): string {
+  const baseTime = messageItem ? parseMessageTime(messageItem.created_at) : 0;
+  return new Date((baseTime > 0 ? baseTime : Date.now()) + 1).toISOString();
 }
 
 function hasEquivalentServerMessage(messageItem: ChatMessage, serverMessages: ChatMessage[]): boolean {
@@ -1163,6 +1179,10 @@ export default function ChatWindowPage() {
   const [createdScheduledTasks, setCreatedScheduledTasks] = useState<Record<string, ScheduledTaskRead>>({});
   const [dismissedDraftMessageIds, setDismissedDraftMessageIds] = useState<string[]>([]);
   const [activeCitation, setActiveCitation] = useState<KnowledgeCitation | null>(null);
+  const [handoffs, setHandoffs] = useState<HumanHandoffRead[]>([]);
+  const [handoffsLoading, setHandoffsLoading] = useState(false);
+  const [showHandoffInbox, setShowHandoffInbox] = useState(false);
+  const [handoffReplies, setHandoffReplies] = useState<Record<string, string>>({});
   const [isComposing, setIsComposing] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => (
     window.localStorage.getItem('skill_agent_sidebar_collapsed') === 'true'
@@ -1531,6 +1551,57 @@ export default function ChatWindowPage() {
       });
   }, [navigate, notifyTrace, tenantId]);
 
+  const loadHandoffs = useCallback(() => {
+    if (!auth) return Promise.resolve();
+    setHandoffsLoading(true);
+    return api
+      .get<HumanHandoffRead[]>(`/api/chat/handoffs?tenant_id=${tenantId}&status=pending`)
+      .then(setHandoffs)
+      .catch((error) => {
+        if (isAuthError(error)) {
+          clearAuthSession();
+          navigate('/login', { replace: true });
+          return;
+        }
+        message.error(error instanceof Error ? error.message : '待回答加载失败');
+      })
+      .finally(() => setHandoffsLoading(false));
+  }, [auth, navigate, tenantId]);
+
+  const submitHandoffReply = useCallback((handoff: HumanHandoffRead) => {
+    const reply = (handoffReplies[handoff.id] || '').trim();
+    if (!reply) {
+      message.warning('请输入回复内容');
+      return;
+    }
+    api
+      .post<HumanHandoffRead>(`/api/chat/handoffs/${handoff.id}/reply`, {
+        tenant_id: tenantId,
+        reply,
+      })
+      .then(() => {
+        message.success('已回复，原会话会继续执行');
+        setHandoffs((rows) => rows.filter((item) => item.id !== handoff.id));
+        setHandoffReplies((prev) => {
+          const next = { ...prev };
+          delete next[handoff.id];
+          return next;
+        });
+        loadSessions();
+        getSlot(handoff.session_id);
+        void loadMessages(handoff.session_id);
+        void loadTraces(handoff.session_id);
+      })
+      .catch((error) => {
+        if (isAuthError(error)) {
+          clearAuthSession();
+          navigate('/login', { replace: true });
+          return;
+        }
+        message.error(error instanceof Error ? error.message : '回复失败');
+      });
+  }, [getSlot, handoffReplies, loadMessages, loadSessions, loadTraces, navigate, tenantId]);
+
   const appendRealtime = useCallback((id: string, messageItem: ChatMessage) => {
     const slot = getSlot(id);
     slot.realtimeMessages = [...slot.realtimeMessages, messageItem].slice(-200);
@@ -1555,15 +1626,17 @@ export default function ChatWindowPage() {
     const slot = getSlot(id);
     const stream = getStreamSlot(id);
     const streamId = `__streaming_${id}`;
+    const index = slot.realtimeMessages.findIndex((item) => item.id === streamId);
+    const previousMessage = index >= 0 ? slot.realtimeMessages[index] : undefined;
+    const activeTurnId = turnId || stream.turnId || undefined;
     const streamingMessage: ChatMessage = {
       id: streamId,
-      turnId: turnId || stream.turnId || undefined,
+      turnId: activeTurnId,
       role: 'assistant',
       content: text,
-      created_at: new Date().toISOString(),
+      created_at: previousMessage?.created_at || timestampAfterMessage(latestUserMessageForTurn(slot, activeTurnId)),
       isStreaming: true,
     };
-    const index = slot.realtimeMessages.findIndex((item) => item.id === streamId);
     if (index >= 0) {
       slot.realtimeMessages = [...slot.realtimeMessages];
       slot.realtimeMessages[index] = streamingMessage;
@@ -1617,6 +1690,15 @@ export default function ChatWindowPage() {
     const timer = window.setInterval(loadSessions, 2500);
     return () => window.clearInterval(timer);
   }, [auth, loadSessions]);
+
+  useEffect(() => {
+    if (!auth) return;
+    void loadHandoffs();
+    const timer = window.setInterval(() => {
+      void loadHandoffs();
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [auth, loadHandoffs]);
 
   useEffect(() => {
     if (!auth) return;
@@ -2099,19 +2181,98 @@ export default function ChatWindowPage() {
     upsertTraceLine,
   ]);
 
+  const eventTextPayload = useCallback((event: ChatSessionEventRead): string => {
+    const data = event.data || {};
+    if (typeof data.content === 'string') return data.content;
+    if (typeof data.text === 'string') return data.text;
+    return '';
+  }, []);
+
+  const isTerminalEvent = useCallback((event: ChatSessionEventRead) => (
+    event.event === 'complete' ||
+    event.event === 'done' ||
+    event.event === 'error'
+  ), []);
+
+  const eventTime = useCallback((event: ChatSessionEventRead) => {
+    const time = parseMessageTime(event.created_at);
+    return time || 0;
+  }, []);
+
+  const hydrateRunningSessionFromEvents = useCallback((id: string, events: ChatSessionEventRead[]) => {
+    const stream = getStreamSlot(id);
+    if (stream.loading) return false;
+
+    const groups = new Map<string, ChatSessionEventRead[]>();
+    events.forEach((event) => {
+      const key = `${id}:${event.run_id || id}`;
+      const bucket = groups.get(key) || [];
+      bucket.push(event);
+      groups.set(key, bucket);
+    });
+
+    const runningGroup = [...groups.values()]
+      .map((group) => [...group].sort((left, right) => eventTime(left) - eventTime(right)))
+      .sort((left, right) => eventTime(right[right.length - 1]) - eventTime(left[left.length - 1]))
+      .find((group) => !group.some((event) => isTerminalEvent(event)));
+
+    if (!runningGroup?.length) return false;
+
+    const runId = runningGroup[0].run_id;
+    const turnId = scheduledTurnId(id, runId);
+    const slot = getSlot(id);
+    if (slot.serverMessages.some((messageItem) => messageItem.role === 'assistant' && messageItem.turnId === turnId)) {
+      return false;
+    }
+
+    let text = '';
+    runningGroup.forEach((event) => {
+      const payloadText = eventTextPayload(event);
+      if (event.event === 'stream_replace') {
+        text = payloadText;
+      } else if (event.event === 'stream_delta' || event.event === 'token') {
+        text += payloadText;
+      }
+    });
+
+    stream.turnId = turnId;
+    stream.loading = true;
+    stream.phase = '执行中';
+    stream.accumulated = text;
+    updateStreaming(id, text, turnId);
+
+    runningGroup.forEach((event) => {
+      scheduledEventIdsRef.current.add(event.id);
+      if (event.event === 'stream_replace' || event.event === 'stream_delta' || event.event === 'token') return;
+      handleStreamEvent({ event: event.event, data: event.data || {} }, id, turnId);
+    });
+
+    notifyStream();
+    return true;
+  }, [
+    eventTextPayload,
+    eventTime,
+    getSlot,
+    getStreamSlot,
+    handleStreamEvent,
+    isTerminalEvent,
+    notifyStream,
+    scheduledTurnId,
+    updateStreaming,
+  ]);
+
   const pollScheduledSessionEvents = useCallback((id: string) => {
     return api
       .get<ChatSessionEventRead[]>(`/api/chat/sessions/${id}/events?tenant_id=${tenantId}`)
       .then((events) => {
         if (!events.length) return;
-        const slot = getSlot(id);
+        hydrateRunningSessionFromEvents(id, events);
         const stream = getStreamSlot(id);
-        const hasCompletedAssistant = slot.serverMessages.some((item) => item.role === 'assistant');
         const unseenEvents = events.filter((event) => !scheduledEventIdsRef.current.has(event.id));
         if (!unseenEvents.length) return;
         const sessionRow = sessions.find((item) => item.id === id);
-        const hasTerminalEvent = unseenEvents.some((event) => event.event === 'complete' || event.event === 'done' || event.event === 'error');
-        if (!stream.loading && (hasCompletedAssistant || (Boolean(sessionRow?.summary) && hasTerminalEvent))) {
+        const hasTerminalEvent = unseenEvents.some((event) => isTerminalEvent(event));
+        if (!stream.loading && Boolean(sessionRow?.summary) && hasTerminalEvent) {
           unseenEvents.forEach((event) => scheduledEventIdsRef.current.add(event.id));
           return;
         }
@@ -2137,9 +2298,10 @@ export default function ChatWindowPage() {
         }
       });
   }, [
-    getSlot,
     getStreamSlot,
     handleStreamEvent,
+    hydrateRunningSessionFromEvents,
+    isTerminalEvent,
     navigate,
     notifyStream,
     scheduledTurnId,
@@ -2435,7 +2597,7 @@ export default function ChatWindowPage() {
             eventStream.timer = null;
           }
           eventStream.accumulated = next;
-          updateStreaming(eventSessionId, next);
+          updateStreaming(eventSessionId, next, turnId);
           notifyStream();
           return;
         }
@@ -2447,7 +2609,7 @@ export default function ChatWindowPage() {
           if (!eventStream.timer) {
             eventStream.timer = window.setTimeout(() => {
               eventStream.timer = null;
-              updateStreaming(eventSessionId, eventStream.accumulated);
+              updateStreaming(eventSessionId, eventStream.accumulated, turnId);
             }, 100);
           }
           return;
@@ -2559,6 +2721,18 @@ export default function ChatWindowPage() {
                 <span>选择数字员工</span>
               </span>
               <RightOutlined />
+            </button>
+            <button
+              type="button"
+              className={`sidebar-handoff-entry${handoffs.length ? ' has-items' : ''}`}
+              onClick={() => setShowHandoffInbox(true)}
+            >
+              <span className="sidebar-handoff-entry-icon"><ClockCircleOutlined /></span>
+              <span className="sidebar-gallery-entry-copy">
+                <strong>待回答</strong>
+                <span>{handoffs.length ? `${handoffs.length} 条等待处理` : '暂无挂起消息'}</span>
+              </span>
+              {handoffs.length ? <span className="sidebar-handoff-badge">{handoffs.length}</span> : <RightOutlined />}
             </button>
             <div className="session-filter-bar">
               <span className="session-filter-label">员工会话</span>
@@ -2941,6 +3115,59 @@ export default function ChatWindowPage() {
           </form>
         </div>
       </main>
+      <Modal
+        className="handoff-inbox-modal"
+        title="待回答"
+        width="min(920px, calc(100vw - 40px))"
+        open={showHandoffInbox}
+        footer={null}
+        onCancel={() => setShowHandoffInbox(false)}
+      >
+        {handoffs.length === 0 ? (
+          <Empty description={handoffsLoading ? '正在加载待回答消息' : '暂无待回答消息'} />
+        ) : (
+          <div className="handoff-inbox-list">
+            {handoffs.map((handoff) => {
+              const handoffAgent = handoff.agent_id
+                ? agents.find((item) => item.id === handoff.agent_id) || null
+                : displayedAgent;
+              const profile = handoffAgent ? employeeProfile(handoffAgent) : displayedProfile;
+              return (
+                <article className="handoff-inbox-card" key={handoff.id}>
+                  <div className="handoff-inbox-card-head">
+                    {profile ? <EmployeeAvatarMark profile={profile} className="handoff-inbox-avatar" /> : null}
+                    <div>
+                      <strong>{handoffAgent ? employeeDisplayName(handoffAgent) : '数字员工'}</strong>
+                      <span>需要人工接续</span>
+                    </div>
+                  </div>
+                  <div className="handoff-inbox-block">
+                    <span>上下文摘要</span>
+                    <p>{handoff.context_summary || '暂无上下文摘要'}</p>
+                  </div>
+                  <div className="handoff-inbox-block">
+                    <span>这一步需要你处理</span>
+                    <p>{handoff.pending_question || '请根据当前会话补充人工回复。'}</p>
+                  </div>
+                  <Input.TextArea
+                    autoSize={{ minRows: 3, maxRows: 6 }}
+                    value={handoffReplies[handoff.id] || ''}
+                    placeholder="以当前数字员工的口吻回复。提交后，原会话会继续推进技能流程。"
+                    onChange={(event) => setHandoffReplies((prev) => ({
+                      ...prev,
+                      [handoff.id]: event.target.value,
+                    }))}
+                  />
+                  <div className="handoff-inbox-actions">
+                    <Button onClick={() => navigate(`/${handoff.session_id}`)}>打开原会话</Button>
+                    <Button type="primary" onClick={() => submitHandoffReply(handoff)}>回复并恢复</Button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </Modal>
       <Modal
         className="knowledge-citation-modal"
         title="引用详情"

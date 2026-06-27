@@ -422,7 +422,7 @@ export default function DashboardPage({
         <div className="employee-section-head">
           <div>
             <Typography.Title level={4}>
-              <span className="employee-memory-heading"><DatabaseOutlined /> 成长记录</span>
+              <span className="employee-memory-heading"><DatabaseOutlined /> 成长轨迹</span>
             </Typography.Title>
           </div>
         </div>
@@ -444,7 +444,7 @@ export default function DashboardPage({
             ))}
           </div>
         ) : (
-          <div className="employee-memory-empty">暂无成长记录</div>
+          <div className="employee-memory-empty">暂无成长轨迹</div>
         )}
       </section>
 

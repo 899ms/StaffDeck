@@ -116,16 +116,19 @@ def action_needs_reflection(
 ) -> bool:
     if router_decision.decision in {"clarify", "answer_only", "answer_chitchat_then_resume"}:
         return bool(tool_result or step_result.tool_call or step_result.knowledge_query)
-    return bool(
+    if (
         tool_result
         or step_result.tool_call
         or step_result.knowledge_query
         or step_result.knowledge_results
-        or step_result.slot_updates
-        or step_result.next_step_id
-        or step_result.is_step_completed
         or step_result.handoff
-    )
+    ):
+        return True
+    # Advancing to a decided next node is normal skill graph progress.
+    # Reflection is reserved for external actions or the overall skill completion.
+    if step_result.next_step_id:
+        return False
+    return bool(step_result.is_step_completed)
 
 
 def tool_result_needs_reflection(tool_result: ToolResult | None) -> bool:

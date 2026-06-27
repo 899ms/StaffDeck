@@ -463,6 +463,28 @@ class ChatSession(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
+class HumanHandoffRequest(SQLModel, table=True):
+    __tablename__ = "human_handoff_requests"
+
+    id: str = Field(default_factory=lambda: new_id("handoff"), primary_key=True)
+    tenant_id: str = Field(index=True)
+    session_id: str = Field(index=True)
+    agent_id: Optional[str] = Field(default=None, index=True)
+    requester_user_id: Optional[str] = Field(default=None, index=True)
+    assignee_user_id: Optional[str] = Field(default=None, index=True)
+    trigger_skill_id: Optional[str] = Field(default=None, index=True)
+    trigger_step_id: Optional[str] = Field(default=None, index=True)
+    context_summary: Optional[str] = None
+    pending_question: Optional[str] = None
+    status: str = Field(default="pending", index=True)
+    human_reply: Optional[str] = None
+    resume_payload_json: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    metadata_json: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    answered_at: Optional[datetime] = None
+
+
 class ScheduledTask(SQLModel, table=True):
     __tablename__ = "scheduled_tasks"
 

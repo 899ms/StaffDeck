@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from time import sleep
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
 
 from sqlmodel import Session, select
 
@@ -24,6 +24,7 @@ from app.db.models import (
     AgentResourceBinding,
     ChatSession,
     GeneralSkill,
+    HumanHandoffRequest,
     Message,
     ModelConfig,
     PersonaConfig,
@@ -79,6 +80,8 @@ KNOWN_PRODUCT_ID_ALIASES = {
     "sku003": "SKU-003",
     "sku-003": "SKU-003",
 }
+
+ExecutionFinalizeState = Literal["continued", "completed", "handoff"]
 
 
 def _normalize_action(action: object) -> str:
@@ -322,7 +325,7 @@ class AgentLoop:
                     memory_context,
                     conversation_context,
                 )
-                completed = self._finalize_execution_after_reply(
+                finalize_state = self._finalize_execution_after_reply(
                     request.tenant_id,
                     chat_session,
                     prepared.active_skill,
@@ -330,7 +333,7 @@ class AgentLoop:
                     step_result,
                     tool_result,
                 )
-                if completed:
+                if finalize_state == "completed":
                     self.events.record(
                         request.tenant_id,
                         chat_session.id,
@@ -912,7 +915,7 @@ class AgentLoop:
                         {"content": "\n\n".join(replies).strip()},
                     )
                 executed_actions += 1
-                completed = self._finalize_execution_after_reply(
+                finalize_state = self._finalize_execution_after_reply(
                     request.tenant_id,
                     chat_session,
                     active_skill,
@@ -920,9 +923,13 @@ class AgentLoop:
                     step_result,
                     tool_result,
                 )
-                if completed and active_skill:
+                if finalize_state == "completed" and active_skill:
                     completed_skill_ids_this_turn.add(active_skill.skill_id)
-                if not completed:
+                if finalize_state == "handoff":
+                    return self._scheduled_continuation(
+                        replies, active_skill, router_decision, step_result, tool_result
+                    )
+                if finalize_state == "continued":
                     if self._should_attempt_scheduled_task_followup(
                         request,
                         chat_session,
@@ -1414,7 +1421,7 @@ class AgentLoop:
                     chunks.append(chunk)
                     yield self._stream_event("stream_delta", chat_session, {"content": chunk})
                     self._pace_stream()
-            completed = self._finalize_execution_after_reply(
+            finalize_state = self._finalize_execution_after_reply(
                 request.tenant_id,
                 chat_session,
                 active_skill,
@@ -1422,7 +1429,7 @@ class AgentLoop:
                 step_result,
                 tool_result,
             )
-            if completed:
+            if finalize_state == "completed":
                 self.events.record(
                     request.tenant_id,
                     chat_session.id,
@@ -1866,14 +1873,181 @@ class AgentLoop:
         router_decision: RouterDecision,
         step_result: StepAgentResult,
         tool_result: ToolResult | None,
-    ) -> bool:
-        if router_decision.decision == "handoff_human" or step_result.handoff:
-            chat_session.status = "handoff"
-            return False
+    ) -> ExecutionFinalizeState:
+        requested_handoff = router_decision.decision == "handoff_human" or step_result.handoff
+        if requested_handoff:
+            if self._current_step_allows_human_handoff(active_skill, chat_session.active_step_id):
+                self._create_human_handoff_request(tenant_id, chat_session, active_skill, step_result)
+                return "handoff"
+            else:
+                self.events.record(
+                    tenant_id,
+                    chat_session.id,
+                    "human_handoff_ignored",
+                    {
+                        "reason": "current_step_does_not_declare_handoff",
+                        "active_skill_id": chat_session.active_skill_id,
+                        "active_step_id": chat_session.active_step_id,
+                        "router_decision": router_decision.decision,
+                        "step_handoff": step_result.handoff,
+                    },
+                )
         if self._should_complete_skill(active_skill, chat_session, step_result, tool_result):
             self._complete_active_skill(tenant_id, chat_session, active_skill, "step_completed")
+            return "completed"
+        return "continued"
+
+    def _current_step_allows_human_handoff(self, skill: Skill | None, active_step_id: str | None) -> bool:
+        if not skill:
+            return False
+        current_step = self._current_skill_step(skill, active_step_id)
+        if not current_step:
+            return False
+        return self._step_declares_human_handoff(current_step)
+
+    def _step_declares_human_handoff(self, step: dict[str, Any]) -> bool:
+        explicit_flags = (
+            "requires_human",
+            "human_handoff",
+            "handoff_required",
+            "needs_human",
+            "requires_manual_review",
+        )
+        if any(bool(step.get(key)) for key in explicit_flags):
+            return True
+
+        for key in ("type", "node_type", "kind", "action"):
+            value = str(step.get(key) or "").strip().lower()
+            if value in {"handoff", "human_handoff", "handoff_human", "manual_handoff"}:
+                return True
+
+        policy = step.get("handoff") or step.get("handoff_policy") or step.get("manual_review")
+        if isinstance(policy, dict):
+            return policy.get("enabled") is not False
+        if policy is True:
+            return True
+        if isinstance(policy, str) and policy.strip():
+            return True
+
+        if any(action in {"handoff", "handoff_human", "human_handoff", "manual_handoff"} for action in self._step_actions(step)):
             return True
         return False
+
+    def _create_human_handoff_request(
+        self,
+        tenant_id: str,
+        chat_session: ChatSession,
+        active_skill: Skill | None,
+        step_result: StepAgentResult,
+    ) -> HumanHandoffRequest:
+        existing = self.db.exec(
+            select(HumanHandoffRequest)
+            .where(HumanHandoffRequest.tenant_id == tenant_id)
+            .where(HumanHandoffRequest.session_id == chat_session.id)
+            .where(HumanHandoffRequest.status == "pending")
+        ).first()
+        if existing:
+            chat_session.status = "handoff"
+            chat_session.awaiting_input_json = {
+                "type": "human_handoff",
+                "handoff_id": existing.id,
+                "pending_question": existing.pending_question,
+            }
+            chat_session.updated_at = utc_now()
+            return existing
+
+        current_step = self._current_skill_step(active_skill, chat_session.active_step_id) if active_skill else None
+        handoff = HumanHandoffRequest(
+            tenant_id=tenant_id,
+            session_id=chat_session.id,
+            agent_id=chat_session.agent_id,
+            requester_user_id=chat_session.user_id,
+            assignee_user_id=self._human_handoff_assignee_user_id(tenant_id, chat_session.agent_id, chat_session.user_id),
+            trigger_skill_id=chat_session.active_skill_id,
+            trigger_step_id=chat_session.active_step_id,
+            context_summary=self._human_handoff_context_summary(chat_session),
+            pending_question=self._human_handoff_pending_question(current_step, step_result),
+            resume_payload_json={
+                "active_skill_id": chat_session.active_skill_id,
+                "active_step_id": chat_session.active_step_id,
+                "slots": chat_session.slots_json or {},
+                "pending_tasks": chat_session.pending_tasks_json or [],
+                "skill_stack": chat_session.skill_stack_json or [],
+            },
+            metadata_json={
+                "step": current_step or {},
+                "step_reply": step_result.reply,
+                "step_handoff": step_result.handoff,
+            },
+        )
+        self.db.add(handoff)
+        chat_session.status = "handoff"
+        chat_session.awaiting_input_json = {
+            "type": "human_handoff",
+            "handoff_id": handoff.id,
+            "pending_question": handoff.pending_question,
+        }
+        chat_session.updated_at = utc_now()
+        self.events.record(
+            tenant_id,
+            chat_session.id,
+            "human_handoff_requested",
+            {
+                "handoff_id": handoff.id,
+                "agent_id": handoff.agent_id,
+                "assignee_user_id": handoff.assignee_user_id,
+                "trigger_skill_id": handoff.trigger_skill_id,
+                "trigger_step_id": handoff.trigger_step_id,
+                "pending_question": handoff.pending_question,
+            },
+        )
+        return handoff
+
+    def _human_handoff_assignee_user_id(
+        self, tenant_id: str, agent_id: str | None, fallback_user_id: str | None
+    ) -> str | None:
+        if not agent_id:
+            return fallback_user_id
+        agent = self.db.exec(
+            select(AgentProfile).where(AgentProfile.tenant_id == tenant_id, AgentProfile.id == agent_id)
+        ).first()
+        metadata = agent.metadata_json if agent else {}
+        if isinstance(metadata, dict):
+            for key in ("owner_user_id", "created_by_user_id", "creator_user_id", "created_by", "owner_id"):
+                value = metadata.get(key)
+                if value:
+                    return str(value)
+        return fallback_user_id
+
+    def _human_handoff_context_summary(self, chat_session: ChatSession) -> str:
+        rows = self.db.exec(
+            select(Message)
+            .where(Message.session_id == chat_session.id)
+            .order_by(Message.created_at.desc())
+            .limit(8)
+        ).all()
+        lines: list[str] = []
+        for message in reversed(rows):
+            content = re.sub(r"\s+", " ", message.content or "").strip()
+            if not content:
+                continue
+            lines.append(f"{message.role}: {content[:240]}")
+        return "\n".join(lines)
+
+    def _human_handoff_pending_question(
+        self, current_step: dict[str, Any] | None, step_result: StepAgentResult
+    ) -> str:
+        candidates: list[Any] = [
+            step_result.reply,
+            current_step.get("handoff_question") if current_step else None,
+            current_step.get("question") if current_step else None,
+            current_step.get("name") if current_step else None,
+        ]
+        for candidate in candidates:
+            text = re.sub(r"\s+", " ", str(candidate or "")).strip()
+            if text:
+                return text[:600]
+        return "当前 SOP 需要人工确认后继续执行。"
 
     def _generate_reply_segment(
         self,
@@ -2198,7 +2372,7 @@ class AgentLoop:
                 if segment:
                     replies, _replaced_reply = self._merge_scheduled_reply_segment(replies, segment)
                 executed_actions += 1
-                completed = self._finalize_execution_after_reply(
+                finalize_state = self._finalize_execution_after_reply(
                     request.tenant_id,
                     chat_session,
                     active_skill,
@@ -2206,9 +2380,13 @@ class AgentLoop:
                     step_result,
                     tool_result,
                 )
-                if completed and active_skill:
+                if finalize_state == "completed" and active_skill:
                     completed_skill_ids_this_turn.add(active_skill.skill_id)
-                if not completed:
+                if finalize_state == "handoff":
+                    return self._scheduled_continuation(
+                        replies, active_skill, router_decision, step_result, tool_result
+                    )
+                if finalize_state == "continued":
                     if self._should_attempt_scheduled_task_followup(
                         request,
                         chat_session,
@@ -4584,7 +4762,14 @@ class AgentLoop:
         if not active_step_id:
             return None
         for step in self._skill_steps(skill):
-            if isinstance(step, dict) and step.get("step_id") == active_step_id:
+            if not isinstance(step, dict):
+                continue
+            step_ids = {
+                str(step.get("step_id") or ""),
+                str(step.get("node_id") or ""),
+                str(step.get("id") or ""),
+            }
+            if active_step_id in step_ids:
                 return step
         return None
 

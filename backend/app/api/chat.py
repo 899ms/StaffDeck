@@ -7,6 +7,8 @@ from collections.abc import Iterator
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.agents.branching import model_for_agent
@@ -16,6 +18,7 @@ from app.db.models import (
     AgentEvent,
     AgentProfile,
     ChatSession,
+    HumanHandoffRequest,
     Message,
     MessageFeedback,
     Skill,
@@ -44,6 +47,7 @@ from app.session.session_schema import (
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 STREAM_REPLY_CHUNK_SIZE = 96
 SESSION_TITLE_SUMMARY_EVENT = "session_title_summarized"
+EVENT_PAYLOAD_META_KEYS = {"id", "event", "type", "event_type", "created_at", "data"}
 SESSION_TITLE_PROMPT = """你是任务派发台的会话标题编辑器。
 
 根据首轮用户需求和员工回复，生成一个简短、可读、具体的中文标题。
@@ -55,6 +59,30 @@ SESSION_TITLE_PROMPT = """你是任务派发台的会话标题编辑器。
 - 不要包含标点符号、引号、编号、员工名或用户称呼。
 - 如果无法判断，就返回最能概括用户需求的短语。
 """
+
+
+class HumanHandoffRead(BaseModel):
+    id: str
+    tenant_id: str
+    session_id: str
+    agent_id: str | None = None
+    requester_user_id: str | None = None
+    assignee_user_id: str | None = None
+    trigger_skill_id: str | None = None
+    trigger_step_id: str | None = None
+    context_summary: str | None = None
+    pending_question: str | None = None
+    status: str
+    human_reply: str | None = None
+    metadata: dict[str, object]
+    created_at: str
+    updated_at: str
+    answered_at: str | None = None
+
+
+class HumanHandoffReplyRequest(BaseModel):
+    tenant_id: str
+    reply: str
 
 
 def session_read(row: ChatSession) -> ChatSessionRead:
@@ -84,6 +112,27 @@ def message_read(row: Message, feedback_rating: str | None = None) -> MessageRea
         metadata=row.metadata_json or {},
         created_at=row.created_at.isoformat(),
         feedback_rating=feedback_rating,
+    )
+
+
+def human_handoff_read(row: HumanHandoffRequest) -> HumanHandoffRead:
+    return HumanHandoffRead(
+        id=row.id,
+        tenant_id=row.tenant_id,
+        session_id=row.session_id,
+        agent_id=row.agent_id,
+        requester_user_id=row.requester_user_id,
+        assignee_user_id=row.assignee_user_id,
+        trigger_skill_id=row.trigger_skill_id,
+        trigger_step_id=row.trigger_step_id,
+        context_summary=row.context_summary,
+        pending_question=row.pending_question,
+        status=row.status,
+        human_reply=row.human_reply,
+        metadata=row.metadata_json or {},
+        created_at=row.created_at.isoformat(),
+        updated_at=row.updated_at.isoformat(),
+        answered_at=row.answered_at.isoformat() if row.answered_at else None,
     )
 
 
@@ -197,6 +246,101 @@ def _fallback_session_title(messages: list[Message]) -> str:
     if not first_user:
         return ""
     return _normalize_auto_title(first_user)
+
+
+def _normalized_session_event_payload(row: AgentEvent) -> dict[str, object]:
+    payload = dict(row.payload_json or {})
+    event_name = str(payload.get("event") or payload.get("type") or row.event_type)
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        data = {key: value for key, value in payload.items() if key not in EVENT_PAYLOAD_META_KEYS}
+    normalized: dict[str, object] = {
+        **payload,
+        "id": str(payload.get("id") or row.id),
+        "event": event_name,
+        "type": str(payload.get("type") or event_name),
+        "event_type": str(payload.get("event_type") or event_name),
+        "created_at": str(payload.get("created_at") or row.created_at.isoformat()),
+        "data": data,
+    }
+    if "run_id" not in normalized and data.get("run_id"):
+        normalized["run_id"] = str(data.get("run_id"))
+    return normalized
+
+
+def _resume_human_handoff_async(handoff_id: str) -> None:
+    thread = threading.Thread(target=_resume_human_handoff_worker, args=(handoff_id,), daemon=True)
+    thread.start()
+
+
+def _resume_human_handoff_worker(handoff_id: str) -> None:
+    try:
+        with Session(engine) as db:
+            handoff = db.get(HumanHandoffRequest, handoff_id)
+            if not handoff or handoff.status != "answered" or not handoff.human_reply:
+                return
+            chat_session = db.get(ChatSession, handoff.session_id)
+            if not chat_session or chat_session.tenant_id != handoff.tenant_id:
+                return
+            metadata = dict(handoff.metadata_json or {})
+            if metadata.get("resume_started_at"):
+                return
+            now = utc_now()
+            metadata["resume_started_at"] = now.isoformat()
+            handoff.metadata_json = metadata
+            db.add(handoff)
+            db.add(
+                AgentEvent(
+                    tenant_id=handoff.tenant_id,
+                    session_id=handoff.session_id,
+                    event_type="human_handoff_resume_started",
+                    payload_json={
+                        "handoff_id": handoff.id,
+                        "agent_id": handoff.agent_id,
+                        "trigger_skill_id": handoff.trigger_skill_id,
+                        "trigger_step_id": handoff.trigger_step_id,
+                    },
+                    created_at=now,
+                )
+            )
+            db.commit()
+
+            request = ChatTurnRequest(
+                tenant_id=handoff.tenant_id,
+                session_id=handoff.session_id,
+                agent_id=handoff.agent_id or chat_session.agent_id,
+                user_id=handoff.requester_user_id or chat_session.user_id or "",
+                message=handoff.human_reply,
+                channel="human_handoff_resume",
+                debug=False,
+            )
+            AgentLoop(db).handle_turn(request)
+            metadata = dict(handoff.metadata_json or {})
+            metadata["resume_finished_at"] = utc_now().isoformat()
+            handoff.metadata_json = metadata
+            db.add(handoff)
+            db.commit()
+    except Exception as exc:
+        with Session(engine) as db:
+            handoff = db.get(HumanHandoffRequest, handoff_id)
+            if not handoff:
+                return
+            metadata = dict(handoff.metadata_json or {})
+            metadata["resume_failed_at"] = utc_now().isoformat()
+            metadata["resume_error"] = str(exc)[:300]
+            handoff.status = "failed"
+            handoff.metadata_json = metadata
+            handoff.updated_at = utc_now()
+            db.add(handoff)
+            db.add(
+                AgentEvent(
+                    tenant_id=handoff.tenant_id,
+                    session_id=handoff.session_id,
+                    event_type="human_handoff_resume_failed",
+                    payload_json={"handoff_id": handoff.id, "error": str(exc)[:300]},
+                )
+            )
+            db.commit()
 
 
 def _maybe_handle_scheduled_task_request(
@@ -585,19 +729,85 @@ def list_chat_session_events(
         .where(
             AgentEvent.tenant_id == tenant_id,
             AgentEvent.session_id == session_id,
-            AgentEvent.event_type == "scheduled_task_stream_event",
         )
         .order_by(AgentEvent.created_at)
         .limit(500)
     ).all()
-    return [
-        {
-            "id": row.id,
-            "created_at": row.created_at.isoformat(),
-            **(row.payload_json or {}),
-        }
-        for row in rows
-    ]
+    return [_normalized_session_event_payload(row) for row in rows]
+
+
+@router.get("/handoffs", response_model=list[HumanHandoffRead])
+def list_human_handoffs(
+    tenant_id: str = Query(...),
+    status: str = Query("pending"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> list[HumanHandoffRead]:
+    _ensure_request_tenant(tenant_id, current_user)
+    ensure_tenant(db, tenant_id)
+    stmt = select(HumanHandoffRequest).where(HumanHandoffRequest.tenant_id == tenant_id)
+    if status != "all":
+        stmt = stmt.where(HumanHandoffRequest.status == status)
+    if current_user.username not in {"admin", "admin_demo"}:
+        stmt = stmt.where(or_(HumanHandoffRequest.assignee_user_id == current_user.id, HumanHandoffRequest.requester_user_id == current_user.id))
+    rows = db.exec(stmt.order_by(HumanHandoffRequest.updated_at.desc()).limit(200)).all()
+    return [human_handoff_read(row) for row in rows]
+
+
+@router.post("/handoffs/{handoff_id}/reply", response_model=HumanHandoffRead)
+def reply_human_handoff(
+    handoff_id: str,
+    request: HumanHandoffReplyRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> HumanHandoffRead:
+    _ensure_request_tenant(request.tenant_id, current_user)
+    row = db.get(HumanHandoffRequest, handoff_id)
+    if not row or row.tenant_id != request.tenant_id:
+        raise HTTPException(status_code=404, detail="Handoff request not found")
+    if current_user.username not in {"admin", "admin_demo"} and row.assignee_user_id not in {None, current_user.id}:
+        raise HTTPException(status_code=403, detail="Handoff request not assigned to current user")
+    reply = request.reply.strip()
+    if not reply:
+        raise HTTPException(status_code=400, detail="Reply is required")
+    if row.status != "pending":
+        raise HTTPException(status_code=409, detail="Handoff request is not pending")
+
+    now = utc_now()
+    row.status = "answered"
+    row.human_reply = reply
+    row.answered_at = now
+    row.updated_at = now
+    row.resume_payload_json = {**(row.resume_payload_json or {}), "answered_by_user_id": current_user.id}
+    db.add(row)
+
+    chat_session = db.get(ChatSession, row.session_id)
+    if chat_session and chat_session.tenant_id == request.tenant_id:
+        chat_session.status = "active"
+        chat_session.awaiting_input_json = None
+        chat_session.summary = f"最近回复：{reply[:120]}"
+        chat_session.updated_at = now
+        db.add(chat_session)
+        db.add(
+            AgentEvent(
+                tenant_id=request.tenant_id,
+                session_id=row.session_id,
+                event_type="human_handoff_answered",
+                payload_json={
+                    "handoff_id": row.id,
+                    "agent_id": row.agent_id,
+                    "trigger_skill_id": row.trigger_skill_id,
+                    "trigger_step_id": row.trigger_step_id,
+                    "answered_by_user_id": current_user.id,
+                    "reply_preview": reply[:180],
+                },
+                created_at=now,
+            )
+        )
+    db.commit()
+    db.refresh(row)
+    _resume_human_handoff_async(row.id)
+    return human_handoff_read(row)
 
 
 @router.post("/messages/{message_id}/feedback")

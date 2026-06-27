@@ -197,7 +197,7 @@ function Shell({
             children: [
               { key: '/enterprise/dashboard', icon: <DashboardOutlined />, label: '数字员工档案' },
               { key: '/enterprise/scheduled-tasks', icon: <ClockCircleOutlined />, label: '定时任务' },
-              { key: '/enterprise/memories', icon: <DatabaseOutlined />, label: '记忆' },
+              { key: '/enterprise/memories', icon: <DatabaseOutlined />, label: '员工记忆' },
               { key: '/enterprise/feedback', icon: <CommentOutlined />, label: '对话日志' },
             ],
           },
