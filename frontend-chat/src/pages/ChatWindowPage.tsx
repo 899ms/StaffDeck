@@ -2932,6 +2932,15 @@ export default function ChatWindowPage() {
               const persistedCreatedTask = item.role === 'assistant'
                 ? createdScheduledTaskForMessage(item)
                 : undefined;
+              const runningStatusOnly = Boolean(
+                item.role === 'assistant'
+                && item.isStreaming
+                && summary?.state === 'running'
+                && !visibleContent
+                && !scheduledDraft
+                && !persistedCreatedTask
+                && citations.length === 0
+              );
               if (
                 item.role === 'assistant'
                 && !visibleContent
@@ -2946,8 +2955,10 @@ export default function ChatWindowPage() {
               return (
                 <div key={item.id} className={`message-item ${item.role}`}>
                   <div className={`message-row ${item.role} ${item.isError ? 'error' : ''}`}>
-                    <div className={`bubble ${showInlineTrace ? 'has-trace' : ''}`}>
-                      {showInlineTrace && summary && (
+                    <div className={`bubble ${showInlineTrace ? 'has-trace' : ''}${runningStatusOnly ? ' status-only' : ''}`}>
+                      {runningStatusOnly ? (
+                        <div className="assistant-running-status">正在执行...</div>
+                      ) : showInlineTrace && summary && (
                         <div className="assistant-trace">
                           <button
                             type="button"

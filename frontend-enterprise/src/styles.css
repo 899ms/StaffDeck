@@ -12828,8 +12828,8 @@ body,
   position: absolute;
   left: 0;
   right: 0;
-  top: 34px;
-  height: 64px;
+  top: 0;
+  height: 98px;
   border-radius: 20px;
   background: #f6f6f6;
 }
@@ -13967,6 +13967,136 @@ body:has(.sd1-scheduled-page) .topbar {
 
 :root[data-theme='dark'] .employee-online-dot {
   background: #37d681 !important;
+}
+
+@media (max-width: 900px) {
+  .app-shell.sidebar-expanded .sd1-agents-grid,
+  .app-shell.sidebar-collapsed .sd1-agents-grid,
+  .sd1-agents-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .sd1-agents-page .employee-roster-card.ant-card,
+  .sd1-agents-empty {
+    width: 100% !important;
+    max-width: none !important;
+  }
+}
+
+@media (max-width: 620px) {
+  .sd1-sidebar.is-expanded,
+  .sd1-sidebar.is-expanded .ant-layout-sider-children {
+    overflow: hidden !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-rail {
+    position: relative !important;
+    width: 56px !important;
+    min-width: 56px !important;
+    max-width: 56px !important;
+    box-shadow: none !important;
+    overflow: hidden !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-brand-text,
+  .sd1-sidebar.is-expanded .sd1-rail-label,
+  .sd1-sidebar.is-expanded .sd1-rail-menu-text {
+    display: none !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-rail-logo {
+    width: 32px !important;
+    height: 48px !important;
+    padding: 0 !important;
+    justify-content: center !important;
+    overflow: hidden !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-rail-primary {
+    position: static !important;
+    width: 32px !important;
+    grid-template-columns: 32px !important;
+    margin-top: 132px !important;
+    padding: 0 0 18px !important;
+    gap: 2px !important;
+    border-bottom: 1px solid #edf0f4 !important;
+    overflow: hidden !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-rail-icon,
+  .sd1-sidebar.is-expanded .sd1-rail-primary .sd1-rail-icon {
+    width: 32px !important;
+    height: 32px !important;
+    margin-left: 0 !important;
+    padding: 0 !important;
+    display: grid !important;
+    place-items: center !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-rail-employee {
+    position: static !important;
+    width: 44px !important;
+    height: 625px !important;
+    grid-template-columns: 32px !important;
+    margin-top: 48px !important;
+    padding: 6px 6px 8px !important;
+    display: grid !important;
+    justify-items: center !important;
+    align-content: start !important;
+    gap: 4px !important;
+    border: 1px solid #edf0f4 !important;
+    border-radius: 10px !important;
+    background: #ffffff !important;
+    overflow: hidden !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-rail-agent {
+    position: relative !important;
+    width: 32px !important;
+    min-height: 51px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: grid !important;
+    justify-items: center !important;
+    gap: 2px !important;
+    background: transparent !important;
+    overflow: hidden !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-rail-agent .employee-avatar {
+    position: static !important;
+    width: 32px !important;
+    height: 38px !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-rail-agent .employee-avatar img {
+    width: 36px !important;
+    height: 42px !important;
+    transform: translate(-2px, -4px) !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-rail-agent-label {
+    position: static !important;
+    width: auto !important;
+    min-width: 0 !important;
+    display: grid !important;
+    justify-items: center !important;
+    text-align: center !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-rail-agent-short {
+    display: block !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-rail-agent-name,
+  .sd1-sidebar.is-expanded .sd1-rail-agent-role {
+    display: none !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-rail-divider {
+    width: 40px !important;
+    margin: 4px 0 3px !important;
+  }
 }
 
 :root[data-theme='dark'] .employee-capability-card.is-dark .employee-capability-head,
