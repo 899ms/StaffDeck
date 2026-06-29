@@ -336,8 +336,11 @@ function Shell({
               <EmployeeAvatar agent={selectedAgent} size={32} />
               <span className="sd1-rail-agent-label">
                 <span className="sd1-rail-agent-short">{selectedAgent?.is_overall ? '广场' : employeeProfile(selectedAgent).roleName.slice(0, 2)}</span>
-                <span className="sd1-rail-agent-name">{selectedAgent?.is_overall ? '开放广场' : selectedAgentName}</span>
+                <span className="sd1-rail-agent-name">当前员工</span>
                 <span className="sd1-rail-agent-role">{selectedAgent?.is_overall ? '平台' : employeeProfile(selectedAgent).roleName}</span>
+              </span>
+              <span className="sd1-rail-agent-chevron" aria-hidden="true">
+                <StaffdeckIcon name="arrow" style={{ transform: 'rotate(90deg)' }} />
               </span>
             </button>
             <div className="sd1-rail-divider" />

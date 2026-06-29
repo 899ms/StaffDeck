@@ -13974,6 +13974,97 @@ body:has(.sd1-scheduled-page) .topbar {
   max-width: 112px;
 }
 
+.sd1-rail-agent-chevron {
+  display: none;
+}
+
+.sd1-sidebar.is-expanded .sd1-rail-agent {
+  width: 144px !important;
+  height: 43px !important;
+  min-height: 43px !important;
+  margin: 6px 4px 0 !important;
+  border-radius: 18px !important;
+  background: transparent !important;
+}
+
+.sd1-sidebar.is-expanded .sd1-rail-agent .employee-avatar {
+  left: 8px !important;
+  top: -31.5px !important;
+  width: 60px !important;
+  height: 70.5px !important;
+}
+
+.sd1-sidebar.is-expanded .sd1-rail-agent .employee-avatar img {
+  width: 66px !important;
+  height: 77px !important;
+  transform: translate(-3px, -6px) !important;
+}
+
+.sd1-sidebar.is-expanded .sd1-rail-agent-label {
+  left: 70px !important;
+  top: 4px !important;
+  width: 42px !important;
+  height: 35px !important;
+  gap: 4px !important;
+  justify-items: start !important;
+  text-align: left !important;
+}
+
+.sd1-sidebar.is-expanded .sd1-rail-agent-name,
+.sd1-sidebar.is-expanded .sd1-rail-agent-role {
+  max-width: 42px !important;
+  text-align: left !important;
+}
+
+.sd1-sidebar.is-expanded .sd1-rail-agent-name {
+  color: #757f9c !important;
+  font-size: 10px !important;
+  line-height: 13px !important;
+  font-weight: 400 !important;
+}
+
+.sd1-sidebar.is-expanded .sd1-rail-agent-role {
+  color: #464c5e !important;
+  font-size: 12px !important;
+  line-height: 16px !important;
+  font-weight: 560 !important;
+}
+
+.sd1-sidebar.is-expanded .sd1-rail-agent-chevron {
+  position: absolute;
+  left: 122px;
+  top: 17px;
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  color: #9aa3b5;
+}
+
+.sd1-sidebar.is-expanded .sd1-rail-agent-chevron .sd1-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.sd1-sidebar.is-expanded .sd1-rail-divider {
+  width: 112px !important;
+  margin: 8px 0 8px 20px !important;
+}
+
+.sd1-sidebar.is-expanded .sd1-rail-label {
+  width: 110px !important;
+  margin: 0 0 2px 20px !important;
+}
+
+:root[data-theme='dark'] .sd1-sidebar.is-expanded .sd1-rail-agent-name,
+:root[data-theme='dark'] .sd1-sidebar.is-expanded .sd1-rail-agent-chevron {
+  color: #8f98aa !important;
+}
+
+:root[data-theme='dark'] .sd1-sidebar.is-expanded .sd1-rail-agent-role {
+  color: #f0f2f6 !important;
+}
+
 :root[data-theme='dark'] .employee-home-meta .ant-tag,
 :root[data-theme='dark'] .employee-avatar-actions .ant-btn,
 :root[data-theme='dark'] .employee-home-side .employee-metric-tile,
