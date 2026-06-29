@@ -4567,6 +4567,220 @@ body,
   transform: translateY(-1px) !important;
 }
 
+/* SD1 gallery cards: header identity band + full-width stat strip. */
+.employee-gallery-layout .employee-gallery-page-card {
+  position: relative !important;
+  min-height: 258px !important;
+  padding: 0 !important;
+  display: block !important;
+  overflow: hidden !important;
+  border: 0.5px solid #e3e7f1 !important;
+  border-radius: 16px !important;
+  background: #ffffff !important;
+}
+
+.employee-gallery-layout .employee-gallery-page-card::before {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 46px;
+  z-index: 0;
+  height: 65px;
+  border-radius: 14px;
+  background: #f6f6f6;
+}
+
+.employee-gallery-layout .employee-gallery-page-avatar {
+  position: absolute !important;
+  left: 28px !important;
+  top: 14px !important;
+  z-index: 2;
+  width: 88px !important;
+  height: 100px !important;
+  overflow: visible !important;
+}
+
+.employee-gallery-layout .employee-gallery-page-avatar img {
+  width: 92px !important;
+  height: 108px !important;
+  max-width: none !important;
+  object-fit: contain !important;
+  object-position: center bottom !important;
+  transform: translate(-4px, -6px) !important;
+}
+
+.employee-gallery-layout .employee-gallery-page-copy {
+  position: static !important;
+  display: block !important;
+  height: 100% !important;
+  min-width: 0 !important;
+}
+
+.employee-gallery-layout .employee-gallery-page-card-head {
+  position: absolute;
+  left: 108px;
+  right: 18px;
+  top: 55px;
+  z-index: 2;
+  min-height: 38px !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+}
+
+.employee-gallery-layout .employee-gallery-page-card-head > span:first-child {
+  display: grid !important;
+  gap: 2px !important;
+}
+
+.employee-gallery-layout .employee-gallery-page-name {
+  color: #464c5e !important;
+  font-size: 12px !important;
+  font-weight: 650 !important;
+  line-height: 16px !important;
+}
+
+.employee-gallery-layout .employee-gallery-page-role {
+  color: #757f9c !important;
+  font-size: 10px !important;
+  font-weight: 500 !important;
+  line-height: 13px !important;
+}
+
+.employee-gallery-layout .employee-gallery-page-action {
+  position: absolute;
+  right: 0;
+  top: 6px;
+  z-index: 2;
+  width: 26px !important;
+  height: 26px !important;
+  color: #8b94aa !important;
+  background: #ffffff !important;
+  border-radius: 9px !important;
+  box-shadow: 0 4px 12px rgba(17, 17, 17, 0.05) !important;
+}
+
+.employee-gallery-layout .employee-gallery-page-desc {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 124px;
+  z-index: 1;
+  min-height: 36px !important;
+  color: #65718a !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  line-height: 18px !important;
+  -webkit-line-clamp: 2;
+}
+
+.employee-gallery-layout .employee-gallery-page-tags {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 162px;
+  z-index: 1;
+  margin: 0 !important;
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  gap: 10px !important;
+  overflow: hidden !important;
+}
+
+.employee-gallery-layout .employee-gallery-page-tags span {
+  height: 20px !important;
+  min-width: 0 !important;
+  max-width: 92px !important;
+  padding: 3px 10px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: #757f9c !important;
+  font-size: 10px !important;
+  font-weight: 500 !important;
+  line-height: 13px !important;
+  white-space: nowrap !important;
+  border: 0.5px solid #e3e7f1 !important;
+  border-radius: 10px !important;
+  background: #ffffff !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+.employee-gallery-layout .employee-gallery-page-stats {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  z-index: 1;
+  height: 56px;
+  margin: 0 !important;
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 0 !important;
+  border: 0.5px solid #e3e7f1;
+  border-radius: 12px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.employee-gallery-layout .employee-gallery-page-stats span {
+  min-height: 0 !important;
+  padding: 8px 20px !important;
+  display: grid !important;
+  align-content: center !important;
+  gap: 3px !important;
+  border: 0 !important;
+  border-left: 0.5px solid #e3e7f1 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+.employee-gallery-layout .employee-gallery-page-stats span:first-child {
+  border-left: 0 !important;
+}
+
+.employee-gallery-layout .employee-gallery-page-stats strong {
+  color: #18181a !important;
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  line-height: 24px !important;
+}
+
+.employee-gallery-layout .employee-gallery-page-stats em {
+  color: #464c5e !important;
+  font-size: 10px !important;
+  font-weight: 500 !important;
+  line-height: 13px !important;
+}
+
+:root[data-theme='dark'] .employee-gallery-layout .employee-gallery-page-card {
+  border-color: #2b3445 !important;
+  background: #111827 !important;
+}
+
+:root[data-theme='dark'] .employee-gallery-layout .employee-gallery-page-card::before,
+:root[data-theme='dark'] .employee-gallery-layout .employee-gallery-page-stats,
+:root[data-theme='dark'] .employee-gallery-layout .employee-gallery-page-tags span,
+:root[data-theme='dark'] .employee-gallery-layout .employee-gallery-page-action {
+  border-color: #2b3445 !important;
+  background: #182131 !important;
+}
+
+:root[data-theme='dark'] .employee-gallery-layout .employee-gallery-page-name,
+:root[data-theme='dark'] .employee-gallery-layout .employee-gallery-page-stats strong {
+  color: #f0f2f6 !important;
+}
+
+:root[data-theme='dark'] .employee-gallery-layout .employee-gallery-page-role,
+:root[data-theme='dark'] .employee-gallery-layout .employee-gallery-page-desc,
+:root[data-theme='dark'] .employee-gallery-layout .employee-gallery-page-tags span,
+:root[data-theme='dark'] .employee-gallery-layout .employee-gallery-page-stats em {
+  color: #9da6b8 !important;
+}
+
 /* SD1 full sidebar pass */
 .session-pane {
   display: flex !important;
