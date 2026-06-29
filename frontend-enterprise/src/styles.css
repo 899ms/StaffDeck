@@ -14287,6 +14287,27 @@ body:has(.sd1-scheduled-page) .topbar {
   opacity: 0.92 !important;
 }
 
+.employee-capability-card.is-dark.has-illustration .ant-typography {
+  position: relative;
+  z-index: 1;
+  display: block !important;
+  margin-top: 72px !important;
+  max-width: calc(100% - 10px) !important;
+  white-space: nowrap;
+  overflow: hidden !important;
+  text-overflow: ellipsis;
+}
+
+.employee-capability-card.is-dark.has-illustration .employee-capability-title,
+.employee-capability-card.is-dark.has-illustration .employee-capability-head,
+.employee-capability-card.is-dark.has-illustration .employee-capability-action {
+  z-index: 1;
+}
+
+.employee-capability-card.is-dark.has-illustration .employee-capability-illustration {
+  z-index: 0;
+}
+
 @media (min-width: 1600px) {
   .employee-capability-card.has-illustration {
     --capability-illustration-size: 72px;
