@@ -5689,7 +5689,7 @@ body,
 .chat-bottom-status-avatar {
   width: 70px !important;
   height: 82px !important;
-  margin: 0 -12px 33px 0 !important;
+  margin: 0 -12px 12px 0 !important;
   overflow: visible !important;
   pointer-events: none;
 }
