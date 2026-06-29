@@ -2,25 +2,25 @@
 
 Source:
 - Figma file `03XlzJQ1dFYdlDWBR4Mlg4`, page node `0:1`
-- Reference screenshot: `/tmp/sd1-page-full.png`
-- Avatar/illustration nodes: `1:8604`, `1:8627`, `1:8645`, `1:8506`, `1:8409`, `1:8360`
+- Covered SD1 frames: `1:2892`, `1:765`, `1:1462`, `1:2165`, `1:68`, `1:6578`, `1:3713`, `1:3425`, `1:5883`, `1:7470`, `1:3975`, `1:4614`, `1:4286`, `1:5013`, `1:5409`
 
 Implementation checkpoints:
-- Chat employee gallery: `/tmp/ultrarag4-sd1-qa/chat-final.png`
-- Chat collapsed sidebar: `/tmp/ultrarag4-sd1-qa/chat-collapsed-final.png`
-- Enterprise employee profile: `/tmp/ultrarag4-sd1-qa/enterprise-final.png`
-- Enterprise employee roster: `/tmp/ultrarag4-sd1-qa/enterprise-agents-final.png`
-- Enterprise scheduled tasks: `/tmp/ultrarag4-sd1-qa/enterprise-tasks-final.png`
+- Chat gallery and selected-session states: `/private/tmp/ultrarag4-sd1-qa/01-chat-gallery-switch.png` through `/private/tmp/ultrarag4-sd1-qa/15-chat-stopped-or-idle.png`
+- Enterprise employee roster: `/private/tmp/ultrarag4-sd1-qa/02-enterprise-agents-collapsed.png`, `/private/tmp/ultrarag4-sd1-qa/05-enterprise-agents-expanded.png`, `/private/tmp/ultrarag4-sd1-qa/09-enterprise-agents-collapsed-reference.png`
+- Enterprise employee profile: `/private/tmp/ultrarag4-sd1-qa/06-enterprise-dashboard-expanded.png`, `/private/tmp/ultrarag4-sd1-qa/10-enterprise-dashboard-collapsed.png`
+- Dark and responsive checks: `/private/tmp/ultrarag4-sd1-qa/20-dark-chat-input.png`, `/private/tmp/ultrarag4-sd1-qa/21-dark-enterprise-dashboard.png`, `/private/tmp/ultrarag4-sd1-qa/22-mobile-chat-input.png`, `/private/tmp/ultrarag4-sd1-qa/23-mobile-enterprise-agents.png`
+- Machine-readable report: `/private/tmp/ultrarag4-sd1-qa/report.json`
 
 Browser QA summary:
-- Chat sidebar: 216px expanded, 72px collapsed, complete Modelbest/UltraRAG4 brand, SD1 bottom management entry, no visible legacy service/sales terms.
-- Enterprise sidebar: 216px expanded, complete Modelbest/UltraRAG4 brand, SD1 bottom chat entry, 158px profile illustration, six capability cards with three dark illustration cards.
-- Interactions checked: employee gallery tabs, search clear via keyboard, sidebar collapse, enterprise roster load, scheduled tasks load.
-- Runtime errors/toasts: none observed.
+- 23 browser states checked: all 15 SD1 frames, 4 enterprise regression pages, 2 dark-mode pages, and 2 narrow-screen pages.
+- Formal API data path used: `/api/auth/login`, `/api/chat/agents`, `/api/chat/sessions`, `/api/enterprise/agents`, and page-owned enterprise/chat API calls.
+- Layout checks passed: no horizontal overflow, no visible error toast, no pageerror, key 1440x900 chat dimensions matched SD1 (`72/220` sidebar, `56` header, `570` empty state, `1078/960 x 100` composer).
+- Chat polling was constrained to current/running sessions to prevent request storms and stacked `Failed to fetch` errors.
+- Enterprise knowledge page now suppresses non-visible OKF version probes during automatic page load.
 
 Automated checks:
-- `npm --prefix frontend-chat run build`
-- `npm --prefix frontend-enterprise run build`
-- `backend/.venv/bin/python -m pytest backend/tests` -> 235 passed
+- `npm --prefix frontend-chat run build` -> passed
+- `npm --prefix frontend-enterprise run build` -> passed
+- `node /private/tmp/codex-playwright/sd1-qa.mjs` -> 23 total, 0 failures
 
 Final result: passed

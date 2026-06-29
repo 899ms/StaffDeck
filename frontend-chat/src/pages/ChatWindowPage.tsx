@@ -7,7 +7,13 @@ import type { ChatStreamEvent } from '../api/client';
 import CodeBlock from '../components/CodeBlock';
 import EmployeeAvatarMark from '../components/EmployeeAvatarMark';
 import StaffdeckIcon from '../components/StaffdeckIcon';
-import { employeeDisplayName, employeeProfile, staffdeckDisplayText, visibleChatEmployees } from '../employee';
+import {
+  agentResourceCount,
+  employeeDisplayName,
+  employeeProfile,
+  staffdeckDisplayText,
+  visibleChatEmployees,
+} from '../employee';
 import { ThemeToggleButton } from '../theme';
 import type {
   AgentProfileRead,
@@ -1184,10 +1190,32 @@ export default function ChatWindowPage() {
   const knownSessionIdsRef = useRef(new Set<string>());
   const sessionsInitializedRef = useRef(false);
   const autoOpenedSessionIdsRef = useRef(new Set<string>());
+  const loadErrorNoticeRef = useRef<Record<string, number>>({});
 
   const notifyStore = useCallback(() => setStoreTick((value) => value + 1), []);
   const notifyStream = useCallback(() => setStreamTick((value) => value + 1), []);
   const notifyTrace = useCallback(() => setTraceTick((value) => value + 1), []);
+  const notifyRequestError = useCallback((scope: string, error: unknown, fallback: string) => {
+    if (isAuthError(error)) {
+      clearAuthSession();
+      navigate('/login', { replace: true });
+      return true;
+    }
+    const rawMessage = error instanceof Error ? error.message : fallback;
+    const isNetworkError = rawMessage === 'Failed to fetch' || rawMessage.includes('NetworkError');
+    const noticeKey = isNetworkError ? 'chat-network-error' : `chat-${scope}-error`;
+    const now = Date.now();
+    const lastShownAt = loadErrorNoticeRef.current[noticeKey] || 0;
+    if (now - lastShownAt < 12000) return false;
+    loadErrorNoticeRef.current[noticeKey] = now;
+    message.open({
+      type: 'error',
+      key: noticeKey,
+      content: isNetworkError ? '接口连接失败，请检查本地服务或稍后重试' : (rawMessage || fallback),
+      duration: 3,
+    });
+    return false;
+  }, [navigate]);
   const scrollChatToBottom = useCallback(() => {
     const element = chatMessagesRef.current;
     if (!element) return;
@@ -1239,6 +1267,23 @@ export default function ChatWindowPage() {
     : null;
   const displayedAgent = sessionAgent || defaultAgent;
   const displayedProfile = displayedAgent ? employeeProfile(displayedAgent) : null;
+  const emptyProfileTags = displayedProfile?.workStyles.length
+    ? displayedProfile.workStyles.slice(0, 3)
+    : ['结构化整理', '可追溯', '可追溯'];
+  const emptyRoleSummary = displayedProfile
+    ? `#角色：${displayedProfile.roleName}「${displayedAgent ? employeeDisplayName(displayedAgent) : '小知'}」一名经验丰富的${displayedProfile.roleName}，`
+    : '#角色：知识运营官「小知」一名经验丰富的知识运营官，';
+  const emptyStats = displayedAgent
+    ? [
+      { label: '资料', value: agentResourceCount(displayedAgent, 'knowledge_base') },
+      { label: '技能', value: agentResourceCount(displayedAgent, 'general_skill') },
+      { label: 'SOP', value: agentResourceCount(displayedAgent, 'skill') },
+    ]
+    : [
+      { label: '资料', value: 0 },
+      { label: '技能', value: 0 },
+      { label: 'SOP', value: 0 },
+    ];
   const sessionFilterOptions = useMemo(() => {
     const counts = new Map<string, number>();
     sessions.forEach((session) => {
@@ -1262,6 +1307,12 @@ export default function ChatWindowPage() {
       ? sessions
       : sessions.filter((session) => session.agent_id === sessionAgentFilter)
   ), [sessionAgentFilter, sessions]);
+  const sidebarSessions = useMemo(() => {
+    if (!sidebarCollapsed) return visibleSessions;
+    const active = currentSession ? [currentSession] : [];
+    const rest = visibleSessions.filter((session) => session.id !== currentSession?.id);
+    return [...active, ...rest].slice(0, 3);
+  }, [currentSession, sidebarCollapsed, visibleSessions]);
   const enabledModelConfigs = useMemo(() => modelConfigs.filter((item) => item.enabled), [modelConfigs]);
   const selectedModelConfig = (
     enabledModelConfigs.find((item) => item.id === selectedModelConfigId)
@@ -1467,14 +1518,9 @@ export default function ChatWindowPage() {
         }
       })
       .catch((error) => {
-        if (isAuthError(error)) {
-          clearAuthSession();
-          navigate('/login', { replace: true });
-          return;
-        }
-        message.error(error.message);
+        notifyRequestError('sessions', error, '会话加载失败');
       });
-  }, [getSlot, input, navigate, tenantId, userId]);
+  }, [getSlot, input, navigate, notifyRequestError, tenantId, userId]);
 
   const loadMessages = useCallback((id: string) => {
     return api
@@ -1486,14 +1532,9 @@ export default function ChatWindowPage() {
         notifyStore();
       })
       .catch((error) => {
-        if (isAuthError(error)) {
-          clearAuthSession();
-          navigate('/login', { replace: true });
-          return;
-        }
-        message.error(error instanceof Error ? error.message : '消息加载失败');
+        notifyRequestError('messages', error, '消息加载失败');
       });
-  }, [getSlot, navigate, notifyStore, pruneRealtime, tenantId]);
+  }, [getSlot, notifyRequestError, notifyStore, pruneRealtime, tenantId]);
 
   const loadTraces = useCallback((id: string) => {
     return api
@@ -1521,14 +1562,9 @@ export default function ChatWindowPage() {
         notifyTrace();
       })
       .catch((error) => {
-        if (isAuthError(error)) {
-          clearAuthSession();
-          navigate('/login', { replace: true });
-          return;
-        }
-        message.error(error instanceof Error ? error.message : '轨迹加载失败');
+        notifyRequestError('trace', error, '轨迹加载失败');
       });
-  }, [navigate, notifyTrace, tenantId]);
+  }, [notifyRequestError, notifyTrace, tenantId]);
 
   const loadHandoffs = useCallback(() => {
     if (!auth) return Promise.resolve();
@@ -1537,15 +1573,10 @@ export default function ChatWindowPage() {
       .get<HumanHandoffRead[]>(`/api/chat/handoffs?tenant_id=${tenantId}&status=pending`)
       .then(setHandoffs)
       .catch((error) => {
-        if (isAuthError(error)) {
-          clearAuthSession();
-          navigate('/login', { replace: true });
-          return;
-        }
-        message.error(error instanceof Error ? error.message : '待回答加载失败');
+        notifyRequestError('handoffs', error, '待回答加载失败');
       })
       .finally(() => setHandoffsLoading(false));
-  }, [auth, navigate, tenantId]);
+  }, [auth, notifyRequestError, tenantId]);
 
   const submitHandoffReply = useCallback((handoff: HumanHandoffRead) => {
     const reply = (handoffReplies[handoff.id] || '').trim();
@@ -2293,18 +2324,27 @@ export default function ChatWindowPage() {
     if (!auth) return;
     const pollBackgroundSessions = () => {
       const ids = new Set<string>();
-      sessions.forEach((session) => ids.add(session.id));
+      if (sessionId) ids.add(sessionId);
+      sessions.forEach((session) => {
+        const looksRunning = (
+          session.status === 'running'
+          || session.status === 'executing'
+          || (session.summary || '').includes('执行中')
+          || (session.last_agent_question || '').includes('执行中')
+        );
+        if (looksRunning) ids.add(session.id);
+      });
       streamRef.current.forEach((slot, id) => {
         if (slot.loading) ids.add(id);
       });
-      ids.forEach((id) => {
+      Array.from(ids).slice(0, 8).forEach((id) => {
         void pollScheduledSessionEvents(id);
       });
     };
     pollBackgroundSessions();
     const timer = window.setInterval(pollBackgroundSessions, 1800);
     return () => window.clearInterval(timer);
-  }, [auth, pollScheduledSessionEvents, sessions, streamTick]);
+  }, [auth, pollScheduledSessionEvents, sessionId, sessions, streamTick]);
 
   async function send() {
     if (!input.trim() || !sessionId) return;
@@ -2648,7 +2688,7 @@ export default function ChatWindowPage() {
         created_at: new Date().toISOString(),
         isError: true,
       });
-      message.error(error instanceof Error ? error.message : '发送失败');
+      notifyRequestError('send', error, '发送失败');
       finishTrace(turnId, true);
       stream.loading = false;
       stream.phase = '';
@@ -2726,11 +2766,11 @@ export default function ChatWindowPage() {
           </div>
         )}
         <div className="session-list-scroll">
-          <div className="session-section-label">历史任务</div>
+          <div className="session-section-label">{sidebarCollapsed ? '会话' : '历史任务'}</div>
           {visibleSessions.length === 0 && !sidebarCollapsed ? (
             <div className="session-list-empty">当前员工暂无历史任务</div>
           ) : null}
-          {visibleSessions.map((session) => {
+          {sidebarSessions.map((session) => {
             const itemStream = getStreamSlot(session.id);
             const sessionTitle = staffdeckDisplayText(session.title || session.id);
             const sessionSummary = itemStream.loading
@@ -2823,16 +2863,24 @@ export default function ChatWindowPage() {
       </aside>
       <main className="chat-main">
         <div className="chat-header">
-          <div>
-            <Typography.Text strong>
-              {displayedAgent ? `chat with ${employeeDisplayName(displayedAgent)}` : 'chat with 数字员工'}
-            </Typography.Text>
+          <div className="chat-title-stack">
+            <span className="chat-title-name">
+              {displayedProfile?.roleName || (displayedAgent ? employeeDisplayName(displayedAgent) : '研发')}
+            </span>
+            <StaffdeckIcon name="edit" />
+            <span className="chat-title-meta">在线客服</span>
           </div>
           <div className="chat-header-actions">
-            <Button icon={<StaffdeckIcon name="grid" />} onClick={() => { window.location.href = '/enterprise/dashboard'; }}>
-              数字账号管理
-            </Button>
             <ThemeToggleButton />
+            <Button
+              className="icon-button"
+              icon={<StaffdeckIcon name="logout" />}
+              aria-label="退出登录"
+              onClick={() => {
+                clearAuthSession();
+                navigate('/login', { replace: true });
+              }}
+            />
           </div>
         </div>
         <div className="chat-messages" ref={chatMessagesRef}>
@@ -2841,15 +2889,23 @@ export default function ChatWindowPage() {
               <EmployeeAvatarMark profile={displayedProfile} fallback="SD" className="staffdeck-empty-avatar" />
               <div className="staffdeck-empty-copy">
                 <strong>Hello {displayedAgent ? employeeDisplayName(displayedAgent) : 'Jessie'}!</strong>
-                <span>我可以开始接收任务了。</span>
+                <span>我们来做什么？</span>
               </div>
-              {displayedAgent && displayedProfile && (
-                <div className="staffdeck-empty-stats">
-                  <span><b>{displayedAgent.resources?.filter((item) => item.resource_type === 'skill').length || 0}</b>SOP</span>
-                  <span><b>{displayedAgent.resources?.filter((item) => item.resource_type === 'general_skill').length || 0}</b>技能</span>
-                  <span><b>{displayedAgent.resources?.filter((item) => item.resource_type === 'knowledge_base').length || 0}</b>资料</span>
+              <div className="staffdeck-empty-profile-card">
+                <div className="staffdeck-empty-bio">
+                  <p>{emptyRoleSummary}</p>
+                  <div>
+                    {emptyProfileTags.map((tag) => (
+                      <span key={tag}>{tag}</span>
+                    ))}
+                  </div>
                 </div>
-              )}
+                <div className="staffdeck-empty-stats">
+                  {emptyStats.map((item) => (
+                    <span key={item.label}><b>{item.value}</b>{item.label}</span>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
           <div className="message-stack">

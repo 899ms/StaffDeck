@@ -1,4 +1,4 @@
-import { Button, Card, Dropdown, Modal, Space, Tag, Typography, message } from 'antd';
+import { Button, Card, Dropdown, Input, Modal, Space, Tag, Typography, message } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, TENANT_ID } from '../api/client';
@@ -15,15 +15,19 @@ const ENTERPRISE_AGENT_STORAGE_KEY = 'ultrarag_enterprise_agent_scope';
 export default function AgentsPage({
   currentUser,
   isAdmin = false,
+  onCreateAgent,
 }: {
   currentUser?: EnterpriseAuthUser;
   isAdmin?: boolean;
+  onCreateAgent?: () => void;
 }) {
   const [agents, setAgents] = useState<AgentProfileRead[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState(() => window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY) || '');
   const [avatarAgent, setAvatarAgent] = useState<AgentProfileRead | null>(null);
   const [profileAgent, setProfileAgent] = useState<AgentProfileRead | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [employeeFilter, setEmployeeFilter] = useState<'all' | 'online' | 'gallery'>('all');
   const navigate = useNavigate();
 
   async function load() {
@@ -71,6 +75,23 @@ export default function AgentsPage({
     )),
     [agents, currentUser, isAdmin],
   );
+  const onlineEmployees = employees.filter((item) => item.status === 'active');
+  const galleryEmployees = employees.filter(isGalleryEmployee);
+  const filteredEmployees = employees.filter((item) => {
+    const profile = employeeProfile(item);
+    const keyword = searchTerm.trim().toLowerCase();
+    const matchesFilter = employeeFilter === 'all'
+      || (employeeFilter === 'online' && item.status === 'active')
+      || (employeeFilter === 'gallery' && isGalleryEmployee(item));
+    if (!matchesFilter) return false;
+    if (!keyword) return true;
+    return [
+      employeeDisplayName(item),
+      profile.roleName,
+      item.description || '',
+      profile.workStyles.join(' '),
+    ].some((value) => value.toLowerCase().includes(keyword));
+  });
 
   function selectEmployee(row: AgentProfileRead) {
     window.localStorage.setItem(ENTERPRISE_AGENT_STORAGE_KEY, row.id);
@@ -149,36 +170,48 @@ export default function AgentsPage({
   }
 
   return (
-    <div className="page agents-page">
-      <div className="page-title">
-        <div>
-          <Typography.Title level={2}>{isOverallScope ? '数字员工广场' : '我的数字员工'}</Typography.Title>
-        </div>
-        <Button icon={<StaffdeckIcon name="refresh" />} onClick={() => void load()} loading={loading}>
-          刷新
-        </Button>
+    <div className="page agents-page sd1-agents-page" aria-busy={loading}>
+      <div className="sd1-agents-search">
+        <Input
+          value={searchTerm}
+          onChange={(event) => setSearchTerm(event.target.value)}
+          prefix={<StaffdeckIcon name="search" />}
+          placeholder="搜索"
+          allowClear
+        />
       </div>
 
-      <div className="agents-summary-grid">
-        <Card className="agent-summary-card">
-          <span>员工总数</span>
+      <div className="sd1-agents-summary" aria-label="数字员工统计">
+        <button type="button" className={employeeFilter === 'all' ? 'active' : ''} onClick={() => setEmployeeFilter('all')}>
           <strong>{employees.length}</strong>
-          <small>{employees.filter((item) => item.status === 'active').length} 位在线</small>
-        </Card>
-        <Card className="agent-summary-card">
-          <span>已发布到广场</span>
-          <strong>{employees.filter(isGalleryEmployee).length}</strong>
-          <small>聊天端可选择</small>
-        </Card>
-        <Card className="agent-summary-card">
-          <span>已下线</span>
-          <strong>{employees.filter((item) => item.status !== 'active').length}</strong>
-          <small>下线后聊天端不可选择</small>
-        </Card>
+          <span>数字员工</span>
+          <small>{isOverallScope ? '广场可用员工' : '当前可管理范围'}</small>
+        </button>
+        <button type="button" className={employeeFilter === 'online' ? 'active' : ''} onClick={() => setEmployeeFilter('online')}>
+          <strong>{onlineEmployees.length}</strong>
+          <span>在线员工</span>
+          <small>聊天端可直接使用</small>
+        </button>
+        <button type="button" className={employeeFilter === 'gallery' ? 'active' : ''} onClick={() => setEmployeeFilter('gallery')}>
+          <strong>{galleryEmployees.length}</strong>
+          <span>广场员工</span>
+          <small>已发布到开放广场</small>
+        </button>
+        <button type="button" className="is-create" onClick={onCreateAgent}>
+          <span className="sd1-agents-add"><StaffdeckIcon name="plus" /></span>
+          <span>新增数字员工</span>
+          <small>复制广场配置或从空白开始</small>
+        </button>
       </div>
 
-      <div className="employee-roster-grid">
-        {employees.map((employee) => (
+      <nav className="sd1-agents-tabs" aria-label="数字员工分类">
+        <button type="button" className={employeeFilter === 'all' ? 'active' : ''} onClick={() => setEmployeeFilter('all')}>全部员工</button>
+        <button type="button" className={employeeFilter === 'online' ? 'active' : ''} onClick={() => setEmployeeFilter('online')}>在线员工</button>
+        <button type="button" className={employeeFilter === 'gallery' ? 'active' : ''} onClick={() => setEmployeeFilter('gallery')}>广场员工</button>
+      </nav>
+
+      <div className="employee-roster-grid sd1-agents-grid">
+        {filteredEmployees.map((employee) => (
           <EmployeeCard
             key={employee.id}
             employee={employee}
@@ -192,6 +225,12 @@ export default function AgentsPage({
             onChat={() => startEmployeeChat(employee)}
           />
         ))}
+        {!filteredEmployees.length && (
+          <div className="sd1-agents-empty">
+            <StaffdeckIcon name="search" />
+            <span>没有匹配的数字员工</span>
+          </div>
+        )}
       </div>
       <EmployeeAvatarEditor
         agent={avatarAgent}
@@ -244,6 +283,17 @@ function EmployeeCard({
           <strong>{employeeDisplayName(employee)}</strong>
           <span>{profile.roleName}</span>
         </div>
+        <Button
+          type="text"
+          className="employee-roster-chat"
+          icon={<StaffdeckIcon name="chat" />}
+          aria-label="发起对话"
+          disabled={employee.status !== 'active'}
+          onClick={(event) => {
+            event.stopPropagation();
+            onChat();
+          }}
+        />
         <Dropdown
           trigger={['click']}
           menu={{
@@ -288,12 +338,14 @@ function EmployeeCard({
       <Space wrap className="employee-roster-tags">
         <Tag color={employee.status === 'active' ? 'green' : 'default'}>{employee.status === 'active' ? '在线' : '下线'}</Tag>
         {galleryPublished && <Tag color="cyan">广场</Tag>}
-        <Tag>SOP {sopCount}</Tag>
-        <Tag>技能 {skillCount}</Tag>
-        <Tag>资料 {kbCount}</Tag>
       </Space>
       <div className="employee-roster-styles">
         {profile.workStyles.slice(0, 3).map((item) => <span key={item}>{item}</span>)}
+      </div>
+      <div className="employee-roster-stats">
+        <span><strong>{sopCount}</strong><em>SOP</em></span>
+        <span><strong>{skillCount}</strong><em>技能</em></span>
+        <span><strong>{kbCount}</strong><em>资料</em></span>
       </div>
     </Card>
   );

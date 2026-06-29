@@ -133,6 +133,7 @@ export default function KnowledgeManagePage() {
 
   const currentAgent = useMemo(() => agents.find((item) => item.id === agentId), [agents, agentId]);
   const isOverallAgent = !currentAgent || currentAgent.is_overall;
+  const effectiveAgentId = currentAgent && !currentAgent.is_overall ? agentId : '';
   const visibleKnowledgeBases = useMemo(
     () => knowledgeBases.filter((item) => !isEmptyDefaultKnowledgeBase(item)),
     [knowledgeBases],
@@ -168,7 +169,7 @@ export default function KnowledgeManagePage() {
   }, [documentSearch, visibleKnowledgeBases]);
   useEffect(() => {
     void refresh();
-  }, [agentId]);
+  }, [agentId, effectiveAgentId]);
 
   useEffect(() => {
     if (searchParams.get('add') !== 'plaza') return;
@@ -201,7 +202,7 @@ export default function KnowledgeManagePage() {
 
   async function refresh() {
     setLoading(true);
-    const suffix = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
+    const suffix = effectiveAgentId ? `&agent_id=${encodeURIComponent(effectiveAgentId)}` : '';
     try {
       const [docRows, kbRows, agentRows] = await Promise.all([
         api.get<KnowledgeDocumentRead[]>(`/api/enterprise/knowledge/documents?tenant_id=${TENANT_ID}&include_all_versions=true${suffix}`),
@@ -256,7 +257,7 @@ export default function KnowledgeManagePage() {
       return;
     }
     if (showLoading) setOkfLoading(true);
-    const suffix = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
+    const suffix = effectiveAgentId ? `&agent_id=${encodeURIComponent(effectiveAgentId)}` : '';
     try {
       const rows = await api.get<KnowledgeConceptRead[]>(
         `/api/enterprise/knowledge-bases/${knowledgeBaseId}/okf/concepts?tenant_id=${TENANT_ID}${suffix}`,
@@ -265,6 +266,10 @@ export default function KnowledgeManagePage() {
       setOkfLintIssues([]);
     } catch (error) {
       setOkfConcepts([]);
+      if (error instanceof Error && error.message.includes('Knowledge base version not visible')) {
+        setOkfLintIssues([]);
+        return;
+      }
       message.error(error instanceof Error ? error.message : '加载知识图谱失败');
     } finally {
       if (showLoading) setOkfLoading(false);
@@ -297,7 +302,7 @@ export default function KnowledgeManagePage() {
     try {
       const response = await api.post<KnowledgeSearchResponse>('/api/enterprise/knowledge/search', {
         tenant_id: TENANT_ID,
-        agent_id: agentId || undefined,
+        agent_id: effectiveAgentId || undefined,
         knowledge_base_ids:
           knowledgeBaseFilter !== '__all__'
             ? [knowledgeBaseFilter]
@@ -419,7 +424,7 @@ export default function KnowledgeManagePage() {
       const contentBase64 = await fileToBase64(file);
       await api.post('/api/enterprise/knowledge/okf/import', {
         tenant_id: TENANT_ID,
-        agent_id: agentId || undefined,
+        agent_id: effectiveAgentId || undefined,
         knowledge_base_id: selectedKnowledgeBase?.id,
         filename: file.name,
         content_base64: contentBase64,
@@ -439,7 +444,7 @@ export default function KnowledgeManagePage() {
       message.warning('请先选择知识库');
       return;
     }
-    const suffix = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
+    const suffix = effectiveAgentId ? `&agent_id=${encodeURIComponent(effectiveAgentId)}` : '';
     try {
       const blob = await api.blob(
         `/api/enterprise/knowledge-bases/${targetKnowledgeBase.id}/okf/export?tenant_id=${TENANT_ID}${suffix}`,
@@ -466,7 +471,7 @@ export default function KnowledgeManagePage() {
     if (targetKnowledgeBase.id !== selectedKnowledgeBase?.id) {
       selectKnowledgeBase(targetKnowledgeBase.id);
     }
-    const suffix = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
+    const suffix = effectiveAgentId ? `&agent_id=${encodeURIComponent(effectiveAgentId)}` : '';
     setOkfLoading(true);
     try {
       const result = await api.post<{ status: string; issue_count: number; issues: OkfLintIssue[] }>(
@@ -501,7 +506,7 @@ export default function KnowledgeManagePage() {
 
   async function saveConcept() {
     if (!editingConcept || !selectedKnowledgeBase) return;
-    const suffix = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : '';
+    const suffix = effectiveAgentId ? `?agent_id=${encodeURIComponent(effectiveAgentId)}` : '';
     try {
       const next = await api.put<KnowledgeConceptRead>(
         `/api/enterprise/knowledge-bases/${selectedKnowledgeBase.id}/okf/concepts/${conceptPath(editingConcept.concept_id)}${suffix}`,
@@ -532,7 +537,7 @@ export default function KnowledgeManagePage() {
 
   async function saveKnowledgeBase() {
     if (!editingKnowledgeBase) return;
-    const suffix = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : '';
+    const suffix = effectiveAgentId ? `?agent_id=${encodeURIComponent(effectiveAgentId)}` : '';
     try {
       const next = await api.put<KnowledgeBaseRead>(`/api/enterprise/knowledge-bases/${editingKnowledgeBase.id}${suffix}`, {
         tenant_id: TENANT_ID,
@@ -550,7 +555,7 @@ export default function KnowledgeManagePage() {
   }
 
   async function setKnowledgeBaseStatus(row: KnowledgeBaseRead, active: boolean) {
-    const suffix = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : '';
+    const suffix = effectiveAgentId ? `?agent_id=${encodeURIComponent(effectiveAgentId)}` : '';
     try {
       const next = await api.put<KnowledgeBaseRead>(`/api/enterprise/knowledge-bases/${row.id}${suffix}`, {
         tenant_id: TENANT_ID,
@@ -575,7 +580,7 @@ export default function KnowledgeManagePage() {
       okButtonProps: { danger: true },
       cancelText: '取消',
       async onOk() {
-        const suffix = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
+        const suffix = effectiveAgentId ? `&agent_id=${encodeURIComponent(effectiveAgentId)}` : '';
         try {
           await api.delete(`/api/enterprise/knowledge-bases/${row.id}?tenant_id=${TENANT_ID}${suffix}`);
           message.success(branchMode ? '已移除知识库' : '已删除知识库');
@@ -588,7 +593,7 @@ export default function KnowledgeManagePage() {
   }
 
   async function openKnowledgeBaseVersions(row: KnowledgeBaseRead) {
-    const suffix = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
+    const suffix = effectiveAgentId ? `&agent_id=${encodeURIComponent(effectiveAgentId)}` : '';
     try {
       const versions = await api.get<KnowledgeBaseVersionRead[]>(
         `/api/enterprise/knowledge-bases/${row.id}/versions?tenant_id=${TENANT_ID}${suffix}`,
@@ -629,11 +634,11 @@ export default function KnowledgeManagePage() {
   }
 
   async function rollbackKnowledgeBaseVersion(version: KnowledgeBaseVersionRead) {
-    if (!versionKnowledgeBase || !agentId) return;
+    if (!versionKnowledgeBase || !effectiveAgentId) return;
     try {
       await api.post(`/api/enterprise/knowledge-bases/${versionKnowledgeBase.id}/rollback`, {
         tenant_id: TENANT_ID,
-        agent_id: agentId,
+        agent_id: effectiveAgentId,
         version: version.version,
       });
       message.success(`已回滚到 ${version.version}`);
