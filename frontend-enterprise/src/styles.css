@@ -14230,3 +14230,58 @@ body:has(.sd1-scheduled-page) .topbar {
 :root[data-theme='dark'] .employee-capability-card.is-dark .employee-capability-illustration {
   opacity: 0.92;
 }
+
+.employee-capability-card.has-illustration {
+  --capability-illustration-size: 64px;
+}
+
+.employee-capability-card.has-illustration:not(.is-dark) .ant-typography {
+  display: block !important;
+  width: calc(100% - var(--capability-illustration-size) + 12px) !important;
+  max-width: calc(100% - var(--capability-illustration-size) + 12px) !important;
+}
+
+.employee-capability-card.has-illustration:not(.is-dark) .employee-capability-illustration {
+  right: 8px !important;
+  bottom: 6px !important;
+  z-index: 0 !important;
+  width: var(--capability-illustration-size) !important;
+  max-height: 52px !important;
+  opacity: 0.68 !important;
+}
+
+.employee-capability-card.has-illustration:not(.is-dark) .employee-capability-head,
+.employee-capability-card.has-illustration:not(.is-dark) .employee-capability-title,
+.employee-capability-card.has-illustration:not(.is-dark) .ant-typography,
+.employee-capability-card.has-illustration:not(.is-dark) .employee-capability-action {
+  position: relative;
+  z-index: 1;
+}
+
+:root[data-theme='dark'] .employee-capability-card.has-illustration {
+  --capability-illustration-size: 72px;
+}
+
+:root[data-theme='dark'] .employee-capability-card.has-illustration .ant-typography {
+  display: block !important;
+  width: calc(100% - var(--capability-illustration-size) + 10px) !important;
+  max-width: calc(100% - var(--capability-illustration-size) + 10px) !important;
+}
+
+:root[data-theme='dark'] .employee-capability-card.has-illustration .employee-capability-illustration {
+  right: 8px !important;
+  bottom: 0 !important;
+  width: var(--capability-illustration-size) !important;
+  max-height: 72px !important;
+  opacity: 0.92 !important;
+}
+
+@media (min-width: 1600px) {
+  .employee-capability-card.has-illustration {
+    --capability-illustration-size: 92px;
+  }
+
+  :root[data-theme='dark'] .employee-capability-card.has-illustration {
+    --capability-illustration-size: 108px;
+  }
+}
