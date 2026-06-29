@@ -385,7 +385,7 @@ function Shell({
             aria-pressed={sidebarExpanded}
             onClick={toggleSidebar}
           >
-            <StaffdeckIcon name={sidebarExpanded ? 'sidebar-close' : 'sidebar-open'} />
+            {sidebarExpanded ? <StaffdeckIcon name="sidebar-close" /> : <img src={logoMark} alt="" />}
           </button>
         </nav>
       </Sider>

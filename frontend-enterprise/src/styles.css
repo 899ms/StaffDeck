@@ -11620,6 +11620,7 @@ body,
   bottom: auto;
   width: 32px;
   height: 32px;
+  padding: 0 !important;
   display: grid;
   place-items: center;
   border-radius: 8px !important;
@@ -11630,6 +11631,13 @@ body,
 .sd1-rail-toggle .sd1-icon {
   width: 16px;
   height: 16px;
+}
+
+.sd1-rail-toggle img {
+  width: 28px;
+  height: 28px;
+  display: block;
+  border-radius: 7px;
 }
 
 .sd1-sidebar.is-expanded .sd1-rail-toggle {
@@ -11958,12 +11966,12 @@ body,
 .employee-work-card {
   width: 100%;
   max-width: none;
-  height: auto;
+  height: 665px;
   min-height: 665px;
   margin: -2px 0 0 0 !important;
   padding: 18px !important;
   display: grid;
-  grid-template-rows: 64px 135px 30px auto 230px;
+  grid-template-rows: 64px 135px 30px 82px 230px;
   gap: 18px;
   border: 1px solid #eef1f5 !important;
   border-radius: 18px !important;
@@ -12153,7 +12161,7 @@ body,
 .employee-memory-timeline {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   grid-auto-flow: row;
   grid-auto-columns: auto;
   grid-auto-rows: auto;
@@ -12182,7 +12190,7 @@ body,
   display: grid;
   justify-items: start;
   align-content: start;
-  gap: 10px;
+  gap: 0;
   padding-top: 0;
 }
 
@@ -12223,8 +12231,8 @@ body,
   width: min(176px, 100%);
   height: 54px;
   min-height: 54px;
-  margin-top: 21px;
-  padding: 14px 16px;
+  margin-top: 9px;
+  padding: 10px 14px;
   display: grid;
   align-content: start;
   gap: 4px;
@@ -12407,12 +12415,23 @@ body,
     row-gap: 12px !important;
   }
 
+  .app-shell.sidebar-expanded .employee-home-hero {
+    width: 100%;
+    margin: 0 !important;
+  }
+
   .employee-home-main,
   .employee-home-side {
     position: relative !important;
     left: auto;
     top: auto;
     width: auto;
+  }
+
+  .app-shell.sidebar-expanded .employee-home-main,
+  .app-shell.sidebar-expanded .employee-home-side {
+    left: auto !important;
+    top: auto !important;
   }
 
   .employee-home-main {
@@ -12436,6 +12455,10 @@ body,
     width: min(504px, 100%);
     margin-left: 0;
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .app-shell.sidebar-expanded .employee-profile-tabs {
+    margin-left: 0;
   }
 
   .employee-work-card {

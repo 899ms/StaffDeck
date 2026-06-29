@@ -608,7 +608,7 @@ function growthTimeline(
   return events
     .filter((item) => Boolean(item.timestamp))
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-    .slice(-6);
+    .slice(-4);
 }
 
 function stableGrowthTimestamp(item: GrowthTimestampSource): string {
