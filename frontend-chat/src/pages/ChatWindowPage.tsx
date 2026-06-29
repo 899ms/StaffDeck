@@ -1196,6 +1196,18 @@ export default function ChatWindowPage() {
   const notifyStore = useCallback(() => setStoreTick((value) => value + 1), []);
   const notifyStream = useCallback(() => setStreamTick((value) => value + 1), []);
   const notifyTrace = useCallback(() => setTraceTick((value) => value + 1), []);
+  const keepRunningStatusInMessageArea = useCallback(() => {
+    const element = chatMessagesRef.current;
+    if (!element) return false;
+    const status = element.querySelector<HTMLElement>('.message-item.assistant.status-only-item');
+    if (!status) return false;
+    const elementRect = element.getBoundingClientRect();
+    const statusRect = status.getBoundingClientRect();
+    const maxStatusTop = elementRect.top + Math.min(369, Math.max(180, element.clientHeight * 0.54));
+    if (statusRect.top <= maxStatusTop) return false;
+    element.scrollTop = Math.max(0, element.scrollTop + statusRect.top - maxStatusTop);
+    return true;
+  }, []);
   const notifyRequestError = useCallback((scope: string, error: unknown, fallback: string) => {
     if (isAuthError(error)) {
       clearAuthSession();
@@ -1786,13 +1798,15 @@ export default function ChatWindowPage() {
   }, [markSessionRead, sessionId, sessions]);
 
   useLayoutEffect(() => {
+    if (keepRunningStatusInMessageArea()) return;
     scrollChatToBottom({ preserveShortContentTop: true });
-  }, [displayedMessages.length, scrollChatToBottom, sessionId, storeTick, traceTick]);
+  }, [displayedMessages.length, keepRunningStatusInMessageArea, scrollChatToBottom, sessionId, storeTick, traceTick]);
 
   useEffect(() => {
     if (!currentStream.loading) return;
+    if (keepRunningStatusInMessageArea()) return;
     scrollChatToBottom({ preserveShortContentTop: true });
-  }, [currentStream.loading, currentStream.phase, scrollChatToBottom, storeTick, streamTick, traceTick]);
+  }, [currentStream.loading, currentStream.phase, keepRunningStatusInMessageArea, scrollChatToBottom, storeTick, streamTick, traceTick]);
 
   useEffect(() => {
     return () => {
