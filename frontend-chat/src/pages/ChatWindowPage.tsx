@@ -1320,7 +1320,7 @@ export default function ChatWindowPage() {
     if (!sidebarCollapsed) return rows;
     const active = displayedAgent ? [displayedAgent] : [];
     const rest = rows.filter((agent) => agent.id !== displayedAgent?.id);
-    return [...active, ...rest].slice(0, 3);
+    return [...active, ...rest];
   }, [availableAgents, displayedAgent, sessionAgentFilter, sidebarCollapsed]);
   const latestSessionByAgent = useMemo(() => {
     const map = new Map<string, ChatSession>();

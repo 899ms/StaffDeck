@@ -5217,11 +5217,17 @@ body,
 
 .chat-layout.sidebar-collapsed .session-list-scroll {
   width: 44px !important;
-  flex: 0 0 auto !important;
+  flex: 1 1 auto !important;
   margin: 38px 0 0 !important;
-  padding: 0 !important;
+  padding: 0 0 72px !important;
   gap: 16px !important;
-  overflow: visible !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  scrollbar-width: none;
+}
+
+.chat-layout.sidebar-collapsed .session-list-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 .chat-layout.sidebar-collapsed .session-section-label {

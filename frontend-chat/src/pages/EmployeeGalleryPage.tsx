@@ -58,7 +58,9 @@ export default function EmployeeGalleryPage() {
     { value: 'mine', label: `我的员工 · ${personalAgents.length}` },
     { value: 'gallery', label: `广场员工 · ${galleryAgents.length}` },
   ];
-  const sidebarAgents = visibleEmployeeCards.length ? visibleEmployeeCards : availableAgents;
+  const sidebarAgents = sidebarCollapsed
+    ? availableAgents
+    : visibleEmployeeCards.length ? visibleEmployeeCards : availableAgents;
 
   useEffect(() => {
     api
