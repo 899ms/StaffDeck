@@ -505,7 +505,7 @@ export default function ScheduledTasksPage() {
               dataSource={visibleRows}
               loading={loading}
               pagination={{ pageSize: 8, showSizeChanger: true, pageSizeOptions: [8, 16, 32] }}
-              scroll={{ x: 1220 }}
+              scroll={{ x: '100%' }}
             />
           </Card>
           <Card
