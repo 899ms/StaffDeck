@@ -23,7 +23,8 @@ function tabForGalleryPath(pathname: string): 'all' | 'mine' | 'gallery' {
 
 export default function EmployeeGalleryPage() {
   const [agents, setAgents] = useState<AgentProfileRead[]>([]);
-  const [selectedAgentId, setSelectedAgentId] = useState(() => window.localStorage.getItem('skill_agent_selected_agent') || '');
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState('');
   const [employeeTab, setEmployeeTab] = useState<'all' | 'mine' | 'gallery'>(() => tabForGalleryPath(window.location.pathname));
   const [searchText, setSearchText] = useState('');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => (
@@ -53,26 +54,48 @@ export default function EmployeeGalleryPage() {
       ...profile.expertiseTags,
     ].join(' ').toLowerCase().includes(query);
   });
-  const sidebarEmployeeOptions = [
-    { value: 'all', label: `全部员工 · ${availableAgents.length}` },
-    { value: 'mine', label: `我的员工 · ${personalAgents.length}` },
-    { value: 'gallery', label: `广场员工 · ${galleryAgents.length}` },
-  ];
-  const sidebarAgents = sidebarCollapsed
-    ? availableAgents
-    : visibleEmployeeCards.length ? visibleEmployeeCards : availableAgents;
+  const sessionFilterOptions = useMemo(() => {
+    const sessionAgent = (session: ChatSession) => (
+      session.agent_id ? availableAgents.find((agent) => agent.id === session.agent_id) || null : null
+    );
+    const personalCount = sessions.filter((session) => {
+      const agent = sessionAgent(session);
+      return agent ? personalAgentIds.has(agent.id) : false;
+    }).length;
+    const galleryCount = sessions.filter((session) => {
+      const agent = sessionAgent(session);
+      return agent ? galleryAgents.some((item) => item.id === agent.id) : false;
+    }).length;
+    return [
+      { value: 'all', label: `全部会话 · ${sessions.length}` },
+      { value: 'mine', label: `我的员工 · ${personalCount}` },
+      { value: 'gallery', label: `广场员工 · ${galleryCount}` },
+    ];
+  }, [availableAgents, galleryAgents, personalAgentIds, sessions]);
+  const visibleSessions = useMemo(() => (
+    employeeTab === 'all'
+      ? sessions
+      : sessions.filter((session) => {
+        const agent = session.agent_id ? availableAgents.find((item) => item.id === session.agent_id) : null;
+        if (!agent) return false;
+        return employeeTab === 'mine'
+          ? personalAgentIds.has(agent.id)
+          : galleryAgents.some((item) => item.id === agent.id);
+      })
+  ), [availableAgents, employeeTab, galleryAgents, personalAgentIds, sessions]);
 
   useEffect(() => {
-    api
-      .get<AgentProfileRead[]>(`/api/chat/agents?tenant_id=${tenantId}`)
-      .then((rows) => {
+    Promise.all([
+      api.get<AgentProfileRead[]>(`/api/chat/agents?tenant_id=${tenantId}`),
+      api.get<ChatSession[]>(`/api/chat/sessions?tenant_id=${tenantId}`),
+    ])
+      .then(([rows, sessionRows]) => {
         const employeeRows = visibleChatEmployees(rows, auth?.user);
         setAgents(employeeRows);
+        setSessions(sessionRows);
         setSelectedAgentId((current) => {
           if (current && employeeRows.some((item) => item.id === current)) return current;
-          const next = employeeRows[0]?.id || '';
-          if (next) window.localStorage.setItem('skill_agent_selected_agent', next);
-          return next;
+          return '';
         });
       })
       .catch((error) => {
@@ -82,6 +105,7 @@ export default function EmployeeGalleryPage() {
           return;
         }
         setAgents([]);
+        setSessions([]);
       });
   }, [auth?.user, navigate, tenantId]);
 
@@ -93,7 +117,6 @@ export default function EmployeeGalleryPage() {
     if (!launchAgentId) return;
     if (!availableAgents.some((agent) => agent.id === launchAgentId)) return;
     setSelectedAgentId(launchAgentId);
-    window.localStorage.setItem('skill_agent_selected_agent', launchAgentId);
     if (!shouldAutoCreate || autoCreateRef.current === launchAgentId) return;
     autoCreateRef.current = launchAgentId;
     void openSessionForAgent(launchAgentId);
@@ -113,13 +136,12 @@ export default function EmployeeGalleryPage() {
       return;
     }
     setSelectedAgentId(agentId);
-    window.localStorage.setItem('skill_agent_selected_agent', agentId);
     try {
       const session = await api.post<ChatSession>('/api/chat/sessions', {
         tenant_id: tenantId,
         agent_id: agentId,
-        reuse_existing: true,
       });
+      setSessions((items) => [session, ...items.filter((item) => item.id !== session.id)]);
       navigate(`/${session.id}`);
     } catch (error) {
       if (isAuthError(error)) {
@@ -160,7 +182,7 @@ export default function EmployeeGalleryPage() {
                 <span className="employee-gallery-page-role">{profile.roleName}</span>
               </span>
               <span className="employee-gallery-page-action">
-                <StaffdeckIcon name="chat" />
+                <StaffdeckIcon name="plus" />
               </span>
             </span>
             <span className="employee-gallery-page-desc">{staffdeckDisplayText(agent.description || '暂无描述')}</span>
@@ -224,7 +246,7 @@ export default function EmployeeGalleryPage() {
                 size="small"
                 className="session-filter-select"
                 value={employeeTab}
-                options={sidebarEmployeeOptions}
+                options={sessionFilterOptions}
                 onChange={(value) => setEmployeeTab(value as 'all' | 'mine' | 'gallery')}
               />
             </div>
@@ -232,44 +254,55 @@ export default function EmployeeGalleryPage() {
         )}
         <div className="session-list-scroll gallery-agent-list">
           <div className="session-section-label">{sidebarCollapsed ? '会话' : '员工工作'}</div>
-          {sidebarAgents.map((agent) => {
-              const profile = employeeProfile(agent);
-              const online = agent.status === 'active';
+          {visibleSessions.length === 0 ? (
+            <div className="session-list-empty">
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无历史会话" />
+            </div>
+          ) : (
+            visibleSessions.map((session) => {
+              const sessionAgent = session.agent_id ? agents.find((agent) => agent.id === session.agent_id) || null : null;
+              const profile = sessionAgent ? employeeProfile(sessionAgent) : null;
+              const title = staffdeckDisplayText(session.title || session.id);
+              const summary = staffdeckDisplayText(session.summary || session.last_agent_question || '新会话');
               return (
                 <div
-                  key={agent.id}
+                  key={session.id}
                   role="button"
                   tabIndex={0}
-                  className={`session-card gallery-agent-card ${selectedAgentId === agent.id ? 'active' : ''}`}
-                  onClick={() => void openSessionForAgent(agent.id)}
+                  className="session-card gallery-agent-card"
+                  onClick={() => navigate(`/${session.id}`)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
-                      void openSessionForAgent(agent.id);
+                      navigate(`/${session.id}`);
                     }
                   }}
                 >
                   <div className="session-card-content">
                     <span className="session-title-icon session-title-avatar">
-                      <EmployeeAvatarMark
-                        profile={profile}
-                        fallback={employeeDisplayName(agent).slice(0, 1) || '员'}
-                        className="session-agent-avatar"
-                      />
+                      {profile ? (
+                        <EmployeeAvatarMark
+                          profile={profile}
+                          fallback={sessionAgent ? employeeDisplayName(sessionAgent).slice(0, 1) : '员'}
+                          className="session-agent-avatar"
+                        />
+                      ) : (
+                        <StaffdeckIcon name="chat" />
+                      )}
                     </span>
                     <div className="session-meta">
-                      <div className="session-title" title={employeeDisplayName(agent)}>
-                        <span className="session-title-text">{employeeDisplayName(agent)}</span>
+                      <div className="session-title" title={title}>
+                        <span className="session-title-text">{title}</span>
                       </div>
-                      <div className="session-summary" title={profile.roleName}>
-                        {profile.roleName}
-                        <span className={`gallery-agent-status ${online ? 'online' : ''}`}>{online ? '在线客服' : '离线'}</span>
+                      <div className="session-summary" title={summary}>
+                        {summary}
                       </div>
                     </div>
                   </div>
                 </div>
               );
-            })}
+            })
+          )}
         </div>
         <button type="button" className="sidebar-bottom-link" onClick={() => { window.location.href = '/enterprise/dashboard'; }}>
           <StaffdeckIcon name="grid" />

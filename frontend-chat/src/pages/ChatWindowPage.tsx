@@ -1325,36 +1325,28 @@ export default function ChatWindowPage() {
       { label: 'SOP', value: 0 },
     ];
   const sessionFilterOptions = useMemo(() => {
-    const rows = [...availableAgents]
-      .sort((a, b) => employeeDisplayName(a).localeCompare(employeeDisplayName(b), 'zh-Hans-CN'));
-    return [
-      { value: 'all', label: `全部员工 · ${availableAgents.length}` },
-      ...rows.map((agent) => ({
-        value: agent.id,
-        label: employeeDisplayName(agent),
-      })),
-    ];
-  }, [availableAgents]);
-  const sidebarAgents = useMemo(() => {
-    const rows = sessionAgentFilter === 'all'
-      ? availableAgents
-      : availableAgents.filter((agent) => agent.id === sessionAgentFilter);
-    if (!sidebarCollapsed) return rows;
-    const active = displayedAgent ? [displayedAgent] : [];
-    const rest = rows.filter((agent) => agent.id !== displayedAgent?.id);
-    return [...active, ...rest];
-  }, [availableAgents, displayedAgent, sessionAgentFilter, sidebarCollapsed]);
-  const latestSessionByAgent = useMemo(() => {
-    const map = new Map<string, ChatSession>();
+    const counts = new Map<string, number>();
     sessions.forEach((session) => {
       if (!session.agent_id) return;
-      const current = map.get(session.agent_id);
-      if (!current || parseMessageTime(session.updated_at) > parseMessageTime(current.updated_at)) {
-        map.set(session.agent_id, session);
-      }
+      counts.set(session.agent_id, (counts.get(session.agent_id) || 0) + 1);
     });
-    return map;
-  }, [sessions]);
+    const rows = Array.from(counts.keys())
+      .map((agentId) => availableAgents.find((agent) => agent.id === agentId))
+      .filter((agent): agent is AgentProfileRead => Boolean(agent))
+      .sort((a, b) => employeeDisplayName(a).localeCompare(employeeDisplayName(b), 'zh-Hans-CN'));
+    return [
+      { value: 'all', label: `全部会话 · ${sessions.length}` },
+      ...rows.map((agent) => ({
+        value: agent.id,
+        label: `${employeeDisplayName(agent)} · ${counts.get(agent.id) || 0}`,
+      })),
+    ];
+  }, [availableAgents, sessions]);
+  const visibleSidebarSessions = useMemo(() => (
+    sessionAgentFilter === 'all'
+      ? sessions
+      : sessions.filter((session) => session.agent_id === sessionAgentFilter)
+  ), [sessionAgentFilter, sessions]);
   const enabledModelConfigs = useMemo(() => modelConfigs.filter((item) => item.enabled), [modelConfigs]);
   const selectedModelConfig = (
     enabledModelConfigs.find((item) => item.id === selectedModelConfigId)
@@ -1902,32 +1894,6 @@ export default function ChatWindowPage() {
         message.success('已删除');
       },
     });
-  }
-
-  async function openAgentSession(agentId: string) {
-    setSelectedAgentId(agentId);
-    window.localStorage.setItem('skill_agent_selected_agent', agentId);
-    try {
-      const session = await api.post<ChatSession>('/api/chat/sessions', {
-        tenant_id: tenantId,
-        agent_id: agentId,
-        reuse_existing: true,
-      });
-      setSessions((items) => {
-        const exists = items.some((item) => item.id === session.id);
-        return exists
-          ? items.map((item) => (item.id === session.id ? session : item))
-          : [session, ...items];
-      });
-      navigate(`/${session.id}`);
-    } catch (error) {
-      if (isAuthError(error)) {
-        clearAuthSession();
-        navigate('/login', { replace: true });
-        return;
-      }
-      message.error(error instanceof Error ? error.message : '打开会话失败');
-    }
   }
 
   function abortStream() {
@@ -3066,56 +3032,63 @@ export default function ChatWindowPage() {
         )}
         <div className="session-list-scroll chat-agent-list">
           <div className="session-section-label">{sidebarCollapsed ? '会话' : '员工会话'}</div>
-          {sidebarAgents.map((agent) => {
-            const profile = employeeProfile(agent);
-            const online = agent.status === 'active';
-            const latestSession = latestSessionByAgent.get(agent.id);
-            const hasUnread = latestSession ? sessionHasUnreadReply(latestSession, sessionReadTimes, sessionId) : false;
-            const openAgent = () => {
-              void openAgentSession(agent.id);
+          {visibleSidebarSessions.length === 0 ? (
+            <div className="session-list-empty">
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无历史会话" />
+            </div>
+          ) : visibleSidebarSessions.map((session) => {
+            const sessionAgent = session.agent_id ? agents.find((agent) => agent.id === session.agent_id) || null : null;
+            const profile = sessionAgent ? employeeProfile(sessionAgent) : null;
+            const title = staffdeckDisplayText(session.title || session.id);
+            const summary = staffdeckDisplayText(session.summary || session.last_agent_question || '新会话');
+            const hasUnread = sessionHasUnreadReply(session, sessionReadTimes, sessionId);
+            const openSession = () => {
+              navigate(`/${session.id}`);
             };
             return (
               <div
-                key={agent.id}
+                key={session.id}
                 role="button"
                 tabIndex={0}
-                data-agent-id={agent.id}
-                className={`session-card chat-agent-card ${displayedAgent?.id === agent.id ? 'active' : ''} ${hasUnread ? 'unread' : ''}`}
-                onClick={openAgent}
+                data-session-id={session.id}
+                className={`session-card chat-agent-card ${session.id === sessionId ? 'active' : ''} ${hasUnread ? 'unread' : ''}`}
+                onClick={openSession}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault();
-                    openAgent();
+                    openSession();
                   }
                 }}
               >
                 <div className="session-card-content">
                   <span className="session-title-icon session-title-avatar">
-                    <EmployeeAvatarMark
-                      profile={profile}
-                      fallback={employeeDisplayName(agent).slice(0, 1) || '员'}
-                      className="session-agent-avatar"
-                    />
+                    {profile ? (
+                      <EmployeeAvatarMark
+                        profile={profile}
+                        fallback={sessionAgent ? employeeDisplayName(sessionAgent).slice(0, 1) : '员'}
+                        className="session-agent-avatar"
+                      />
+                    ) : (
+                      <StaffdeckIcon name="chat" />
+                    )}
                   </span>
                   <div className="session-meta">
-                    <div className="session-title" title={employeeDisplayName(agent)}>
-                      <span className="session-title-text">{employeeDisplayName(agent)}</span>
+                    <div className="session-title" title={title}>
+                      <span className="session-title-text">{title}</span>
                     </div>
-                    <div className="session-summary" title={profile.roleName}>
-                      {profile.roleName}
-                      <span className={`gallery-agent-status ${online ? 'online' : ''}`}>{online ? '在线客服' : '离线'}</span>
+                    <div className="session-summary" title={summary}>
+                      {summary}
                     </div>
                   </div>
                   {hasUnread && <span className="session-unread-dot" aria-label="未读回复" />}
-                  {latestSession && (
-                    <div className="session-actions">
+                  <div className="session-actions">
                     <Button
                       className="session-action"
                       size="small"
                       type="text"
                       icon={<StaffdeckIcon name="edit" />}
                       aria-label="重命名"
-                      onClick={(event) => openRename(event, latestSession)}
+                      onClick={(event) => openRename(event, session)}
                     />
                     <Button
                       className="session-action danger"
@@ -3123,10 +3096,9 @@ export default function ChatWindowPage() {
                       type="text"
                       icon={<StaffdeckIcon name="trash" />}
                       aria-label="删除任务"
-                      onClick={(event) => confirmDelete(event, latestSession)}
+                      onClick={(event) => confirmDelete(event, session)}
                     />
                   </div>
-                  )}
                 </div>
               </div>
             );
