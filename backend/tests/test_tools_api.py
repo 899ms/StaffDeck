@@ -124,6 +124,55 @@ def test_probe_mcp_tool_success_infers_output_schema() -> None:
         assert result.inferred_output_schema["properties"]["total"]["type"] == "integer"
 
 
+def test_probe_get_tool_preserves_query_string_when_arguments_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested: dict[str, object] = {}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def request(self, method, url, headers=None, json=None, params=None):
+            requested.update({"method": method, "url": url, "params": params})
+            return httpx.Response(200, json={"current": {"temperature_2m": 27.4}})
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    with _test_session() as db:
+        db.add(Tenant(id="tenant_demo", name="Demo"))
+        db.commit()
+
+        result = probe_tool(
+            ToolProbeRequest(
+                tenant_id="tenant_demo",
+                name="weather.forecast",
+                method="GET",
+                url=(
+                    "https://api.open-meteo.com/v1/forecast"
+                    "?latitude=39.90&longitude=116.40&current=temperature_2m"
+                ),
+                sample_arguments={},
+            ),
+            db,
+        )
+
+    assert result.success is True
+    assert requested == {
+        "method": "GET",
+        "url": (
+            "https://api.open-meteo.com/v1/forecast"
+            "?latitude=39.90&longitude=116.40&current=temperature_2m"
+        ),
+        "params": None,
+    }
+
+
 def test_probe_mcp_tool_error_is_stable() -> None:
     with _test_session() as db:
         db.add(Tenant(id="tenant_demo", name="Demo"))

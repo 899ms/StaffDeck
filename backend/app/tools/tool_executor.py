@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 
 from app.config import get_settings
 from app.db.models import Tool
+from app.tools.http_request import prepare_get_request
 from app.tools.mcp_client import MCPClientError, execute_mcp_tool
 from app.tools.tool_schema import ToolCall, ToolError, ToolResult
 
@@ -47,8 +48,9 @@ class ToolExecutor:
         try:
             with httpx.Client(timeout=self.settings.tool_timeout_seconds) as client:
                 if tool.method.upper() == "GET":
+                    request_url, request_kwargs = prepare_get_request(tool.url, tool_call.arguments)
                     response = client.request(
-                        tool.method.upper(), tool.url, headers=headers, params=tool_call.arguments
+                        tool.method.upper(), request_url, headers=headers, **request_kwargs
                     )
                 else:
                     response = client.request(

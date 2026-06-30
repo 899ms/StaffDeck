@@ -518,12 +518,18 @@ function ToolProbeCard({ form }: { form: FormInstance<ToolFormValues> }) {
     try {
       const response = await api.post('/api/enterprise/tools/probe', {
         tenant_id: TENANT_ID,
+        name: payload.name,
+        display_name: payload.display_name,
+        description: payload.description,
+        bucket: payload.bucket,
         tool_type: payload.tool_type,
         method: payload.method,
         url: payload.url,
         headers: payload.headers,
         auth: payload.auth,
         mcp_config: payload.mcp_config,
+        input_schema: payload.input_schema,
+        output_schema: payload.output_schema,
         sample_arguments: sampleArguments,
       });
       setResult(JSON.stringify(response, null, 2));

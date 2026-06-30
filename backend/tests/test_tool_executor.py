@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+import httpx
+
 from app.tools.tool_executor import ToolExecutor
 from app.tools.tool_schema import ToolCall
 from app.db.models import Tenant, Tool
@@ -139,6 +141,62 @@ def test_execute_stdio_mcp_tool_error_is_stable() -> None:
         assert result.error is not None
         assert result.error.code == "MCP_ERROR"
         assert "numbers" in result.error.message
+
+
+def test_execute_get_tool_preserves_query_string_when_arguments_empty(monkeypatch) -> None:
+    requested: dict[str, object] = {}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def request(self, method, url, headers=None, json=None, params=None):
+            requested.update({"method": method, "url": url, "params": params})
+            return httpx.Response(
+                200,
+                json={"current": {"temperature_2m": 27.4}},
+                request=httpx.Request(method, url),
+            )
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    with _test_session() as db:
+        db.add(Tenant(id="tenant_demo", name="Demo"))
+        db.add(
+            Tool(
+                tenant_id="tenant_demo",
+                name="weather.forecast",
+                display_name="天气查询",
+                method="GET",
+                url=(
+                    "https://api.open-meteo.com/v1/forecast"
+                    "?latitude=39.90&longitude=116.40&current=temperature_2m"
+                ),
+                enabled=True,
+            )
+        )
+        db.commit()
+
+        result = ToolExecutor(db).execute(
+            tenant_id="tenant_demo",
+            tool_call=ToolCall(name="weather.forecast", arguments={}),
+        )
+
+    assert result.success is True
+    assert result.data == {"current": {"temperature_2m": 27.4}}
+    assert requested == {
+        "method": "GET",
+        "url": (
+            "https://api.open-meteo.com/v1/forecast"
+            "?latitude=39.90&longitude=116.40&current=temperature_2m"
+        ),
+        "params": None,
+    }
 
 
 def _mock_mcp_server_path() -> Path:

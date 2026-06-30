@@ -18,6 +18,7 @@ from app.db import get_session
 from app.db.models import AgentResourceBinding, Tool, utc_now
 from app.security.tenant import ensure_tenant
 from app.tools import ToolExecutor
+from app.tools.http_request import prepare_get_request
 from app.tools.mcp_client import MCPClientError, execute_mcp_tool
 from app.tools.tool_schema import (
     ToolBucketRead,
@@ -173,7 +174,8 @@ def probe_tool(request: ToolProbeRequest, db: Session = Depends(get_session)) ->
     try:
         with httpx.Client(timeout=get_settings().tool_timeout_seconds) as client:
             if request.method.upper() == "GET":
-                response = client.request(request.method.upper(), url, headers=headers, params=request.sample_arguments)
+                request_url, request_kwargs = prepare_get_request(url, request.sample_arguments)
+                response = client.request(request.method.upper(), request_url, headers=headers, **request_kwargs)
             else:
                 response = client.request(request.method.upper(), url, headers=headers, json=request.sample_arguments)
     except httpx.TimeoutException:
