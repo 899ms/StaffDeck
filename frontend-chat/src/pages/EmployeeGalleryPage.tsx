@@ -1,7 +1,7 @@
 import { Button, Empty, Input, Select, message } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { api, clearAuthSession, getAuthSession } from '../api/client';
+import { api, clearAuthSession, getAuthSession, isAuthError } from '../api/client';
 import EmployeeAvatarMark from '../components/EmployeeAvatarMark';
 import StaffdeckIcon from '../components/StaffdeckIcon';
 import {
@@ -75,8 +75,15 @@ export default function EmployeeGalleryPage() {
           return next;
         });
       })
-      .catch(() => setAgents([]));
-  }, [auth?.user, tenantId]);
+      .catch((error) => {
+        if (isAuthError(error)) {
+          clearAuthSession();
+          navigate('/login', { replace: true });
+          return;
+        }
+        setAgents([]);
+      });
+  }, [auth?.user, navigate, tenantId]);
 
   useEffect(() => {
     setEmployeeTab(tabForGalleryPath(location.pathname));
@@ -89,7 +96,7 @@ export default function EmployeeGalleryPage() {
     window.localStorage.setItem('skill_agent_selected_agent', launchAgentId);
     if (!shouldAutoCreate || autoCreateRef.current === launchAgentId) return;
     autoCreateRef.current = launchAgentId;
-    void createSessionForAgent(launchAgentId);
+    void openSessionForAgent(launchAgentId);
   }, [availableAgents, launchAgentId, shouldAutoCreate]);
 
   function toggleSidebar() {
@@ -100,15 +107,28 @@ export default function EmployeeGalleryPage() {
     });
   }
 
-  async function createSessionForAgent(agentId: string) {
+  async function openSessionForAgent(agentId: string) {
     if (!agentId) {
       message.warning('请先选择数字员工');
       return;
     }
-    const session = await api.post<ChatSession>('/api/chat/sessions', { tenant_id: tenantId, agent_id: agentId });
     setSelectedAgentId(agentId);
     window.localStorage.setItem('skill_agent_selected_agent', agentId);
-    navigate(`/${session.id}`);
+    try {
+      const session = await api.post<ChatSession>('/api/chat/sessions', {
+        tenant_id: tenantId,
+        agent_id: agentId,
+        reuse_existing: true,
+      });
+      navigate(`/${session.id}`);
+    } catch (error) {
+      if (isAuthError(error)) {
+        clearAuthSession();
+        navigate('/login', { replace: true });
+        return;
+      }
+      message.error(error instanceof Error ? error.message : '打开会话失败');
+    }
   }
 
   const renderEmployeeCards = (rows: AgentProfileRead[], emptyText: string) => {
@@ -129,7 +149,8 @@ export default function EmployeeGalleryPage() {
           key={agent.id}
           type="button"
           className={`employee-gallery-page-card ${selectedAgentId === agent.id ? 'selected' : ''}`}
-          onClick={() => void createSessionForAgent(agent.id)}
+          data-agent-id={agent.id}
+          onClick={() => void openSessionForAgent(agent.id)}
         >
           <EmployeeAvatarMark profile={profile} className="employee-gallery-page-avatar" />
           <span className="employee-gallery-page-copy">
@@ -220,15 +241,11 @@ export default function EmployeeGalleryPage() {
                   role="button"
                   tabIndex={0}
                   className={`session-card gallery-agent-card ${selectedAgentId === agent.id ? 'active' : ''}`}
-                  onClick={() => {
-                    setSelectedAgentId(agent.id);
-                    window.localStorage.setItem('skill_agent_selected_agent', agent.id);
-                  }}
+                  onClick={() => void openSessionForAgent(agent.id)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
-                      setSelectedAgentId(agent.id);
-                      window.localStorage.setItem('skill_agent_selected_agent', agent.id);
+                      void openSessionForAgent(agent.id);
                     }
                   }}
                 >

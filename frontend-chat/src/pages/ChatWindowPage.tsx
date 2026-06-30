@@ -1904,6 +1904,32 @@ export default function ChatWindowPage() {
     });
   }
 
+  async function openAgentSession(agentId: string) {
+    setSelectedAgentId(agentId);
+    window.localStorage.setItem('skill_agent_selected_agent', agentId);
+    try {
+      const session = await api.post<ChatSession>('/api/chat/sessions', {
+        tenant_id: tenantId,
+        agent_id: agentId,
+        reuse_existing: true,
+      });
+      setSessions((items) => {
+        const exists = items.some((item) => item.id === session.id);
+        return exists
+          ? items.map((item) => (item.id === session.id ? session : item))
+          : [session, ...items];
+      });
+      navigate(`/${session.id}`);
+    } catch (error) {
+      if (isAuthError(error)) {
+        clearAuthSession();
+        navigate('/login', { replace: true });
+        return;
+      }
+      message.error(error instanceof Error ? error.message : '打开会话失败');
+    }
+  }
+
   function abortStream() {
     if (!sessionId) return;
     const stream = getStreamSlot(sessionId);
@@ -3046,19 +3072,14 @@ export default function ChatWindowPage() {
             const latestSession = latestSessionByAgent.get(agent.id);
             const hasUnread = latestSession ? sessionHasUnreadReply(latestSession, sessionReadTimes, sessionId) : false;
             const openAgent = () => {
-              setSelectedAgentId(agent.id);
-              window.localStorage.setItem('skill_agent_selected_agent', agent.id);
-              if (latestSession) {
-                navigate(`/${latestSession.id}`);
-              } else {
-                navigate('/');
-              }
+              void openAgentSession(agent.id);
             };
             return (
               <div
                 key={agent.id}
                 role="button"
                 tabIndex={0}
+                data-agent-id={agent.id}
                 className={`session-card chat-agent-card ${displayedAgent?.id === agent.id ? 'active' : ''} ${hasUnread ? 'unread' : ''}`}
                 onClick={openAgent}
                 onKeyDown={(event) => {

@@ -640,6 +640,10 @@ def create_chat_session(
     ensure_tenant(db, request.tenant_id)
     _ensure_chat_agent_available(db, request.tenant_id, request.agent_id, current_user)
     title = _normalize_title(request.title)
+    if request.reuse_existing and request.agent_id and not title:
+        existing = _latest_user_agent_session(db, request.tenant_id, current_user.id, request.agent_id)
+        if existing:
+            return session_read(existing)
     row = ChatSession(
         id=new_id("session"),
         tenant_id=request.tenant_id,
@@ -963,6 +967,38 @@ def _get_user_chat_session(db: Session, tenant_id: str, user_id: str, session_id
     if not row or row.tenant_id != tenant_id or row.user_id != user_id:
         raise HTTPException(status_code=404, detail="Session not found")
     return row
+
+
+def _latest_user_agent_session(
+    db: Session,
+    tenant_id: str,
+    user_id: str,
+    agent_id: str,
+) -> ChatSession | None:
+    rows = list(
+        db.exec(
+            select(ChatSession)
+            .where(
+                ChatSession.tenant_id == tenant_id,
+                ChatSession.user_id == user_id,
+                ChatSession.agent_id == agent_id,
+            )
+            .order_by(ChatSession.updated_at.desc())
+        ).all()
+    )
+    if not rows:
+        return None
+    session_ids = [row.id for row in rows]
+    message_session_ids = set(
+        db.exec(
+            select(Message.session_id)
+            .where(
+                Message.tenant_id == tenant_id,
+                Message.session_id.in_(session_ids),
+            )
+        ).all()
+    )
+    return next((row for row in rows if row.id in message_session_ids), rows[0])
 
 
 def _ensure_chat_agent_available(

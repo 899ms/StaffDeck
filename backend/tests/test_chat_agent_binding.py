@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
-from app.api.chat import _bind_request_to_session_agent, _ensure_chat_agent_available, _user_message_metadata
+from app.api.chat import (
+    _bind_request_to_session_agent,
+    _ensure_chat_agent_available,
+    _latest_user_agent_session,
+    _user_message_metadata,
+)
 from app.core.agent_loop import AgentLoop, AgentLoopPreconditionError
-from app.db.models import AgentProfile, ChatSession, ModelConfig, Tenant, User
+from app.db.models import AgentProfile, ChatSession, Message, ModelConfig, Tenant, User
 from app.session.session_schema import ChatTurnRequest
 
 
@@ -61,6 +68,46 @@ def test_chat_agent_must_be_active_non_overall_agent() -> None:
         assert missing.value.status_code == 400
         assert overall.value.status_code == 404
         assert archived.value.status_code == 404
+
+
+def test_latest_user_agent_session_prefers_existing_message_session() -> None:
+    with _test_session() as db:
+        now = datetime(2026, 6, 30, 12, 0, 0)
+        db.add(Tenant(id="tenant_demo", name="Demo"))
+        db.add(User(id="user_demo", tenant_id="tenant_demo", username="demo", password_hash="x"))
+        db.add(AgentProfile(id="agent_demo", tenant_id="tenant_demo", name="研发", is_overall=False))
+        db.add(
+            ChatSession(
+                id="session_with_messages",
+                tenant_id="tenant_demo",
+                user_id="user_demo",
+                agent_id="agent_demo",
+                updated_at=now - timedelta(days=1),
+            )
+        )
+        db.add(
+            ChatSession(
+                id="session_empty_newer",
+                tenant_id="tenant_demo",
+                user_id="user_demo",
+                agent_id="agent_demo",
+                updated_at=now,
+            )
+        )
+        db.add(
+            Message(
+                tenant_id="tenant_demo",
+                session_id="session_with_messages",
+                role="user",
+                content="之前的问题",
+            )
+        )
+        db.commit()
+
+        existing = _latest_user_agent_session(db, "tenant_demo", "user_demo", "agent_demo")
+
+        assert existing is not None
+        assert existing.id == "session_with_messages"
 
 
 def test_scheduled_task_chat_turn_marks_user_message_metadata() -> None:
