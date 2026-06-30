@@ -23,7 +23,6 @@ export default function AgentsPage({
 }) {
   const [agents, setAgents] = useState<AgentProfileRead[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selectedAgentId, setSelectedAgentId] = useState(() => window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY) || '');
   const [avatarAgent, setAvatarAgent] = useState<AgentProfileRead | null>(null);
   const [profileAgent, setProfileAgent] = useState<AgentProfileRead | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -46,28 +45,7 @@ export default function AgentsPage({
     void load();
   }, []);
 
-  useEffect(() => {
-    function handleScopeChange(event: Event) {
-      const customEvent = event as CustomEvent<{ agentId?: string }>;
-      setSelectedAgentId(customEvent.detail?.agentId || window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY) || '');
-    }
-
-    function handleScopeRefresh() {
-      setSelectedAgentId(window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY) || '');
-    }
-
-    window.addEventListener('ultrarag-enterprise-agent-scope-change', handleScopeChange);
-    window.addEventListener('ultrarag-enterprise-agent-scope-refresh', handleScopeRefresh);
-    window.addEventListener('storage', handleScopeRefresh);
-    return () => {
-      window.removeEventListener('ultrarag-enterprise-agent-scope-change', handleScopeChange);
-      window.removeEventListener('ultrarag-enterprise-agent-scope-refresh', handleScopeRefresh);
-      window.removeEventListener('storage', handleScopeRefresh);
-    };
-  }, []);
-
   const overallAgent = agents.find((item) => item.is_overall);
-  const currentScopeAgent = agents.find((item) => item.id === selectedAgentId) || (isAdmin ? overallAgent : undefined);
   const employees = useMemo(
     () => agents.filter((item) => (
       !item.is_overall && (isAdmin || isEmployeeOwnedBy(item, currentUser) || isGalleryEmployee(item))
@@ -222,7 +200,6 @@ export default function AgentsPage({
           <EmployeeCard
             key={employee.id}
             employee={employee}
-            active={currentScopeAgent?.id === employee.id}
             canManage={isAdmin || isEmployeeOwnedBy(employee, currentUser)}
             onOpen={() => selectEmployee(employee)}
             onStatus={(status) => void updateStatus(employee, status)}
@@ -259,7 +236,6 @@ export default function AgentsPage({
 
 function EmployeeCard({
   employee,
-  active,
   canManage,
   onOpen,
   onStatus,
@@ -270,7 +246,6 @@ function EmployeeCard({
   onChat,
 }: {
   employee: AgentProfileRead;
-  active: boolean;
   canManage: boolean;
   onOpen: () => void;
   onStatus: (status: 'active' | 'archived') => void;
@@ -286,7 +261,7 @@ function EmployeeCard({
   const kbCount = resourceCount(employee.resources, 'knowledge_base');
   const galleryPublished = isGalleryEmployee(employee);
   return (
-    <Card className={`employee-roster-card${active ? ' is-active' : ''}`} hoverable onClick={onOpen}>
+    <Card className="employee-roster-card" hoverable onClick={onOpen}>
       <div className="employee-roster-head">
         <EmployeeAvatar agent={employee} size={54} />
         <div className="employee-roster-title">

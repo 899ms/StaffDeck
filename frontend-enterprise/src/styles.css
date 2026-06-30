@@ -12844,10 +12844,6 @@ body,
   width: 100%;
 }
 
-.sd1-agents-page .employee-roster-card.is-active.ant-card {
-  box-shadow: 0 26px 42px rgba(21, 26, 38, 0.1) !important;
-}
-
 .sd1-agents-page .employee-roster-card.ant-card .ant-card-body {
   position: relative;
   height: 100%;
@@ -12956,11 +12952,6 @@ body,
   border-radius: 999px !important;
   color: #8b94aa !important;
   background: #f8f9fb !important;
-}
-
-.sd1-agents-page .employee-roster-card.is-active .employee-roster-chat.ant-btn {
-  color: #ffffff !important;
-  background: #202226 !important;
 }
 
 .sd1-agents-page .employee-roster-head .ant-dropdown-trigger.ant-btn {
@@ -13813,7 +13804,7 @@ body:has(.sd1-scheduled-page) .topbar {
 
 /* SD1 follow-up: selected cards and dark theme must stay coherent after late overrides. */
 .sd1-agents-page .employee-roster-card.ant-card:hover,
-.sd1-agents-page .employee-roster-card.is-active.ant-card {
+.sd1-agents-page .employee-roster-card.ant-card:focus-within {
   border-color: #eef1f5 !important;
   box-shadow: 0 16px 34px rgba(21, 26, 38, 0.055) !important;
   transform: none !important;
@@ -13926,7 +13917,6 @@ body:has(.sd1-scheduled-page) .topbar {
 }
 
 :root[data-theme='dark'] .sd1-agents-page .employee-roster-card.ant-card,
-:root[data-theme='dark'] .sd1-agents-page .employee-roster-card.is-active.ant-card,
 :root[data-theme='dark'] .sd1-agents-page .employee-roster-card.ant-card:hover {
   color: #f0f2f6 !important;
   border-color: #2b3445 !important;
@@ -13935,21 +13925,11 @@ body:has(.sd1-scheduled-page) .topbar {
   transform: none !important;
 }
 
-:root[data-theme='dark'] .sd1-agents-page .employee-roster-card.is-active.ant-card {
-  border-color: #2b3445 !important;
-  box-shadow: none !important;
-}
-
 :root[data-theme='dark'] .sd1-agents-page .employee-roster-chat.ant-btn,
 :root[data-theme='dark'] .sd1-agents-page .employee-roster-head .ant-dropdown-trigger.ant-btn {
   color: #c5ccd8 !important;
   background: #f0f2f6 !important;
   border-color: transparent !important;
-}
-
-:root[data-theme='dark'] .sd1-agents-page .employee-roster-card.is-active .employee-roster-chat.ant-btn {
-  color: #111827 !important;
-  background: #f0f2f6 !important;
 }
 
 :root[data-theme='dark'] .sd1-agents-page .employee-roster-head,
