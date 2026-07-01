@@ -5632,20 +5632,16 @@ body,
 }
 
 .composer-v2 .composer-plus-button.ant-btn {
-  box-sizing: border-box !important;
-  width: 32px !important;
-  min-width: 32px !important;
-  max-width: 32px !important;
-  inline-size: 32px !important;
-  flex: 0 0 32px !important;
-  height: 32px !important;
+  width: 40px !important;
+  min-width: 40px !important;
+  height: 40px !important;
   padding: 0 !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
   color: #858b9c !important;
   border: 1px solid #757f9c !important;
-  border-radius: 10px !important;
+  border-radius: 14px !important;
   background: #ffffff !important;
 }
 
@@ -5653,6 +5649,12 @@ body,
   display: block !important;
   width: 14px !important;
   height: 14px !important;
+}
+
+.composer-plus-menu-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .composer-v2 .composer-plus-button.ant-btn::after {

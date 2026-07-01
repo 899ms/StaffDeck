@@ -2588,8 +2588,12 @@ export default function ChatWindowPage() {
     return () => window.clearInterval(timer);
   }, [auth, pollScheduledSessionEvents, sessionId, sessions, streamTick]);
 
-  async function send() {
+  async function send(interactionMode: 'normal' | 'scheduled_task' = 'normal') {
     if ((!input.trim() && readyComposerAttachments.length === 0) || !sessionId) return;
+    if (interactionMode === 'scheduled_task' && !input.trim()) {
+      message.warning('请输入要创建的定时任务内容');
+      return;
+    }
     if (uploadingComposerAttachment) {
       message.warning('文件还在解析中，请稍后发送');
       return;
@@ -2621,7 +2625,10 @@ export default function ChatWindowPage() {
       turnId,
       role: 'user',
       content: userText,
-      metadata: outgoingAttachments.length ? { attachments: outgoingAttachments } : {},
+      metadata: {
+        ...(outgoingAttachments.length ? { attachments: outgoingAttachments } : {}),
+        ...(interactionMode === 'scheduled_task' ? { interaction_mode: 'scheduled_task' } : {}),
+      },
       created_at: new Date().toISOString(),
     });
     upsertTraceLine(turnId, { id: 'thinking', kind: 'thinking', text: '正在思考', state: 'running' });
@@ -2643,7 +2650,7 @@ export default function ChatWindowPage() {
         message: userText,
         attachments: outgoingAttachments,
         channel: 'web',
-        interaction_mode: 'normal',
+        interaction_mode: interactionMode,
         model_config_id: selectedModelConfig?.id,
       }, (item) => {
         const eventSessionId = String(item.data.sessionId || currentSessionId);
@@ -3442,16 +3449,52 @@ export default function ChatWindowPage() {
             />
             <div className="composer-toolbar">
               <div className="composer-context-row">
-                <Button
-                  type="text"
-                  htmlType="button"
-                  className="composer-plus-button"
-                  icon={<StaffdeckIcon name="plus" />}
-                  disabled={currentSessionRunning}
-                  aria-label="上传文件"
-                  title="上传文件"
-                  onClick={() => fileInputRef.current?.click()}
-                />
+                <Dropdown
+                  trigger={['click']}
+                  placement="topLeft"
+                  overlayClassName="composer-plus-dropdown"
+                  menu={{
+                    items: [
+                      {
+                        key: 'upload',
+                        label: (
+                          <span className="composer-plus-menu-item">
+                            <StaffdeckIcon name="upload" />
+                            <span>上传文件</span>
+                          </span>
+                        ),
+                      },
+                      {
+                        key: 'scheduled_task',
+                        label: (
+                          <span className="composer-plus-menu-item">
+                            <StaffdeckIcon name="clock" />
+                            <span>定时任务</span>
+                          </span>
+                        ),
+                      },
+                    ],
+                    onClick: ({ key }) => {
+                      if (key === 'upload') {
+                        fileInputRef.current?.click();
+                        return;
+                      }
+                      if (key === 'scheduled_task') {
+                        void send('scheduled_task');
+                      }
+                    },
+                  }}
+                >
+                  <Button
+                    type="text"
+                    htmlType="button"
+                    className="composer-plus-button"
+                    icon={<StaffdeckIcon name="plus" />}
+                    disabled={currentSessionRunning}
+                    aria-label="添加"
+                    title="添加"
+                  />
+                </Dropdown>
                 <div className="composer-hint">Enter 发送 / Shift+Enter 换行</div>
               </div>
               <div className="composer-actions-row">
