@@ -2586,8 +2586,13 @@ function SkillSource({
                       onChange={(value) => editStep(index, 'type', value)}
                     />
                     <SourceReadonlyLine label="节点状态" value={nodeState} />
-                    <EditableConditionLine value={String(step.condition || '')} onChange={(value) => editStep(index, 'condition', value)} />
-                    <EditableSourceTextLine label={fieldLabel('instruction')} value={String(step.instruction || '')} multiline onChange={(value) => editStep(index, 'instruction', value)} />
+                    <EditableSourceTextLine
+                      label={fieldLabel('instruction')}
+                      value={String(step.instruction || '')}
+                      multiline
+                      collapsible
+                      onChange={(value) => editStep(index, 'instruction', value)}
+                    />
                     <EditableSourceListLine label={fieldLabel('expected_user_info')} values={asStringList(step.expected_user_info)} onChange={(value) => editStep(index, 'expected_user_info', value)} />
                     <EditableSourceActionLine
                       values={asStringList(step.allowed_actions)}
@@ -3617,6 +3622,12 @@ function sourceInputStyle(value: string, multiline = false): CSSProperties {
   return { width: `${width}ch`, maxWidth: '100%' };
 }
 
+function previewSourceText(value: string): string {
+  const text = value.replace(/\s+/g, ' ').trim();
+  if (!text) return '暂无节点说明';
+  return text.length > 96 ? `${text.slice(0, 96)}...` : text;
+}
+
 function EditableSourceHeading({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   return (
     <EditableSourceField>
@@ -3646,7 +3657,8 @@ function EditableSourceStepHeading({
       <div className="skill-source-step-title-edit">
         <span>Node {index + 1}:</span>
         <Input
-          value={value || fallback}
+          value={value}
+          placeholder={fallback}
           style={compactInputStyle(value || fallback, 10, 88)}
           onChange={(event) => onChange(event.target.value)}
         />
@@ -3659,19 +3671,53 @@ function EditableSourceTextLine({
   label,
   value,
   multiline = false,
+  collapsible = false,
   onChange,
 }: {
   label: string;
   value: string;
   multiline?: boolean;
+  collapsible?: boolean;
   onChange: (value: string) => void;
 }) {
+  const canCollapse = collapsible && multiline;
+  const shouldStartCollapsed = canCollapse && value.trim().length > 90;
+  const [collapsed, setCollapsed] = useState(shouldStartCollapsed);
+
+  useEffect(() => {
+    if (!canCollapse || value.trim().length <= 90) {
+      setCollapsed(false);
+    }
+  }, [canCollapse, value]);
+
   return (
-    <div className="skill-source-line">
+    <div className={`skill-source-line ${canCollapse ? 'collapsible' : ''}`.trim()}>
       <span className="skill-source-key">{label}</span>
       <span className="skill-source-value">
         <EditableSourceField>
-          {multiline ? (
+          {canCollapse ? (
+            <div className="skill-source-collapsible-editor">
+              <div className="skill-source-collapsible-head">
+                {collapsed ? (
+                  <span className="skill-source-collapsible-preview">{previewSourceText(value)}</span>
+                ) : (
+                  <span className="skill-source-collapsible-preview muted">正在编辑节点说明</span>
+                )}
+                <Button size="small" type="text" onClick={() => setCollapsed((current) => !current)}>
+                  {collapsed ? '展开编辑' : '收起'}
+                </Button>
+              </div>
+              {!collapsed && (
+                <Input.TextArea
+                  className="skill-source-edit-input"
+                  value={value}
+                  style={sourceInputStyle(value, true)}
+                  autoSize={{ minRows: 3 }}
+                  onChange={(event) => onChange(event.target.value)}
+                />
+              )}
+            </div>
+          ) : multiline ? (
             <Input.TextArea
               className="skill-source-edit-input"
               value={value}
@@ -3861,31 +3907,99 @@ function EditableActionList({
   toolStatuses: ToolStatusMap;
   onChange: (value: string) => void;
 }) {
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const mergedOptions = mergeSelectOptions(options, actions.map((action) => ({
     value: action,
     label: actionLabel(action),
   })));
 
-  return (
-    <div className="skill-source-action-editor">
+  function writeActions(nextActions: string[]) {
+    onChange(nextActions.filter(Boolean).join('\n'));
+  }
+
+  function commitAction(index: number, action: string) {
+    const nextAction = action.trim();
+    const next = [...actions];
+    if (!nextAction) {
+      if (index < next.length) next.splice(index, 1);
+      writeActions(next);
+      setEditingIndex(null);
+      return;
+    }
+    const duplicateIndex = next.findIndex((item, itemIndex) => item === nextAction && itemIndex !== index);
+    if (duplicateIndex >= 0) {
+      message.info('这个动作已经添加过了');
+      setEditingIndex(null);
+      return;
+    }
+    if (index >= next.length) {
+      next.push(nextAction);
+    } else {
+      next[index] = nextAction;
+    }
+    writeActions(next);
+    setEditingIndex(null);
+  }
+
+  function removeAction(index: number) {
+    const next = [...actions];
+    next.splice(index, 1);
+    writeActions(next);
+    if (editingIndex === index) setEditingIndex(null);
+  }
+
+  function actionSelect(index: number, value?: string) {
+    return (
       <Select
-        mode="multiple"
+        autoFocus
+        showSearch
         allowClear
         className="skill-source-action-select"
-        value={actions}
+        value={value || undefined}
         options={mergedOptions}
         optionFilterProp="label"
-        placeholder="选择当前节点允许执行的动作"
+        placeholder="选择一个动作"
         popupMatchSelectWidth={320}
-        onChange={(nextActions) => onChange(nextActions.join('\n'))}
-        tagRender={(props) => (
-          <span className="skill-action-select-tag" title={props.value}>
-            <ActionChip action={String(props.value)} toolDescriptions={toolDescriptions} toolStatuses={toolStatuses} />
-            <button type="button" onClick={props.onClose} aria-label={`移除 ${props.label}`}>×</button>
+        onChange={(nextValue) => commitAction(index, String(nextValue || ''))}
+      />
+    );
+  }
+
+  return (
+    <div className="skill-source-action-editor">
+      <div className="skill-action-list editable">
+        {actions.map((action, index) => (
+          editingIndex === index ? (
+            <span className="skill-source-action-picker" key={`editing_${index}`}>
+              {actionSelect(index, action)}
+            </span>
+          ) : (
+            <span className="skill-source-action-token" key={`${action}_${index}`}>
+              <button
+                type="button"
+                className="skill-source-action-edit-button"
+                onClick={() => setEditingIndex(index)}
+              >
+                <ActionChip action={action} toolDescriptions={toolDescriptions} toolStatuses={toolStatuses} />
+              </button>
+              <button type="button" className="skill-source-action-remove" onClick={() => removeAction(index)} aria-label={`移除 ${actionLabel(action)}`}>
+                ×
+              </button>
+            </span>
+          )
+        ))}
+        {editingIndex !== null && editingIndex >= actions.length && (
+          <span className="skill-source-action-picker">
+            {actionSelect(editingIndex)}
           </span>
         )}
-      />
-      <span className="skill-source-edit-hint">可选择基础动作，也可选择已配置工具动作。</span>
+        {editingIndex === null && (
+          <button type="button" className="skill-source-action-add" onClick={() => setEditingIndex(actions.length)}>
+            <PlusOutlined /> 新增动作
+          </button>
+        )}
+      </div>
+      <span className="skill-source-edit-hint">每次新增一个动作；点击已有动作可重新选择。</span>
     </div>
   );
 }
@@ -3928,34 +4042,59 @@ function EditableFlowRulesLine({
               <div className="skill-flow-rule-list">
                 {orderedEdges.map(({ edge, index }) => (
                   <div className="skill-flow-rule-item" key={`${String(edge.next_node_id)}_${index}`}>
-                    <Select
-                      className="skill-flow-rule-target"
-                      value={String(edge.next_node_id || '') || undefined}
-                      options={nodeOptions}
-                      placeholder="选择目标 Node"
-                      popupMatchSelectWidth={280}
-                      onChange={(value) => onUpdate(index, { next_node_id: value })}
-                    />
-                    <Input
-                      className="skill-flow-rule-label-input"
-                      value={String(edge.label || '')}
-                      placeholder="规则名称"
-                      onChange={(event) => onUpdate(index, { label: event.target.value })}
-                    />
-                    <Input
-                      className="skill-flow-rule-condition-input"
-                      value={String(edge.condition || '')}
-                      placeholder="进入条件，可留空"
-                      onChange={(event) => onUpdate(index, { condition: event.target.value })}
-                    />
-                    <InputNumber
-                      className="skill-flow-rule-priority"
-                      min={0}
-                      precision={0}
-                      value={edgePriority(edge, index)}
-                      onChange={(value) => onUpdate(index, { priority: Number(value ?? 0) })}
-                    />
-                    <Button danger size="small" icon={<DeleteOutlined />} onClick={() => onDelete(index)} />
+                    <label className="skill-flow-rule-field">
+                      <span>目标 Node</span>
+                      <Select
+                        className="skill-flow-rule-target"
+                        value={String(edge.next_node_id || '') || undefined}
+                        options={nodeOptions}
+                        placeholder="选择目标 Node"
+                        popupMatchSelectWidth={280}
+                        onChange={(value) => onUpdate(index, { next_node_id: value })}
+                      />
+                    </label>
+                    <label className="skill-flow-rule-field">
+                      <span>规则名称</span>
+                      <Input
+                        className="skill-flow-rule-label-input"
+                        value={String(edge.label || '')}
+                        placeholder="例如：信息完整后继续"
+                        onChange={(event) => onUpdate(index, { label: event.target.value })}
+                      />
+                    </label>
+                    <div className="skill-flow-rule-field condition">
+                      <span>进入条件</span>
+                      <div className="skill-flow-rule-condition-controls">
+                        <Select
+                          className="skill-condition-preset"
+                          value={conditionPresetValue(String(edge.condition || ''))}
+                          options={CONDITION_PRESET_OPTIONS}
+                          popupMatchSelectWidth={260}
+                          onChange={(nextValue) => {
+                            if (nextValue === '__custom__') return;
+                            onUpdate(index, { condition: nextValue === '__always__' ? '' : nextValue });
+                          }}
+                        />
+                        <Input
+                          className="skill-flow-rule-condition-input"
+                          value={conditionInputValue(String(edge.condition || ''))}
+                          placeholder="留空表示总是进入；自定义时填写具体条件"
+                          onChange={(event) => onUpdate(index, { condition: event.target.value })}
+                        />
+                      </div>
+                      <em>{flowRuleConditionText(String(edge.condition || ''))}</em>
+                    </div>
+                    <label className="skill-flow-rule-field priority">
+                      <span>优先级</span>
+                      <InputNumber
+                        className="skill-flow-rule-priority"
+                        min={0}
+                        precision={0}
+                        value={edgePriority(edge, index)}
+                        onChange={(value) => onUpdate(index, { priority: Number(value ?? 0) })}
+                      />
+                    </label>
+                    <Button danger size="small" className="skill-flow-rule-delete" icon={<DeleteOutlined />} onClick={() => onDelete(index)} />
                   </div>
                 ))}
               </div>
@@ -3973,7 +4112,7 @@ function EditableSourceField({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="skill-source-edit-field" onClick={stop} onKeyDown={stop}>
+    <div className="skill-source-edit-field" onMouseDown={stop} onClick={stop} onDoubleClick={stop} onKeyDown={stop}>
       {children}
     </div>
   );
@@ -5347,15 +5486,20 @@ function mergeSelectOptions(...groups: SelectOption[][]): SelectOption[] {
 
 function conditionPresetValue(value: string): string {
   const trimmed = value.trim();
-  if (!trimmed) return '__always__';
+  if (!trimmed || trimmed === 'always' || trimmed === 'true') return '__always__';
   if (CONDITION_PRESET_OPTIONS.some((option) => option.value === trimmed)) return trimmed;
   if (/^missing_slots\s*\(/.test(trimmed)) return 'missing_slots([])';
   return '__custom__';
 }
 
+function conditionInputValue(value: string): string {
+  const trimmed = value.trim();
+  return trimmed === 'always' || trimmed === 'true' ? '' : value;
+}
+
 function conditionReadableText(value: string): string {
   const trimmed = value.trim();
-  if (!trimmed) return '通俗说明：没有额外限制，流程可以从这里继续。';
+  if (!trimmed || trimmed === 'always' || trimmed === 'true') return '通俗说明：没有额外限制，流程可以从这里继续。';
   const missingMatch = trimmed.match(/^missing_slots\((.*)\)$/);
   if (missingMatch) {
     const fields = missingMatch[1]
@@ -5375,6 +5519,10 @@ function conditionReadableText(value: string): string {
     user_rejected: '通俗说明：用户明确拒绝后进入这个节点。',
   };
   return labels[trimmed] || `通俗说明：满足「${trimmed}」时进入这个节点。`;
+}
+
+function flowRuleConditionText(value: string): string {
+  return conditionReadableText(value).replace(/^通俗说明：/, '进入条件：');
 }
 
 function diffTargetLabel(path: string, skill: SkillCard | null): string {
