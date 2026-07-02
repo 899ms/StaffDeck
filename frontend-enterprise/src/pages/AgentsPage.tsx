@@ -1,13 +1,17 @@
-import { Button, Card, Dropdown, Input, Modal, Space, Tag, Typography, message } from 'antd';
+import { Modal, message } from 'antd';
+import { UnderlineTabs, type UnderlineTabItem } from '@/components/ui';
+import { cn } from '@/lib/utils';
+import IconPlus from '../assets/icons/plus.svg?react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, TENANT_ID } from '../api/client';
 import { isEmployeeOwnedBy, isGalleryEmployee, type EnterpriseAuthUser } from '../auth';
-import EmployeeAvatar from '../components/EmployeeAvatar';
+import IconSearch from '../assets/icons/search.svg?react';
+import AppHeader from '../components/AppHeader';
 import EmployeeAvatarEditor from '../components/EmployeeAvatarEditor';
+import EmployeeCard from '../components/EmployeeCard';
 import EmployeeProfileEditor from '../components/EmployeeProfileEditor';
-import StaffdeckIcon from '../components/StaffdeckIcon';
-import { employeeDisplayName, employeeProfile, resourceCount, staffdeckDisplayText } from '../employee';
+import { employeeDisplayName, employeeProfile } from '../employee';
 import type { AgentProfileRead } from '../types';
 
 const ENTERPRISE_AGENT_STORAGE_KEY = 'ultrarag_enterprise_agent_scope';
@@ -16,10 +20,12 @@ export default function AgentsPage({
   currentUser,
   isAdmin = false,
   onCreateAgent,
+  onLogout,
 }: {
   currentUser?: EnterpriseAuthUser;
   isAdmin?: boolean;
   onCreateAgent?: () => void;
+  onLogout?: () => void;
 }) {
   const [agents, setAgents] = useState<AgentProfileRead[]>([]);
   const [loading, setLoading] = useState(false);
@@ -27,6 +33,9 @@ export default function AgentsPage({
   const [profileAgent, setProfileAgent] = useState<AgentProfileRead | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [employeeFilter, setEmployeeFilter] = useState<'all' | 'online' | 'offline' | 'pending'>('all');
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(
+    () => window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY),
+  );
   const navigate = useNavigate();
 
   async function load() {
@@ -43,6 +52,15 @@ export default function AgentsPage({
 
   useEffect(() => {
     void load();
+  }, []);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ agentId?: string }>).detail;
+      setSelectedAgentId(detail?.agentId ?? window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY));
+    };
+    window.addEventListener('ultrarag-enterprise-agent-scope-change', handler);
+    return () => window.removeEventListener('ultrarag-enterprise-agent-scope-change', handler);
   }, []);
 
   const overallAgent = agents.find((item) => item.is_overall);
@@ -79,6 +97,7 @@ export default function AgentsPage({
   });
 
   function selectEmployee(row: AgentProfileRead) {
+    setSelectedAgentId(row.id);
     window.localStorage.setItem(ENTERPRISE_AGENT_STORAGE_KEY, row.id);
     window.dispatchEvent(new CustomEvent('ultrarag-enterprise-agent-scope-change', { detail: { agentId: row.id } }));
     navigate('/enterprise/dashboard');
@@ -154,53 +173,89 @@ export default function AgentsPage({
     setAgents((current) => current.map((item) => (item.id === row.id ? row : item)));
   }
 
+  const employeeTabs: UnderlineTabItem<typeof employeeFilter>[] = [
+    { value: 'all', label: '全部员工' },
+    { value: 'online', label: '在线员工' },
+    { value: 'offline', label: '下线员工' },
+  ];
+
+  const summaryCardClass =
+    'flex h-[100px] flex-1 basis-[220px] items-center gap-[16px] rounded-[20px] bg-[#f6f6f6] px-[32px] py-[20px] text-left transition-shadow dark:bg-[#26272d]';
+  const summaryStats: { key: typeof employeeFilter; value: number; label: string; sub: string }[] = [
+    { key: 'all', value: employees.length, label: '员工总数', sub: `${onlineEmployees.length}位在线` },
+    { key: 'offline', value: offlineEmployees.length, label: '下线员工', sub: '0位在线' },
+    {
+      key: 'pending',
+      value: pendingEmployees.length,
+      label: '待审批',
+      sub: `${pendingEmployees.filter((item) => item.status === 'active').length}位在线`,
+    },
+  ];
+
   return (
-    <div className="page agents-page sd1-agents-page" aria-busy={loading}>
-      <div className="sd1-agents-search">
-        <Input
-          value={searchTerm}
-          onChange={(event) => setSearchTerm(event.target.value)}
-          prefix={<StaffdeckIcon name="search" />}
-          placeholder="搜索"
-          allowClear
-        />
+    <div className="min-h-full box-border px-[48px] pt-[32px] pb-[43px] max-[900px]:px-[16px]" aria-busy={loading}>
+      <AppHeader
+        onLogout={onLogout}
+        userName={currentUser?.username}
+        left={(
+          <div className="flex h-[50px] w-full items-center gap-[6px] rounded-[20px] bg-white px-[20px] text-[#757F9C] shadow-[0_0_6px_rgba(0,0,0,0.05)] dark:bg-[#26272d]">
+            <IconSearch className="size-[20px] shrink-0" />
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="搜索"
+              aria-label="搜索员工"
+              className="min-w-0 flex-1 border-0 bg-transparent text-[14px] text-[#18181A] outline-none placeholder:text-[#757F9C] dark:text-white"
+            />
+          </div>
+        )}
+      />
+
+
+      <div className="flex flex-wrap items-stretch gap-[20px] my-[36px]" aria-label="数字员工统计">
+        {summaryStats.map((stat) => (
+          <button
+            key={stat.key}
+            type="button"
+            aria-pressed={employeeFilter === stat.key}
+            onClick={() => setEmployeeFilter(stat.key)}
+            className={cn(
+              summaryCardClass,
+            )}
+          >
+            <span className="shrink-0 text-[34px] font-semibold leading-none text-[#18181A] dark:text-white">{stat.value}</span>
+            <span className="flex min-w-0 flex-col gap-[4px]">
+              <span className="whitespace-nowrap text-[14px] text-[#464C5E] dark:text-[#e5e7eb]">{stat.label}</span>
+              <span className="whitespace-nowrap text-[12px] text-[#757F9C]">{stat.sub}</span>
+            </span>
+          </button>
+        ))}
+        <button type="button" onClick={onCreateAgent} className={cn(summaryCardClass, 'hover:shadow-[0_16px_30px_0_rgba(0,0,0,0.10)]')}>
+          <span className="grid size-[38px] shrink-0 place-items-center text-[#18181A] dark:text-white">
+            <IconPlus className="size-[38px]" />
+          </span>
+          <span className="flex min-w-0 flex-col gap-[4px]">
+            <span className="whitespace-nowrap text-[14px] text-[#464C5E] dark:text-[#e5e7eb]">创建新员工</span>
+            <span className="whitespace-nowrap text-[12px] text-[#757F9C]">几步搭好你的数字员工</span>
+          </span>
+        </button>
       </div>
 
-      <div className="sd1-agents-summary" aria-label="数字员工统计">
-        <button type="button" className={employeeFilter === 'all' ? 'active' : ''} onClick={() => setEmployeeFilter('all')}>
-          <strong>{employees.length}</strong>
-          <span className="sd1-agents-summary-label">员工总数<StaffdeckIcon name="info" /></span>
-          <small>{onlineEmployees.length}位在线</small>
-        </button>
-        <button type="button" className={employeeFilter === 'offline' ? 'active' : ''} onClick={() => setEmployeeFilter('offline')}>
-          <strong>{offlineEmployees.length}</strong>
-          <span className="sd1-agents-summary-label">下线员工<StaffdeckIcon name="info" /></span>
-          <small>0位在线</small>
-        </button>
-        <button type="button" className={employeeFilter === 'pending' ? 'active' : ''} onClick={() => setEmployeeFilter('pending')}>
-          <strong>{pendingEmployees.length}</strong>
-          <span className="sd1-agents-summary-label">待审批<StaffdeckIcon name="info" /></span>
-          <small>{pendingEmployees.filter((item) => item.status === 'active').length}位在线</small>
-        </button>
-        <button type="button" className="is-create" onClick={onCreateAgent}>
-          <span className="sd1-agents-add"><StaffdeckIcon name="plus" /></span>
-          <span className="sd1-agents-summary-label">创建新员工<StaffdeckIcon name="info" /></span>
-          <small>配置它的skills</small>
-        </button>
-      </div>
+      <UnderlineTabs
+        className="mb-[16px]"
+        aria-label="数字员工分类"
+        value={employeeFilter}
+        onChange={setEmployeeFilter}
+        items={employeeTabs}
+      />
 
-      <nav className="sd1-agents-tabs" aria-label="数字员工分类">
-        <button type="button" className={employeeFilter === 'all' ? 'active' : ''} onClick={() => setEmployeeFilter('all')}>全部员工</button>
-        <button type="button" className={employeeFilter === 'online' ? 'active' : ''} onClick={() => setEmployeeFilter('online')}>在线员工</button>
-        <button type="button" className={employeeFilter === 'offline' ? 'active' : ''} onClick={() => setEmployeeFilter('offline')}>下线员工</button>
-      </nav>
-
-      <div className="employee-roster-grid sd1-agents-grid">
+      <div className="grid auto-rows-[minmax(262px,auto)] grid-cols-1 content-start gap-[32px] sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 max-[900px]:gap-[18px]">
         {filteredEmployees.map((employee) => (
           <EmployeeCard
             key={employee.id}
             employee={employee}
             canManage={isAdmin || isEmployeeOwnedBy(employee, currentUser)}
+            selected={employee.id === selectedAgentId}
             onOpen={() => selectEmployee(employee)}
             onStatus={(status) => void updateStatus(employee, status)}
             onGallery={(published) => void updateGalleryState(employee, published)}
@@ -211,8 +266,8 @@ export default function AgentsPage({
           />
         ))}
         {!filteredEmployees.length && (
-          <div className="sd1-agents-empty">
-            <StaffdeckIcon name="search" />
+          <div className="grid h-[262px] w-[294px] max-w-full place-items-center content-center gap-[10px] rounded-[18px] border border-dashed border-[#dfe4ec] bg-[#fbfcfd] font-bold text-[#8b94aa] dark:border-[#343741] dark:bg-[#202126] dark:text-[#a8afbd]">
+            <IconSearch className="size-[20px] shrink-0" />
             <span>没有匹配的数字员工</span>
           </div>
         )}
@@ -231,110 +286,5 @@ export default function AgentsPage({
         onSaved={updateAgentInList}
       />
     </div>
-  );
-}
-
-function EmployeeCard({
-  employee,
-  canManage,
-  onOpen,
-  onStatus,
-  onGallery,
-  onDelete,
-  onAvatar,
-  onEdit,
-  onChat,
-}: {
-  employee: AgentProfileRead;
-  canManage: boolean;
-  onOpen: () => void;
-  onStatus: (status: 'active' | 'archived') => void;
-  onGallery: (published: boolean) => void;
-  onDelete: () => void;
-  onAvatar: () => void;
-  onEdit: () => void;
-  onChat: () => void;
-}) {
-  const profile = employeeProfile(employee);
-  const sopCount = resourceCount(employee.resources, 'skill');
-  const skillCount = resourceCount(employee.resources, 'general_skill');
-  const kbCount = resourceCount(employee.resources, 'knowledge_base');
-  const galleryPublished = isGalleryEmployee(employee);
-  return (
-    <Card className="employee-roster-card" hoverable onClick={onOpen}>
-      <div className="employee-roster-head">
-        <EmployeeAvatar agent={employee} size={54} />
-        <div className="employee-roster-title">
-          <strong>{employeeDisplayName(employee)}</strong>
-          <span>{profile.roleName}</span>
-          <span className={`employee-roster-status ${employee.status === 'active' ? 'online' : 'offline'}`}>
-            <i aria-hidden="true" />
-            {employee.status === 'active' ? '在线' : '下线'}
-          </span>
-        </div>
-        <Button
-          type="text"
-          className="employee-roster-chat"
-          icon={<StaffdeckIcon name="chat" />}
-          aria-label="发起对话"
-          disabled={employee.status !== 'active'}
-          onClick={(event) => {
-            event.stopPropagation();
-            onChat();
-          }}
-        />
-        <Dropdown
-          trigger={['click']}
-          menu={{
-            items: [
-              { key: 'chat', icon: <StaffdeckIcon name="chat" />, label: '发起对话', disabled: employee.status !== 'active' },
-              employee.status === 'active'
-                ? { key: 'archive', icon: <StaffdeckIcon name="pause" />, label: '下线', disabled: !canManage }
-                : { key: 'active', icon: <StaffdeckIcon name="play" />, label: '上线', disabled: !canManage },
-              {
-                key: 'gallery',
-                icon: <StaffdeckIcon name="globe" />,
-                label: galleryPublished ? '从广场下架' : '发布到广场',
-                disabled: !canManage,
-              },
-              { key: 'edit', icon: <StaffdeckIcon name="edit" />, label: '编辑资料', disabled: !canManage },
-              { key: 'avatar', icon: <StaffdeckIcon name="image" />, label: '设置头像', disabled: !canManage },
-              { key: 'delete', icon: <StaffdeckIcon name="trash" />, label: '删除', danger: true, disabled: !canManage },
-            ],
-            onClick: ({ key, domEvent }) => {
-              domEvent.stopPropagation();
-              if (key === 'chat') onChat();
-              if (key === 'active') onStatus('active');
-              if (key === 'archive') onStatus('archived');
-              if (key === 'gallery') onGallery(!galleryPublished);
-              if (key === 'edit') onEdit();
-              if (key === 'avatar') onAvatar();
-              if (key === 'delete') onDelete();
-            },
-          }}
-        >
-          <Button
-            type="text"
-            icon={<StaffdeckIcon name="more" />}
-            aria-label="员工操作"
-            onClick={(event) => event.stopPropagation()}
-          />
-        </Dropdown>
-      </div>
-      <Typography.Paragraph ellipsis={{ rows: 2 }}>
-        {staffdeckDisplayText(employee.description || '暂无描述')}
-      </Typography.Paragraph>
-      <Space wrap className="employee-roster-tags">
-        {profile.workStyles.slice(0, 3).map((item) => <Tag key={item}>{item}</Tag>)}
-      </Space>
-      <div className="employee-roster-styles">
-        {profile.workStyles.slice(0, 3).map((item) => <span key={item}>{item}</span>)}
-      </div>
-      <div className="employee-roster-stats">
-        <span><strong>{kbCount}</strong><em>资料</em></span>
-        <span><strong>{skillCount}</strong><em>技能</em></span>
-        <span><strong>{sopCount}</strong><em>SOP</em></span>
-      </div>
-    </Card>
   );
 }

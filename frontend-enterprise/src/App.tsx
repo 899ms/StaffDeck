@@ -1,6 +1,6 @@
-import { Button, ConfigProvider, Dropdown, Input, Layout, Menu, Modal, Radio, Select, Typography, message, theme as antdTheme } from 'antd';
+import { Button, ConfigProvider, Input, Layout, Modal, Radio, Select, Typography, message, theme as antdTheme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { api, TENANT_ID } from './api/client';
 import {
@@ -12,8 +12,10 @@ import {
   setEnterpriseAuthSession,
   type EnterpriseAuthSession,
 } from './auth';
-import EmployeeAvatar from './components/EmployeeAvatar';
+import AppSidebar from './components/AppSidebar';
 import StaffdeckIcon from './components/StaffdeckIcon';
+import { SidebarProvider } from '@/components/ui/sidebar';
+import { EnterpriseRoute } from './enums/routes';
 import {
   employeeBlankMetadata,
   employeeDisplayName,
@@ -34,18 +36,14 @@ import OpenPlatformPage from './pages/OpenPlatformPage';
 import SkillsPage from './pages/SkillsPage';
 import ScheduledTasksPage, { ScheduledTaskEditPage, ScheduledTaskNewPage } from './pages/ScheduledTasksPage';
 import ToolsPage, { ToolEditPage, ToolNewPage, ToolTestPage } from './pages/ToolsPage';
-import TutorialPage from './pages/TutorialPage';
-import { ThemeToggleButton, useThemeController, type EffectiveTheme } from './theme';
+import { useIsMobile } from './hooks/use-mobile';
+import { Toaster } from '@/components/ui/sonner';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import type { AgentProfileRead } from './types';
-import type { MenuProps } from 'antd';
-import logoMark from './assets/staffdeck/staffdeck-logo-mark.png';
 
 const { Header, Sider, Content } = Layout;
 const ENTERPRISE_AGENT_STORAGE_KEY = 'ultrarag_enterprise_agent_scope';
 const ENTERPRISE_SIDEBAR_STORAGE_KEY = 'ultrarag_enterprise_sidebar_expanded';
-const ENTERPRISE_SIDEBAR_COLLAPSED_WIDTH = 72;
-const ENTERPRISE_SIDEBAR_EXPANDED_WIDTH = 220;
-
 type AgentCreateMode = 'copy' | 'blank';
 
 type AgentCreateFormState = {
@@ -70,11 +68,9 @@ const EMPTY_AGENT_FORM: AgentCreateFormState = {
 };
 
 function Shell({
-  effectiveTheme,
   auth,
   onLogout,
 }: {
-  effectiveTheme: EffectiveTheme;
   auth: EnterpriseAuthSession;
   onLogout: () => void;
 }) {
@@ -88,6 +84,7 @@ function Shell({
   });
   const [agentCreateOpen, setAgentCreateOpen] = useState(false);
   const [agentForm, setAgentForm] = useState<AgentCreateFormState>(EMPTY_AGENT_FORM);
+  const isMobile = useIsMobile();
   const isAdmin = isEnterpriseAdmin(auth.user);
   const accountRoleLabel = isAdmin ? '管理员' : '';
   const isDistillRoute = location.pathname === '/enterprise/skills/distill';
@@ -120,6 +117,16 @@ function Shell({
   useEffect(() => {
     loadAgents();
   }, []);
+
+  // Auto-collapse the sidebar on small screens; restore the saved preference on desktop.
+  useEffect(() => {
+    if (isMobile) {
+      setSidebarExpanded(false);
+    } else {
+      const stored = window.localStorage.getItem(ENTERPRISE_SIDEBAR_STORAGE_KEY);
+      setSidebarExpanded(stored == null ? true : stored === '1');
+    }
+  }, [isMobile]);
 
   useEffect(() => {
     const onAgentRefresh = () => {
@@ -178,97 +185,21 @@ function Shell({
     window.dispatchEvent(new CustomEvent('ultrarag-enterprise-agent-scope-change', { detail: { agentId } }));
   }
 
-  function toggleSidebar() {
-    setSidebarExpanded((current) => {
-      const next = !current;
-      window.localStorage.setItem(ENTERPRISE_SIDEBAR_STORAGE_KEY, next ? '1' : '0');
-      return next;
-    });
+  function handleSidebarOpenChange(open: boolean) {
+    setSidebarExpanded(open);
+    window.localStorage.setItem(ENTERPRISE_SIDEBAR_STORAGE_KEY, open ? '1' : '0');
   }
 
   const selectedAgent = agents.find((item) => item.id === selectedAgentId);
   const sidebarAgent = selectedAgent;
   const scopeAgents = agents.filter(canUseAgentScope);
   const sourceAgents = isAdmin ? scopeAgents : scopeAgents.filter((item) => !item.is_overall);
-  const isOverallScope = Boolean(selectedAgent?.is_overall);
   const selectedAgentName = selectedAgent ? employeeDisplayName(selectedAgent) : '未选择';
   const selectedAgentCaption = selectedAgent
     ? selectedAgent.is_overall
       ? '开放广场'
       : employeeProfile(selectedAgent).roleName
     : '-';
-  const agentSwitcherItems: MenuProps['items'] = scopeAgents.map((agent) => {
-    const profile = agent.is_overall ? undefined : employeeProfile(agent);
-    return {
-      key: agent.id,
-      label: (
-        <span className="sd1-agent-switcher-option">
-          <EmployeeAvatar agent={agent} size={30} />
-          <span>
-            <strong>{agent.is_overall ? '开放广场' : employeeDisplayName(agent)}</strong>
-            <small>{agent.is_overall ? '平台' : profile?.roleName}</small>
-          </span>
-        </span>
-      ),
-    };
-  });
-  const handleAgentSwitcherClick: MenuProps['onClick'] = ({ key }) => {
-    const nextAgentId = String(key);
-    if (nextAgentId !== selectedAgentId) {
-      changeAgentScope(nextAgentId);
-    }
-    navigate('/enterprise/dashboard');
-  };
-  const sidebarWidth = sidebarExpanded ? ENTERPRISE_SIDEBAR_EXPANDED_WIDTH : ENTERPRISE_SIDEBAR_COLLAPSED_WIDTH;
-  const navItems = [
-    { key: '/enterprise/platform', icon: <StaffdeckIcon name="globe" />, label: '开放广场' },
-    ...(!isOverallScope ? [{ key: '/enterprise/agents', icon: <StaffdeckIcon name="user" />, label: '我的数字员工' }] : []),
-    ...(!isOverallScope
-      ? [
-          {
-            key: 'employees',
-            type: 'group' as const,
-            label: '当前数字员工',
-            children: [
-              { key: '/enterprise/dashboard', icon: <StaffdeckIcon name="file" />, label: '数字员工档案' },
-              { key: '/enterprise/scheduled-tasks', icon: <StaffdeckIcon name="clock" />, label: '定时任务' },
-              { key: '/enterprise/memories', icon: <StaffdeckIcon name="database" />, label: '员工记忆' },
-              { key: '/enterprise/feedback', icon: <StaffdeckIcon name="chat" />, label: '对话日志' },
-            ],
-          },
-        ]
-      : []),
-    {
-      key: 'employee-capabilities',
-      type: 'group' as const,
-      label: isOverallScope ? '开放广场' : '数字员工能力',
-      children: [
-        ...(isOverallScope ? [{ key: '/enterprise/agents', icon: <StaffdeckIcon name="user" />, label: '数字员工广场' }] : []),
-        { key: '/enterprise/knowledge', icon: <StaffdeckIcon name="file" />, label: isOverallScope ? '知识库广场' : '知识库' },
-        { key: '/enterprise/general-skills', icon: <StaffdeckIcon name="spark" />, label: isOverallScope ? '技能广场' : '技能' },
-        { key: '/enterprise/skills', icon: <StaffdeckIcon name="filter" />, label: isOverallScope ? 'SOP 广场' : 'SOP' },
-        { key: '/enterprise/tools', icon: <StaffdeckIcon name="tool" />, label: isOverallScope ? '工具广场' : '工具' },
-      ],
-    },
-    ...(isAdmin
-      ? [
-          {
-            key: 'employee-accounts',
-            type: 'group' as const,
-            label: '系统',
-            children: [
-              { key: '/enterprise/accounts', icon: <StaffdeckIcon name="user" />, label: '账号管理' },
-              { key: '/enterprise/models', icon: <StaffdeckIcon name="model" />, label: '模型' },
-            ],
-          },
-        ]
-      : []),
-  ];
-
-  function handleMenuClick(key: string) {
-    navigate(key);
-  }
-
   function openCreateAgentModal() {
     setAgentForm({
       ...EMPTY_AGENT_FORM,
@@ -320,194 +251,28 @@ function Shell({
   }
 
   return (
-    <Layout className={`app-shell ${sidebarExpanded ? 'sidebar-expanded' : 'sidebar-collapsed'} ${isAgentRosterRoute ? 'is-agent-roster' : ''}`}>
-      <Sider width={sidebarWidth} theme={effectiveTheme} className={`sidebar sd1-sidebar ${sidebarExpanded ? 'is-expanded' : 'is-collapsed'}`}>
-        <nav className="sd1-rail" aria-label="企业端导航">
-          <button type="button" className="sd1-rail-logo" title="开放广场" onClick={() => navigate('/enterprise/platform')}>
-            <img src={logoMark} alt="" />
-            <span className="sd1-brand-text">
-              <small>Modelbest</small>
-              <strong>UltraRAG4</strong>
-            </span>
-          </button>
-          <div className="sd1-rail-primary">
-            <button
-              type="button"
-              className={`sd1-rail-icon ${selected === '/enterprise/platform' ? 'active' : ''}`}
-              title="开放广场平台"
-              onClick={() => navigate('/enterprise/platform')}
-            >
-              <StaffdeckIcon name="desktop" />
-              <span className="sd1-rail-menu-text">开放广场平台</span>
-            </button>
-            <button
-              type="button"
-              className={`sd1-rail-icon ${selected === '/enterprise/agents' ? 'active' : ''}`}
-              title="我的数字员工"
-              onClick={() => navigate('/enterprise/agents')}
-            >
-              <StaffdeckIcon name="user" />
-              <span className="sd1-rail-menu-text">我的数字员工</span>
-            </button>
-            {isAdmin && (
-              <>
-                <button
-                  type="button"
-                  className={`sd1-rail-icon ${selected === '/enterprise/accounts' ? 'active' : ''}`}
-                  title="账号管理"
-                  onClick={() => navigate('/enterprise/accounts')}
-                >
-                  <StaffdeckIcon name="user" />
-                  <span className="sd1-rail-menu-text">账号管理</span>
-                </button>
-                <button
-                  type="button"
-                  className={`sd1-rail-icon ${selected === '/enterprise/models' ? 'active' : ''}`}
-                  title="模型配置"
-                  onClick={() => navigate('/enterprise/models')}
-                >
-                  <StaffdeckIcon name="model" />
-                  <span className="sd1-rail-menu-text">模型配置</span>
-                </button>
-              </>
-            )}
-          </div>
-
-          <div className="sd1-rail-employee">
-            {sidebarAgent ? (
-              <Dropdown
-                trigger={['click']}
-                placement="bottomLeft"
-                overlayClassName="sd1-agent-switcher-dropdown"
-                menu={{
-                  items: agentSwitcherItems,
-                  selectedKeys: selectedAgentId ? [selectedAgentId] : [],
-                  onClick: handleAgentSwitcherClick,
-                }}
-              >
-                <button
-                  type="button"
-                  className={`sd1-rail-agent ${selected === '/enterprise/dashboard' ? 'active' : ''}`}
-                  title="切换当前员工"
-                  aria-label="切换当前员工"
-                >
-                  <EmployeeAvatar agent={sidebarAgent} size={32} />
-                  <span className="sd1-rail-agent-label">
-                    <span className="sd1-rail-agent-short">{sidebarAgent.is_overall ? '广场' : employeeProfile(sidebarAgent).roleName.slice(0, 2)}</span>
-                    <span className="sd1-rail-agent-name">{sidebarAgent.is_overall ? '开放广场' : '当前员工'}</span>
-                    <span className="sd1-rail-agent-role">{sidebarAgent.is_overall ? '平台' : employeeProfile(sidebarAgent).roleName}</span>
-                  </span>
-                  <span className="sd1-rail-agent-chevron" aria-hidden="true">
-                    <StaffdeckIcon name="arrow" style={{ transform: 'rotate(90deg)' }} />
-                  </span>
-                </button>
-              </Dropdown>
-            ) : (
-              <Dropdown
-                trigger={['click']}
-                placement="bottomLeft"
-                overlayClassName="sd1-agent-switcher-dropdown"
-                menu={{
-                  items: agentSwitcherItems,
-                  selectedKeys: selectedAgentId ? [selectedAgentId] : [],
-                  onClick: handleAgentSwitcherClick,
-                }}
-              >
-                <button
-                  type="button"
-                  className="sd1-rail-agent is-empty"
-                  title="切换当前员工"
-                  aria-label="切换当前员工"
-                >
-                  <span className="sd1-rail-agent-empty-mark" aria-hidden="true">
-                    <StaffdeckIcon name="plus" />
-                  </span>
-                  <span className="sd1-rail-agent-label">
-                    <span className="sd1-rail-agent-short">+</span>
-                    <span className="sd1-rail-agent-name">未选择</span>
-                    <span className="sd1-rail-agent-role">-</span>
-                  </span>
-                  <span className="sd1-rail-agent-chevron" aria-hidden="true">
-                    <StaffdeckIcon name="arrow" style={{ transform: 'rotate(90deg)' }} />
-                  </span>
-                </button>
-              </Dropdown>
-            )}
-            <div className="sd1-rail-divider" />
-            <span className="sd1-rail-label">
-              <span className="sd1-rail-label-collapsed">资料</span>
-              <span className="sd1-rail-label-expanded">基本资料</span>
-            </span>
-            <button type="button" className={`sd1-rail-icon ${selected === '/enterprise/dashboard' ? 'active' : ''}`} title="员工档案" onClick={() => navigate('/enterprise/dashboard')}>
-              <StaffdeckIcon name="file" />
-              <span className="sd1-rail-menu-text">员工档案</span>
-            </button>
-            <button type="button" className={`sd1-rail-icon ${selected === '/enterprise/scheduled-tasks' ? 'active' : ''}`} title="定时任务" onClick={() => navigate('/enterprise/scheduled-tasks')}>
-              <StaffdeckIcon name="clock" />
-              <span className="sd1-rail-menu-text">定时任务</span>
-            </button>
-            <button type="button" className={`sd1-rail-icon ${selected === '/enterprise/memories' ? 'active' : ''}`} title="记忆" onClick={() => navigate('/enterprise/memories')}>
-              <StaffdeckIcon name="history" />
-              <span className="sd1-rail-menu-text">记忆</span>
-            </button>
-            <button type="button" className={`sd1-rail-icon ${selected === '/enterprise/feedback' ? 'active' : ''}`} title="对话日志" onClick={() => navigate('/enterprise/feedback')}>
-              <StaffdeckIcon name="calendar" />
-              <span className="sd1-rail-menu-text">对话日志</span>
-            </button>
-            <span className="sd1-rail-label">
-              <span className="sd1-rail-label-collapsed">能力</span>
-              <span className="sd1-rail-label-expanded">员工能力</span>
-            </span>
-            <button type="button" className={`sd1-rail-icon ${selected === '/enterprise/knowledge' ? 'active' : ''}`} title="知识库" onClick={() => navigate('/enterprise/knowledge')}>
-              <StaffdeckIcon name="folder" />
-              <span className="sd1-rail-menu-text">知识库</span>
-            </button>
-            <button type="button" className={`sd1-rail-icon ${selected === '/enterprise/general-skills' ? 'active' : ''}`} title="技能" onClick={() => navigate('/enterprise/general-skills')}>
-              <StaffdeckIcon name="spark" />
-              <span className="sd1-rail-menu-text">技能</span>
-            </button>
-            <button type="button" className={`sd1-rail-icon ${selected === '/enterprise/skills' ? 'active' : ''}`} title="SOP" onClick={() => navigate('/enterprise/skills')}>
-              <StaffdeckIcon name="filter" />
-              <span className="sd1-rail-menu-text">SOP</span>
-            </button>
-            <button type="button" className={`sd1-rail-icon ${selected === '/enterprise/tools' ? 'active' : ''}`} title="工具" onClick={() => navigate('/enterprise/tools')}>
-              <StaffdeckIcon name="tool" />
-              <span className="sd1-rail-menu-text">工具</span>
-            </button>
-          </div>
-
-          <button type="button" className="sd1-rail-chat" title="聊天端" onClick={() => { window.location.href = '/chat/'; }}>
-            <StaffdeckIcon name="chat" />
-            <span className="sd1-rail-menu-text">聊天端</span>
-          </button>
-          <button
-            type="button"
-            className="sd1-rail-toggle"
-            title={sidebarExpanded ? '收起边栏' : '展开边栏'}
-            aria-label={sidebarExpanded ? '收起边栏' : '展开边栏'}
-            aria-pressed={sidebarExpanded}
-            onClick={toggleSidebar}
-          >
-            {sidebarExpanded ? <StaffdeckIcon name="sidebar-close" /> : <img src={logoMark} alt="" />}
-          </button>
-        </nav>
-      </Sider>
+    <SidebarProvider
+      open={sidebarExpanded}
+      onOpenChange={handleSidebarOpenChange}
+      style={{ '--sidebar-width': '220px', '--sidebar-width-icon': '72px' } as CSSProperties}
+      className={`app-shell ${sidebarExpanded ? 'sidebar-expanded' : 'sidebar-collapsed'} ${isAgentRosterRoute ? 'is-agent-roster' : ''}`}
+    >
+      <AppSidebar
+        selected={selected}
+        onNavigate={navigate}
+        isAdmin={isAdmin}
+        sidebarAgent={sidebarAgent}
+        scopeAgents={scopeAgents}
+        selectedAgentId={selectedAgentId}
+        onSelectAgent={(agentId) => {
+          if (agentId !== selectedAgentId) changeAgentScope(agentId);
+          navigate(EnterpriseRoute.Dashboard);
+        }}
+        onOpenChat={() => {
+          window.location.href = '/chat/';
+        }}
+      />
       <Layout>
-        <Header className="topbar">
-          <div className="topbar-scope">
-            <Typography.Text className="topbar-agent-name" strong title={selectedAgentName}>
-              {selectedAgentName}
-            </Typography.Text>
-            <div className="topbar-subtitle" title={selectedAgentCaption}>
-              {selectedAgentCaption}
-            </div>
-          </div>
-          <div className="topbar-actions">
-            {accountRoleLabel && <span className="account-chip">{accountRoleLabel}</span>}
-            <ThemeToggleButton />
-            <Button icon={<StaffdeckIcon name="logout" />} onClick={onLogout} aria-label="退出登录" />
-          </div>
-        </Header>
         <Content className={`content ${selected === '/enterprise/dashboard' ? 'sd1-dashboard-content' : ''} ${selected !== '/enterprise/dashboard' && !isDistillRoute ? 'sd1-management-content' : ''}`}>
           <div className={isDistillRoute ? 'persistent-distill active' : 'persistent-distill hidden'}>
             <DistillPage active={isDistillRoute} searchParamsOverride={distillSearchParams} />
@@ -518,7 +283,7 @@ function Shell({
               <Route path="/enterprise/platform" element={<OpenPlatformPage currentUser={auth.user} isAdmin={isAdmin} />} />
               <Route path="/enterprise/platform/:kind" element={<OpenPlatformPage currentUser={auth.user} isAdmin={isAdmin} />} />
               <Route path="/enterprise/dashboard" element={<DashboardPage currentUser={auth.user} isAdmin={isAdmin} />} />
-              <Route path="/enterprise/agents" element={<AgentsPage currentUser={auth.user} isAdmin={isAdmin} onCreateAgent={openCreateAgentModal} />} />
+              <Route path="/enterprise/agents" element={<AgentsPage currentUser={auth.user} isAdmin={isAdmin} onCreateAgent={openCreateAgentModal} onLogout={onLogout} />} />
               <Route path="/enterprise/memories" element={<MemoriesPage />} />
               <Route path="/enterprise/knowledge" element={<KnowledgeManagePage />} />
               <Route path="/enterprise/knowledge/new" element={<KnowledgeAddPage />} />
@@ -621,7 +386,7 @@ function Shell({
           </label>
         </div>
       </Modal>
-    </Layout>
+    </SidebarProvider>
   );
 }
 
@@ -662,7 +427,7 @@ function EnterpriseLogin({
         <span className="brand-mark">SD</span>
         <div>
           <Typography.Text className="brand-title">Modelbest</Typography.Text>
-          <Typography.Title level={2}>UltraRAG4 数字员工运营台</Typography.Title>
+          <Typography.Title level={2}>StaffDeck 数字员工运营台</Typography.Title>
         </div>
         <div className="enterprise-login-form">
           <label>
@@ -719,9 +484,19 @@ function AppRoutes({
 }
 
 export default function App() {
-  const { effectiveTheme } = useThemeController();
-  const isDark = effectiveTheme === 'dark';
+  const isDark = false;
   const [auth, setAuth] = useState<EnterpriseAuthSession | null>(() => getEnterpriseAuthSession());
+
+  // Force light theme app-wide (theme switching has been removed).
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.remove('dark');
+    root.classList.add('light');
+    root.setAttribute('data-theme', 'light');
+    root.setAttribute('data-theme-mode', 'light');
+    root.style.colorScheme = 'light';
+    window.localStorage.setItem('ultrarag_theme_mode', 'light');
+  }, []);
 
   function logout() {
     clearEnterpriseAuthSession();
@@ -749,9 +524,16 @@ export default function App() {
         },
       }}
     >
-      <BrowserRouter>
-        <AppRoutes auth={auth} effectiveTheme={effectiveTheme} onLogin={setAuth} onLogout={logout} />
-      </BrowserRouter>
+      <TooltipProvider>
+        <BrowserRouter>
+          {auth ? (
+            <Shell auth={auth} onLogout={logout} />
+          ) : (
+            <EnterpriseLogin onLogin={setAuth} />
+          )}
+        </BrowserRouter>
+        <Toaster richColors closeButton position="top-right" />
+      </TooltipProvider>
     </ConfigProvider>
   );
 }

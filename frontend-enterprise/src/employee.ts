@@ -1,5 +1,13 @@
 import type { AgentProfileRead, AgentResourceBindingRead } from './types';
 
+import avatarAfterSales from './assets/staffdeck/staffdeck-avatar-after-sales.png';
+import avatarCommerce from './assets/staffdeck/staffdeck-avatar-commerce.png';
+import avatarKnowledge from './assets/staffdeck/staffdeck-avatar-knowledge.png';
+import avatarOps from './assets/staffdeck/staffdeck-avatar-ops.png';
+import avatarOverall from './assets/staffdeck/staffdeck-avatar-overall.png';
+import avatarQuality from './assets/staffdeck/staffdeck-avatar-quality.png';
+import avatarService from './assets/staffdeck/staffdeck-avatar-service.png';
+
 export type EmployeeProfile = {
   roleKey: string;
   roleName: string;
@@ -48,6 +56,30 @@ export const EMPLOYEE_AVATAR_PRESETS: EmployeeAvatarPreset[] = [
   { key: 'ops-grid', label: '人事员工', text: '人', tone: 'ink' },
   { key: 'quality-star', label: '法务员工', text: '法', tone: 'gold' },
 ];
+
+export const DEFAULT_AVATAR_PRESET = 'service-orbit';
+
+const PRESET_AVATAR_IMAGES: Record<string, string> = {
+  'service-orbit': avatarService,
+  'after-sales-seal': avatarAfterSales,
+  'knowledge-node': avatarKnowledge,
+  'commerce-compass': avatarCommerce,
+  'ops-grid': avatarOps,
+  'quality-star': avatarQuality,
+  overall: avatarOverall,
+};
+
+type AvatarSource = Pick<EmployeeProfile, 'avatarKind' | 'avatarImage' | 'avatarPreset'>;
+
+export function isUploadedAvatar(profile: AvatarSource): boolean {
+  return profile.avatarKind === 'upload' && Boolean(profile.avatarImage);
+}
+
+/** Resolve the image URL for an employee avatar (uploaded image or preset illustration). */
+export function employeeAvatarImage(profile: AvatarSource): string {
+  if (isUploadedAvatar(profile)) return profile.avatarImage;
+  return PRESET_AVATAR_IMAGES[profile.avatarPreset || DEFAULT_AVATAR_PRESET] || avatarService;
+}
 
 export const EMPLOYEE_TEMPLATES: EmployeeTemplate[] = [
   {

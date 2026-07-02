@@ -1,0 +1,14 @@
+export enum EnterpriseRoute {
+  Platform = '/enterprise/platform',
+  Agents = '/enterprise/agents',
+  Dashboard = '/enterprise/dashboard',
+  ScheduledTasks = '/enterprise/scheduled-tasks',
+  Memories = '/enterprise/memories',
+  Feedback = '/enterprise/feedback',
+  Knowledge = '/enterprise/knowledge',
+  GeneralSkills = '/enterprise/general-skills',
+  Skills = '/enterprise/skills',
+  Tools = '/enterprise/tools',
+  Accounts = '/enterprise/accounts',
+  Models = '/enterprise/models',
+}

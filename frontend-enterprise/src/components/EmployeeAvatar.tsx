@@ -1,58 +1,86 @@
-import type { EmployeeProfile } from '../employee';
-import { employeeProfile } from '../employee';
+import type { CSSProperties } from 'react';
+
+import {
+  DEFAULT_AVATAR_PRESET,
+  employeeAvatarImage,
+  employeeProfile,
+  isUploadedAvatar,
+  type EmployeeProfile,
+} from '../employee';
 import type { AgentProfileRead } from '../types';
 
 type AvatarProfile = Pick<EmployeeProfile, 'avatarKind' | 'avatarImage' | 'avatarPreset' | 'avatarText' | 'avatarTone'>;
 
-import avatarAfterSales from '../assets/staffdeck/staffdeck-avatar-after-sales.png';
-import avatarCommerce from '../assets/staffdeck/staffdeck-avatar-commerce.png';
-import avatarKnowledge from '../assets/staffdeck/staffdeck-avatar-knowledge.png';
-import avatarOps from '../assets/staffdeck/staffdeck-avatar-ops.png';
-import avatarOverall from '../assets/staffdeck/staffdeck-avatar-overall.png';
-import avatarQuality from '../assets/staffdeck/staffdeck-avatar-quality.png';
-import avatarService from '../assets/staffdeck/staffdeck-avatar-service.png';
-
-const PRESET_AVATARS: Record<string, string> = {
-  'service-orbit': avatarService,
-  'after-sales-seal': avatarAfterSales,
-  'knowledge-node': avatarKnowledge,
-  'commerce-compass': avatarCommerce,
-  'ops-grid': avatarOps,
-  'quality-star': avatarQuality,
-  overall: avatarOverall,
+type EmployeeAvatarProps = {
+  agent?: AgentProfileRead | null;
+  /** Pre-resolved profile. When omitted it is derived from `agent`. */
+  profile?: AvatarProfile;
+  /** Square shorthand for width/height (px). Used when width/height are not provided. */
+  size?: number;
+  /** Explicit width in px. Falls back to `size`. */
+  width?: number;
+  /** Explicit height in px. Falls back to `size`. */
+  height?: number;
+  /** Border radius override (px or any CSS length). */
+  radius?: number | string;
+  /** How the image fills the box. `cover` fills the frame without distortion. */
+  fit?: CSSProperties['objectFit'];
+  /** Alignment of the image within the box, e.g. `center bottom`. */
+  objectPosition?: CSSProperties['objectPosition'];
+  className?: string;
+  style?: CSSProperties;
 };
 
 export default function EmployeeAvatar({
   agent,
   profile: profileOverride,
   size = 54,
+  width,
+  height,
+  radius,
+  fit = 'cover',
+  objectPosition = 'center',
   className = '',
-}: {
-  agent?: AgentProfileRead | null;
-  profile?: AvatarProfile;
-  size?: number;
-  className?: string;
-}) {
+  style,
+}: EmployeeAvatarProps) {
   const profile = profileOverride || employeeProfile(agent);
-  const classes = [
+  const uploaded = isUploadedAvatar(profile);
+
+  const className_ = [
     'employee-avatar',
     `tone-${profile.avatarTone || 'teal'}`,
-    `avatar-preset-${profile.avatarPreset || 'service-orbit'}`,
-    profile.avatarKind === 'upload' && profile.avatarImage ? 'is-uploaded-avatar' : '',
+    `avatar-preset-${profile.avatarPreset || DEFAULT_AVATAR_PRESET}`,
+    uploaded ? 'is-uploaded-avatar' : '',
     className,
-  ].filter(Boolean).join(' ');
+  ]
+    .filter(Boolean)
+    .join(' ');
 
-  if (profile.avatarKind === 'upload' && profile.avatarImage) {
-    return (
-      <span className={classes} style={{ width: size, height: size }} aria-label="员工自定义头像">
-        <img src={profile.avatarImage} alt="" />
-      </span>
-    );
-  }
+  const boxStyle: CSSProperties = {
+    width: width ?? size,
+    height: height ?? size,
+    ...(radius != null ? { borderRadius: radius } : null),
+    ...style,
+  };
+
+  // Lock the image to the box at any width/height: `cover` fills without distortion,
+  // while resetting transform/max-width neutralizes per-context overrides.
+  const imageStyle: CSSProperties = {
+    width: '100%',
+    height: '100%',
+    maxWidth: 'none',
+    objectFit: fit,
+    objectPosition,
+    transform: 'none'
+  };
 
   return (
-    <span className={classes} style={{ width: size, height: size }} aria-label={`${profile.avatarText || '员'}员工头像`}>
-      <img src={PRESET_AVATARS[profile.avatarPreset || 'service-orbit'] || avatarService} alt="" />
+    <span
+      className={className_}
+      style={boxStyle}
+      aria-label={uploaded ? '员工自定义头像' : `${profile.avatarText || '员'}员工头像`}
+    >
+      <img src={employeeAvatarImage(profile)} alt="" style={imageStyle} />
     </span>
   );
 }

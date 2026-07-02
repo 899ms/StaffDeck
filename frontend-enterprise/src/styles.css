@@ -1,3 +1,10 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+
+@custom-variant dark (&:is(.dark *));
+
 * {
   box-sizing: border-box;
 }
@@ -12,7 +19,7 @@
   --border: #ded7cc;
   --border-strong: #cfc5b7;
   --line: #e7dfd3;
-  --muted: #6d726e;
+  --muted: #eeece4;
   --muted-soft: #9a9b95;
   --accent: #0f766e;
   --accent-soft: #e1f1ed;
@@ -25,9 +32,9 @@
   --olive: #6f7b42;
   --shadow-float: 0 20px 54px rgba(37, 32, 24, 0.1);
   --shadow-soft: 0 10px 30px rgba(37, 32, 24, 0.055);
-  --font-body: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
-  --font-display: "Avenir Next Condensed", "DIN Alternate", "PingFang SC", system-ui, sans-serif;
-  --font-mono: "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", monospace;
+  --font-body: "Inter", "IBM Plex Sans", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --font-display: "Inter", "IBM Plex Sans", "Noto Sans SC", "PingFang SC", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --page-gradient-a: rgba(15, 118, 110, 0.055);
   --page-gradient-top: #fbfaf6;
   --page-gradient-bottom: #f3f0e8;
@@ -51,6 +58,32 @@
   --code-boolean: #0000ff;
   --thinking-base: #8a918d;
   --thinking-focus: #2f3734;
+  --card: #ffffff;
+  --card-foreground: #20201d;
+  --popover: #ffffff;
+  --popover-foreground: #20201d;
+  --primary: #0f766e;
+  --primary-foreground: #ffffff;
+  --secondary: #eeece4;
+  --secondary-foreground: #20201d;
+  --muted-foreground: #6d726e;
+  --destructive: #dc2626;
+  --input: #ded7cc;
+  --ring: #0f766e;
+  --chart-1: #0f766e;
+  --chart-2: #6f7b42;
+  --chart-3: #a85d32;
+  --chart-4: #138a55;
+  --chart-5: #b45309;
+  --radius: 0.625rem;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #858b9c;
+  --sidebar-primary: #18181a;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f6f6f6;
+  --sidebar-accent-foreground: #18181a;
+  --sidebar-border: #f4f4f4;
+  --sidebar-ring: #18181a;
 }
 
 :root[data-theme='dark'] {
@@ -122,10 +155,21 @@ body.skill-distill-fixed {
   overflow: hidden;
 }
 
-button,
-textarea,
-input {
-  font: inherit;
+@layer base {
+  button,
+  textarea,
+  input {
+    font: inherit;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled),
+  a[href],
+  label[for],
+  select:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
 }
 
 button,
@@ -206,7 +250,7 @@ select,
 .enterprise-login-form label {
   display: grid;
   gap: 7px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 13px;
   font-weight: 720;
 }
@@ -215,7 +259,7 @@ select,
   padding: 10px 12px;
   border: 1px solid var(--border-soft);
   border-radius: 12px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   background: var(--surface-subtle);
   font-size: 12px;
 }
@@ -274,14 +318,14 @@ select,
 
 .brand-subtitle,
 .topbar-subtitle {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.35;
 }
 
 .nav-label {
   padding: 16px 18px 6px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 11px;
   font-weight: 760;
 }
@@ -336,7 +380,7 @@ select,
 }
 
 .agent-dock-label {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 11px;
   font-weight: 700;
   line-height: 1.1;
@@ -383,7 +427,7 @@ select,
 .agent-editor-form label {
   display: grid;
   gap: 6px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 13px;
   font-weight: 700;
 }
@@ -411,14 +455,14 @@ select,
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 10px 12px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   background: color-mix(in srgb, var(--surface-raised) 76%, transparent);
   font-size: 13px;
   line-height: 1.6;
 }
 
 .agent-definition-input {
-  font-family: var(--mono-font);
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.55;
 }
@@ -433,7 +477,7 @@ select,
   height: 36px;
   margin: 3px 0;
   border-radius: 9px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 13px;
   font-weight: 650;
 }
@@ -550,7 +594,7 @@ select,
   padding: 6px 10px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   background: var(--surface-subtle);
   font-size: 12px;
   font-weight: 700;
@@ -563,7 +607,7 @@ select,
 .ant-btn.theme-toggle-button {
   width: 34px;
   height: 34px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   border: 1px solid var(--border);
   border-radius: 10px;
   background: color-mix(in srgb, var(--surface) 72%, transparent);
@@ -814,7 +858,7 @@ body.skill-distill-fixed .content {
 }
 
 .compact-metric span {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 13px;
   font-weight: 680;
 }
@@ -904,7 +948,7 @@ body.skill-distill-fixed .content {
 
 .model-name-main span {
   min-width: 0;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.3;
   overflow: hidden;
@@ -940,7 +984,7 @@ body.skill-distill-fixed .content {
 }
 
 .ant-statistic-title {
-  color: var(--muted) !important;
+  color: var(--muted-foreground) !important;
   font-size: 12px !important;
   font-weight: 650 !important;
 }
@@ -1055,7 +1099,7 @@ body.skill-distill-fixed .content {
 
 .skill-filter-search .ant-input::placeholder,
 .general-skill-search-combo .ant-input-search .ant-input::placeholder {
-  color: color-mix(in srgb, var(--muted) 76%, transparent);
+  color: color-mix(in srgb, var(--muted-foreground) 76%, transparent);
 }
 
 .skill-filter-search .ant-input-group-addon,
@@ -1109,7 +1153,7 @@ body.skill-distill-fixed .content {
 }
 
 .skill-table-filter-label {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 760;
 }
@@ -1138,7 +1182,7 @@ body.skill-distill-fixed .content {
 
 .agent-summary-card span,
 .agent-summary-card small {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .agent-summary-card strong {
@@ -1439,7 +1483,7 @@ body.skill-distill-fixed .content {
 
 .employee-metric-tile span {
   display: block;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 720;
 }
@@ -1675,7 +1719,7 @@ body.skill-distill-fixed .content {
 }
 
 .open-platform-card-head em {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-style: normal;
   font-weight: 740;
@@ -1706,7 +1750,7 @@ body.skill-distill-fixed .content {
 }
 
 .open-platform-card-actions > span {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.55;
 }
@@ -3360,7 +3404,7 @@ body.skill-distill-fixed .content {
 }
 
 .open-platform-preview-heading em {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-style: normal;
 }
@@ -3441,7 +3485,7 @@ body.skill-distill-fixed .content {
 
 .open-platform-preview-item .open-platform-preview-copy > span,
 .open-platform-preview-empty {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -3449,7 +3493,7 @@ body.skill-distill-fixed .content {
 .open-platform-preview-item small {
   display: -webkit-box;
   min-height: 0;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.35;
   -webkit-line-clamp: 1;
@@ -3593,7 +3637,7 @@ body.skill-distill-fixed .content {
 }
 
 .open-platform-resource-copy em {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-style: normal;
   font-size: 12px;
   white-space: nowrap;
@@ -3603,7 +3647,7 @@ body.skill-distill-fixed .content {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  color: var(--muted);
+  color: var(--muted-foreground);
   line-height: 1.55;
 }
 
@@ -3684,7 +3728,7 @@ body.skill-distill-fixed .content {
 
 .open-platform-drawer-meta-grid span,
 .open-platform-drawer-summary .ant-typography {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 700;
 }
@@ -3773,7 +3817,7 @@ body.skill-distill-fixed .content {
 
 .employee-id-card span {
   max-width: 100%;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--font-mono);
   font-size: 12px;
   overflow: hidden;
@@ -3809,7 +3853,7 @@ body.skill-distill-fixed .content {
 }
 
 .employee-home-meta {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .employee-online-dot {
@@ -3823,7 +3867,7 @@ body.skill-distill-fixed .content {
 .employee-system-summary {
   max-width: 880px;
   margin: 0 !important;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 15px;
   line-height: 1.7;
 }
@@ -3926,7 +3970,7 @@ body.skill-distill-fixed .content {
 .employee-work-metric span {
   display: block;
   margin-top: 8px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 13px;
 }
 
@@ -3955,7 +3999,7 @@ body.skill-distill-fixed .content {
   margin: 0 auto;
   padding-left: calc(var(--heatmap-weekday-width) + 12px);
   box-sizing: border-box;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 13px;
 }
 
@@ -3981,7 +4025,7 @@ body.skill-distill-fixed .content {
   display: grid;
   grid-template-rows: repeat(7, var(--heatmap-cell-size));
   gap: var(--heatmap-gap);
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
@@ -4055,7 +4099,7 @@ body.skill-distill-fixed .content {
   justify-content: center;
   gap: 7px;
   margin-top: 14px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
@@ -4108,7 +4152,7 @@ body.skill-distill-fixed .content {
 .employee-memory-date {
   display: grid;
   gap: 3px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   text-align: left;
 }
 
@@ -4170,7 +4214,7 @@ body.skill-distill-fixed .content {
 }
 
 .employee-memory-copy small {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 700;
 }
@@ -4185,7 +4229,7 @@ body.skill-distill-fixed .content {
 }
 
 .employee-memory-copy span {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 13px;
   line-height: 1.5;
   display: -webkit-box;
@@ -4200,7 +4244,7 @@ body.skill-distill-fixed .content {
   place-items: center;
   border: 1px dashed var(--border);
   border-radius: 16px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   background: var(--surface-subtle);
 }
 
@@ -4269,7 +4313,7 @@ body.skill-distill-fixed .content {
 }
 
 .employee-task-copy small {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
@@ -4479,7 +4523,7 @@ body.skill-distill-fixed .content {
   margin: 8px 0 0;
   display: -webkit-box;
   overflow: hidden;
-  color: var(--muted);
+  color: var(--muted-foreground);
   line-height: 1.55;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -4507,7 +4551,7 @@ body.skill-distill-fixed .content {
 .scheduled-task-mobile-meta b {
   display: block;
   margin-bottom: 3px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 11px;
   font-weight: 650;
 }
@@ -4557,7 +4601,7 @@ body.skill-distill-fixed .content {
   padding: 12px 14px;
   border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border));
   border-radius: 12px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   background: color-mix(in srgb, var(--accent-soft) 38%, var(--surface));
   font-size: 13px;
   line-height: 1.6;
@@ -4706,7 +4750,7 @@ body.skill-distill-fixed .content {
 }
 
 .employee-roster-title span {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 13px;
 }
 
@@ -4917,7 +4961,7 @@ body.skill-distill-fixed .content {
   padding: 4px 9px;
   border: 1px solid var(--border-soft);
   border-radius: 999px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   background: var(--surface-subtle);
   font-size: 12px;
   overflow: hidden;
@@ -4969,7 +5013,7 @@ body.skill-distill-fixed .content {
 }
 
 .conversation-event-item span {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
@@ -5016,7 +5060,7 @@ body.skill-distill-fixed .content {
 }
 
 .agent-resource-tag small {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 11px;
 }
 
@@ -5029,7 +5073,7 @@ body.skill-distill-fixed .content {
 }
 
 .ant-table-thead > tr > th {
-  color: var(--muted) !important;
+  color: var(--muted-foreground) !important;
   background: var(--surface-subtle) !important;
   font-size: 12px;
   font-weight: 740 !important;
@@ -5045,7 +5089,7 @@ body.skill-distill-fixed .content {
 }
 
 .muted-cell {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .code-cell {
@@ -5087,7 +5131,7 @@ body.skill-distill-fixed .content {
   gap: 4px;
   min-height: 88px;
   padding: 12px 14px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   text-align: left;
   background: var(--surface-subtle);
   border: 1px solid var(--border);
@@ -5230,7 +5274,7 @@ body.skill-distill-fixed .content {
 
 .tool-test-meta-grid span,
 .tool-test-endpoint span {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 650;
 }
@@ -5285,7 +5329,7 @@ body.skill-distill-fixed .content {
 
 .tool-probe-hint.ant-typography {
   margin: -2px 0 10px !important;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.55;
 }
@@ -5366,7 +5410,7 @@ body.skill-distill-fixed .content {
   display: grid;
   place-items: center;
   padding: 20px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   text-align: center;
   border: 1px dashed var(--border);
   border-radius: 12px;
@@ -5549,7 +5593,7 @@ body.skill-distill-fixed .content {
   align-items: center;
   gap: 8px;
   padding: 0 14px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   border-bottom: 1px solid var(--code-border);
   background: var(--code-tab-bg);
   font-size: 12px;
@@ -5569,7 +5613,7 @@ body.skill-distill-fixed .content {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   background: transparent;
   border: 0;
   border-radius: 8px;
@@ -5653,7 +5697,7 @@ body.skill-distill-fixed .content {
 
 .general-section-label {
   margin-bottom: 8px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 760;
 }
@@ -5709,7 +5753,7 @@ body.skill-distill-fixed .content {
 
 .general-trace-message {
   margin-top: 2px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.55;
   overflow-wrap: anywhere;
@@ -5768,7 +5812,7 @@ body.skill-distill-fixed .content {
 .general-trace-code > summary::after {
   content: '展开';
   margin-left: auto;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 620;
 }
@@ -5931,7 +5975,7 @@ body.skill-distill-fixed .content {
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
-  color: var(--muted) !important;
+  color: var(--muted-foreground) !important;
 }
 
 .general-skill-list-item strong,
@@ -5946,7 +5990,7 @@ body.skill-distill-fixed .content {
 }
 
 .general-skill-list-item small {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
@@ -6008,7 +6052,7 @@ body.skill-distill-fixed .content {
   display: flex;
   gap: 14px;
   flex-wrap: wrap;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 650;
 }
@@ -6028,7 +6072,7 @@ body.skill-distill-fixed .content {
 
 .memory-metadata {
   margin-top: 10px;
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .memory-metadata summary {
@@ -6125,7 +6169,7 @@ body.skill-distill-fixed .content {
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 700;
 }
@@ -6158,7 +6202,7 @@ body.skill-distill-fixed .content {
 
 .feedback-trace-header span:last-child {
   margin-left: auto;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 650;
 }
@@ -6184,7 +6228,7 @@ body.skill-distill-fixed .content {
   place-items: center;
   width: 22px;
   height: 22px;
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .feedback-trace-line.knowledge .feedback-trace-icon {
@@ -6205,7 +6249,7 @@ body.skill-distill-fixed .content {
 }
 
 .feedback-trace-detail {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.55;
   overflow-wrap: anywhere;
@@ -6222,7 +6266,7 @@ body.skill-distill-fixed .content {
 
 .feedback-trace-code summary {
   padding: 7px 10px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
@@ -6486,7 +6530,7 @@ body.skill-distill-fixed .content {
 }
 
 .skill-chat-attachment-type {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 11px;
   line-height: 1.2;
 }
@@ -6528,7 +6572,7 @@ body.skill-distill-fixed .content {
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   opacity: 0;
   transition: opacity 0.16s ease;
 }
@@ -6539,7 +6583,7 @@ body.skill-distill-fixed .content {
 }
 
 .skill-chat-time {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1;
 }
@@ -6551,7 +6595,7 @@ body.skill-distill-fixed .content {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--muted);
+  color: var(--muted-foreground);
   background: transparent;
   border: 0;
   cursor: pointer;
@@ -6679,7 +6723,7 @@ body.skill-distill-fixed .content {
 
 .skill-chat-thinking-block.running .skill-chat-thinking,
 .skill-chat-thinking-block.done .skill-chat-thinking {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .skill-chat-thinking-details {
@@ -6690,7 +6734,7 @@ body.skill-distill-fixed .content {
   padding: 10px 12px;
   display: grid;
   gap: 6px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   background: var(--surface-subtle);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -6763,7 +6807,7 @@ body.skill-distill-fixed .content {
 
 .skill-chat-decision {
   margin-top: 10px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
@@ -6831,7 +6875,7 @@ body.skill-distill-fixed .content {
 }
 
 .skill-upload-status {
-  color: var(--muted);
+  color: var(--muted-foreground);
   white-space: nowrap;
 }
 
@@ -6891,7 +6935,7 @@ body.skill-distill-fixed .content {
   line-height: 1.45;
   border: 1px solid var(--border);
   background: #f7f5ef;
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .skill-tool-status.success {
@@ -6920,7 +6964,7 @@ body.skill-distill-fixed .content {
 
 .skill-tool-suggestion-desc {
   min-width: 0;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.55;
   overflow-wrap: anywhere;
@@ -6933,7 +6977,7 @@ body.skill-distill-fixed .content {
   gap: 6px;
   min-width: 0;
   max-width: 100%;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 11px;
 }
 
@@ -6995,7 +7039,7 @@ body.skill-distill-fixed .content {
   padding: 0;
   display: inline-grid;
   place-items: center;
-  color: var(--muted);
+  color: var(--muted-foreground);
   border-radius: 999px;
 }
 
@@ -7288,7 +7332,7 @@ body.skill-distill-fixed .content {
 }
 
 .skill-source-key {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 720;
 }
@@ -7466,7 +7510,7 @@ textarea.skill-source-edit-input.ant-input,
 
 .skill-source-edit-hint {
   flex: 0 0 auto;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 11px;
   opacity: 0;
 }
@@ -7477,13 +7521,10 @@ textarea.skill-source-edit-input.ant-input,
 }
 
 .skill-source-action-add {
-  height: 28px;
-  min-width: 28px;
-  padding: 0 10px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--muted);
+  height: 24px;
+  min-width: 24px;
+  padding: 0 8px;
+  color: var(--muted-foreground);
   background: #fff;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -7918,7 +7959,7 @@ textarea.skill-source-edit-input.ant-input,
   align-items: center;
   gap: 8px;
   margin: -2px 0 12px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
@@ -8026,7 +8067,7 @@ textarea.skill-source-edit-input.ant-input,
 
 .skill-flow-connector-count {
   padding: 4px 10px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   background: var(--surface-subtle);
   border: 1px dashed var(--border);
   border-radius: 999px;
@@ -8046,7 +8087,7 @@ textarea.skill-source-edit-input.ant-input,
 .skill-flow-edge-chip {
   max-width: 100%;
   padding: 5px 10px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   background: var(--surface-subtle);
   border: 1px dashed var(--border);
   border-radius: 999px;
@@ -8116,7 +8157,7 @@ textarea.skill-source-edit-input.ant-input,
 .save-review-form label {
   display: grid;
   gap: 6px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
@@ -8136,7 +8177,7 @@ textarea.skill-source-edit-input.ant-input,
 
 .save-review-diff-path {
   margin-bottom: 6px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 720;
 }
@@ -8212,7 +8253,7 @@ textarea.skill-source-edit-input.ant-input,
   height: 22px;
   display: inline-grid;
   place-items: center;
-  color: var(--muted);
+  color: var(--muted-foreground);
   background: var(--surface-subtle);
   border-radius: 999px;
   font-size: 12px;
@@ -8291,7 +8332,7 @@ textarea.skill-source-edit-input.ant-input,
 }
 
 .skill-flow-node span {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 760;
 }
@@ -8304,7 +8345,7 @@ textarea.skill-source-edit-input.ant-input,
 .skill-flow-node small {
   max-width: 100%;
   overflow: hidden;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--font-mono);
   font-size: 12px;
   text-overflow: ellipsis;
@@ -8329,7 +8370,7 @@ textarea.skill-source-edit-input.ant-input,
 }
 
 .skill-flow-node-summary {
-  color: var(--muted) !important;
+  color: var(--muted-foreground) !important;
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
@@ -8347,7 +8388,7 @@ textarea.skill-source-edit-input.ant-input,
 .skill-flow-route-count {
   width: fit-content;
   padding: 3px 8px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   background: var(--surface-subtle);
   border: 1px dashed var(--border);
   border-radius: 999px;
@@ -8364,7 +8405,7 @@ textarea.skill-source-edit-input.ant-input,
 }
 
 .skill-flow-compact-row > span:first-child {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 760;
   line-height: 24px;
@@ -8382,7 +8423,7 @@ textarea.skill-source-edit-input.ant-input,
 }
 
 .skill-flow-node .skill-flow-meta-label {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 11px;
   font-weight: 780;
 }
@@ -8418,7 +8459,7 @@ textarea.skill-source-edit-input.ant-input,
 .skill-action-chip {
   max-width: 100%;
   padding: 4px 8px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   background: var(--surface-subtle);
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -8429,7 +8470,7 @@ textarea.skill-source-edit-input.ant-input,
 
 .skill-action-empty,
 .skill-flow-chip.muted {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .skill-action-chip.tool {
@@ -8460,7 +8501,7 @@ textarea.skill-source-edit-input.ant-input,
 }
 
 .skill-action-chip.tool.incomplete {
-  color: var(--muted);
+  color: var(--muted-foreground);
   background: #f7f5ef;
   border-color: var(--border);
 }
@@ -8531,7 +8572,7 @@ code {
   padding: 10px 12px;
   display: grid;
   gap: 6px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   background: var(--surface-subtle);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -9429,7 +9470,7 @@ pre {
     justify-content: center;
     border: 1px solid transparent;
     border-radius: 12px;
-    color: color-mix(in srgb, var(--muted) 88%, transparent) !important;
+    color: color-mix(in srgb, var(--muted-foreground) 88%, transparent) !important;
     background: transparent !important;
     box-shadow: none;
   }
@@ -10063,7 +10104,7 @@ pre {
 }
 
 .knowledge-base-target small {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .knowledge-base-target.is-active {
@@ -10127,7 +10168,7 @@ pre {
 }
 
 .knowledge-upload-inner span {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .knowledge-jobs {
@@ -10170,7 +10211,7 @@ pre {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 11px;
   line-height: 1.2;
 }
@@ -10210,7 +10251,7 @@ pre {
 .knowledge-job-detail {
   display: block;
   margin-top: 4px;
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .knowledge-doc-link {
@@ -10230,7 +10271,7 @@ pre {
 }
 
 .knowledge-doc-link small {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .knowledge-doc-link:hover span {
@@ -10387,7 +10428,7 @@ pre {
 }
 
 .knowledge-stat-pill span {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
@@ -10417,7 +10458,7 @@ pre {
   border: 1px solid var(--border-soft);
   border-radius: 14px;
   background: var(--surface);
-  color: var(--muted);
+  color: var(--muted-foreground);
   flex-wrap: wrap;
 }
 
@@ -10433,7 +10474,7 @@ pre {
 .knowledge-structure-lineage em {
   flex: 1 1 240px;
   min-width: 0;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-style: normal;
 }
 
@@ -10513,7 +10554,7 @@ pre {
 }
 
 .knowledge-overview-panel-head small {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .knowledge-overview-panel .knowledge-mini-list {
@@ -10561,7 +10602,7 @@ pre {
 }
 
 .knowledge-layer-explain small {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
@@ -10609,7 +10650,7 @@ pre {
 
 .knowledge-overview-card-head small,
 .knowledge-mini-item small {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .knowledge-mini-list {
@@ -10669,7 +10710,7 @@ pre {
 }
 
 .knowledge-empty-note {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .knowledge-view-all {
@@ -10749,7 +10790,7 @@ pre {
 
 .knowledge-wiki-map-card small,
 .knowledge-wiki-map-card > span {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .knowledge-index-group {
@@ -10950,7 +10991,7 @@ pre {
 
 .knowledge-lint-item span,
 .knowledge-lint-item small {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .knowledge-log-timeline {
@@ -10969,7 +11010,7 @@ pre {
 }
 
 .knowledge-log-item time {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
 }
 
@@ -10980,7 +11021,7 @@ pre {
 }
 
 .knowledge-log-item span {
-  color: var(--muted);
+  color: var(--muted-foreground);
   overflow-wrap: anywhere;
 }
 
@@ -11017,7 +11058,7 @@ pre {
 }
 
 .okf-editor-modal-title span {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 13px;
   font-weight: 650;
 }
@@ -11071,7 +11112,7 @@ pre {
 }
 
 .okf-editor-meta-list span {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 650;
 }
@@ -11084,7 +11125,7 @@ pre {
 
 .okf-editor-note {
   padding: 12px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   border: 1px solid var(--border-soft);
   border-radius: 12px;
   background: var(--surface);
@@ -11114,7 +11155,7 @@ pre {
 
 .okf-editor-fields label > span,
 .okf-editor-source > span {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 13px;
   font-weight: 720;
 }
@@ -11173,7 +11214,7 @@ pre {
 }
 
 .okf-viewer-title small {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--font-mono);
   font-size: 12px;
   overflow-wrap: anywhere;
@@ -11224,7 +11265,7 @@ pre {
 }
 
 .okf-wiki-meta-item span {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 720;
 }
@@ -11449,7 +11490,7 @@ pre {
 .knowledge-section-node small {
   display: -webkit-box;
   overflow: hidden;
-  color: var(--muted);
+  color: var(--muted-foreground);
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -11480,7 +11521,7 @@ pre {
 
 .knowledge-quality-item span {
   flex: 0 0 auto;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
@@ -11526,7 +11567,7 @@ pre {
 }
 
 .knowledge-evidence-stat small {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .knowledge-evidence-bucket-map {
@@ -11619,7 +11660,7 @@ pre {
 .knowledge-route-step small {
   display: -webkit-box;
   overflow: hidden;
-  color: var(--muted);
+  color: var(--muted-foreground);
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -11697,7 +11738,7 @@ pre {
 }
 
 .knowledge-section-heading span {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
@@ -11851,7 +11892,7 @@ pre {
 }
 
 .agent-list-main small {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .agent-resource-summary {
@@ -12463,8 +12504,9 @@ pre {
   --accent-foreground: #ffffff;
   --shadow-float: 0 18px 48px rgba(17, 17, 17, 0.10);
   --shadow-soft: 0 8px 24px rgba(17, 17, 17, 0.045);
-  --font-body: "Inter", "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --font-body: "Inter", "IBM Plex Sans", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
   --font-display: var(--font-body);
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --page-gradient-a: transparent;
   --page-gradient-top: #f7f8fa;
   --page-gradient-bottom: #f7f8fa;
@@ -12959,6 +13001,11 @@ body,
   box-shadow: none;
 }
 
+/* Drop the legacy inset white ring from the old circular avatar style. */
+.employee-avatar::after {
+  display: none;
+}
+
 .employee-avatar,
 .employee-avatar img,
 .employee-avatar svg {
@@ -13386,7 +13433,7 @@ body,
   width: 100vw;
   height: 100vh;
   min-height: 0;
-  background: #ffffff;
+  background: #FCFCFC;
 }
 
 .sd1-sidebar {
@@ -13945,7 +13992,7 @@ body,
   min-height: 0;
   padding: 0 !important;
   overflow: auto;
-  background: #ffffff;
+  background: #FCFCFC;
 }
 
 @media (min-width: 1181px) {
@@ -17362,5 +17409,88 @@ body:has(.sd1-scheduled-page) .topbar {
   .sd1-management-content > .page:not(.dashboard-page):not(.sd1-scheduled-page) > .page-title > .page-actions {
     flex-shrink: 0;
     justify-content: flex-end;
+  }
+}
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: 'Geist Variable', sans-serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+.dark {
+  --background: #0f172a;
+  --foreground: #f8fafc;
+  --card: #111827;
+  --card-foreground: #f8fafc;
+  --popover: #111827;
+  --popover-foreground: #f8fafc;
+  --primary: #e4b976;
+  --primary-foreground: #0f172a;
+  --secondary: #1e293b;
+  --secondary-foreground: #f8fafc;
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8;
+  --accent: #e4b976;
+  --accent-foreground: #0f172a;
+  --destructive: #f87171;
+  --border: rgba(148, 163, 184, 0.24);
+  --input: rgba(148, 163, 184, 0.24);
+  --ring: #e4b976;
+  --chart-1: #e4b976;
+  --chart-2: #10b981;
+  --chart-3: #f4a261;
+  --chart-4: #94a3b8;
+  --chart-5: #f87171;
+  --sidebar: #111827;
+  --sidebar-foreground: #94a3b8;
+  --sidebar-primary: #f8fafc;
+  --sidebar-primary-foreground: #0f172a;
+  --sidebar-accent: #1e293b;
+  --sidebar-accent-foreground: #f8fafc;
+  --sidebar-border: rgba(148, 163, 184, 0.18);
+  --sidebar-ring: #e4b976;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
   }
 }
