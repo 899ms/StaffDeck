@@ -2729,6 +2729,7 @@ export default function ChatWindowPage() {
     const outgoingAttachments = readyComposerAttachments.map(toRequestAttachment);
     const turnId = `turn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     let liveConversationId = currentConversationId;
+    let createdSessionId = '';
     locallyCancelledSessionIdsRef.current.delete(currentConversationId);
     setInput('');
     setComposerAttachments([]);
@@ -2829,10 +2830,12 @@ export default function ChatWindowPage() {
       }
       await streamChatTurn(requestBody, (item) => {
         if (item.event === 'session_created') {
-          promoteDraftConversation(String(item.data.newSessionId || item.data.sessionId || ''));
+          createdSessionId = String(item.data.newSessionId || item.data.sessionId || '');
           return;
         }
-        const eventSessionId = String(item.data.sessionId || liveConversationId);
+        const eventSessionId = isDraftConversation
+          ? currentConversationId
+          : String(item.data.sessionId || liveConversationId);
         const eventStream = getStreamSlot(eventSessionId);
         if (controller.signal.aborted || eventStream.cancelledTurnId === turnId) return;
         if (item.event === 'session_created') {
@@ -3083,6 +3086,7 @@ export default function ChatWindowPage() {
         }
         if (item.event === 'complete' || item.event === 'done') {
           const result = item.data as ChatTurnResponse;
+          const completedSessionId = result.session_id || createdSessionId || String(item.data.sessionId || '');
           const userIntent = typeof result.router_decision?.user_intent === 'string' ? result.router_decision.user_intent : '';
           const decisionReason = typeof result.router_decision?.reason === 'string' ? result.router_decision.reason : '';
           if (userIntent || decisionReason) {
@@ -3105,10 +3109,15 @@ export default function ChatWindowPage() {
             current?.sessionId === eventSessionId && current.turnId === turnId ? null : current
           ));
           notifyStream();
-          loadSessions();
+          if (isDraftConversation && completedSessionId) {
+            promoteDraftConversation(completedSessionId);
+          } else {
+            loadSessions();
+          }
           window.setTimeout(() => {
-            loadMessages(eventSessionId);
-            loadTraces(eventSessionId);
+            const persistedSessionId = completedSessionId || eventSessionId;
+            loadMessages(persistedSessionId);
+            loadTraces(persistedSessionId);
           }, 250);
         }
       }, controller.signal);
