@@ -13,8 +13,15 @@ import IconLogout from '../assets/icons/logout.svg?react';
 import StaffdeckIcon from './StaffdeckIcon';
 
 export type AppHeaderProps = {
-  /** Page-specific content rendered on the left side of the header. */
+  /**
+   * Page-specific content rendered on the left side of the header. When
+   * provided it takes precedence over the `title` / `description` fields.
+   */
   left?: ReactNode;
+  /** Convenience field for the left slot's title line. Ignored when `left` is set. */
+  title?: ReactNode;
+  /** Convenience field for the left slot's description line. Ignored when `left` is set. */
+  description?: ReactNode;
   /**
    * Custom content for the right side of the header. When provided it fully
    * replaces the default user avatar / logout dropdown (used e.g. on the
@@ -30,15 +37,38 @@ export type AppHeaderProps = {
 
 /**
  * Global page header. The right side shows a user avatar button whose dropdown
- * holds the logout action; the left side is provided per-page via the `left` slot.
+ * holds the logout action; the left side is provided per-page via the `left`
+ * slot, or via the `title` / `description` convenience fields. When `left` is
+ * passed it is rendered as-is and the convenience fields are ignored.
  * Pass `right` to override the default avatar with page-specific actions.
  */
-export default function AppHeader({ left, right, onLogout, userName, className }: AppHeaderProps) {
+export default function AppHeader({
+  left,
+  title,
+  description,
+  right,
+  onLogout,
+  userName,
+  className,
+}: AppHeaderProps) {
   const initial = userName?.trim()?.[0]?.toUpperCase();
+
+  const leftContent = left ?? (
+    (title !== undefined || description !== undefined) ? (
+      <div className="flex min-h-[40px] flex-col justify-center gap-[4px]">
+        {title !== undefined && (
+          <p className="text-[16px] font-medium leading-[normal] text-[#464c5e] dark:text-white">{title}</p>
+        )}
+        {description !== undefined && (
+          <p className="text-[14px] leading-[normal] text-[#757f9c] dark:text-[#a8afbd]">{description}</p>
+        )}
+      </div>
+    ) : null
+  );
 
   return (
     <header className={cn('flex w-full gap-[16px]', className)}>
-      <div className="min-w-0 flex-1">{left}</div>
+      <div className="min-w-0 flex-1">{leftContent}</div>
       <div className="flex shrink-0 items-start gap-[8px]">
         {right !== undefined ? right : (
         <DropdownMenu>

@@ -1,5 +1,4 @@
 import {
-  AppstoreOutlined,
   DeleteOutlined,
   FileSearchOutlined,
   ProfileOutlined,
@@ -9,14 +8,32 @@ import {
   UsergroupAddOutlined,
 } from '../icons';
 import { Button, Card, Drawer, Empty, Modal, Tag, Typography, message } from 'antd';
-import type { ReactNode } from 'react';
+import type { ComponentType, ReactNode, SVGProps } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, TENANT_ID } from '../api/client';
 import { isEmployeeOwnedBy, isGalleryEmployee, type EnterpriseAuthUser } from '../auth';
 import EmployeeAvatar from '../components/EmployeeAvatar';
+import IconAgents from '../assets/icons/nav-agents.svg?react';
+import IconFolder from '../assets/icons/cap-folder.svg?react';
+import IconMagicWand from '../assets/icons/cap-magicwand.svg?react';
+import IconClipboard from '../assets/icons/cap-clipboard.svg?react';
+import IconBriefcase from '../assets/icons/cap-briefcase.svg?react';
+import plazaKnowledgeIcon from '../assets/icons/plaza-knowledge.svg';
+import plazaSkillIcon from '../assets/icons/plaza-skill.svg';
+import plazaSopIcon from '../assets/icons/plaza-sop.svg';
+import plazaToolIcon from '../assets/icons/plaza-tool.svg';
 import { employeeDisplayName, employeeProfile } from '../employee';
 import type { AgentProfileRead, GeneralSkillRead, KnowledgeBaseRead, SkillRead, ToolRead } from '../types';
+
+import AppHeader from '@/components/AppHeader';
+import {
+  PlatformColumn,
+  PlatformEmployeeCard,
+  PlatformResourceCard,
+  type PlatformResourceAccent,
+  type PlatformStat,
+} from '@/components/openPlatform';
 
 const ENTERPRISE_AGENT_STORAGE_KEY = 'ultrarag_enterprise_agent_scope';
 
@@ -51,7 +68,7 @@ const PLATFORM_CONFIGS: PlatformConfig[] = [
     detail: '选择一个数字员工查看能力、岗位和服务范围。',
     useLabel: '使用此员工',
     metricLabel: '数字员工',
-    signals: ['对话端可用', '支持直接对话', '岗位能力可查看'],
+    signals: ['聊天可用', '支持对话', '查看能力'],
     icon: <UsergroupAddOutlined />,
   },
   {
@@ -71,7 +88,7 @@ const PLATFORM_CONFIGS: PlatformConfig[] = [
     detail: '从广场复制到当前数字员工的技能。',
     useLabel: '复制到技能',
     metricLabel: '技能',
-    signals: ['运行测试', 'MCP / 浏览器', '可复用能力'],
+    signals: ['运行测试', 'MCP/浏览器', '能力复用'],
     icon: <SolutionOutlined />,
   },
   {
@@ -98,12 +115,53 @@ const PLATFORM_CONFIGS: PlatformConfig[] = [
 
 const PLATFORM_BY_KIND = new Map(PLATFORM_CONFIGS.map((item) => [item.kind, item]));
 
+// SD1 line glyph shown in each column header, matching the sidebar mapping.
+const PLATFORM_ICON: Record<PlatformKind, ComponentType<SVGProps<SVGSVGElement>>> = {
+  agents: IconAgents,
+  knowledge: IconFolder,
+  'general-skills': IconMagicWand,
+  skills: IconClipboard,
+  tools: IconBriefcase,
+};
+
+// Colorful 3D module icon shown on each广场 resource card (agents use avatars instead).
+const PLATFORM_RESOURCE_ICON: Partial<Record<PlatformKind, string>> = {
+  knowledge: plazaKnowledgeIcon,
+  'general-skills': plazaSkillIcon,
+  skills: plazaSopIcon,
+  tools: plazaToolIcon,
+};
+
+// Per-module accent color for the resource card meta line and tag pills (SD1 232:4634).
+const PLATFORM_ACCENT: Partial<Record<PlatformKind, PlatformResourceAccent>> = {
+  knowledge: 'green',
+  'general-skills': 'indigo',
+  skills: 'blue',
+  tools: 'orange',
+};
+
+// Unit rendered after the header count, e.g. "12 员工" / "12 内容".
+function platformCountLabel(kind: PlatformKind): string {
+  return kind === 'agents' ? '员工' : '内容';
+}
+
+// Bottom metric segments for a 数字员工广场 card.
+function employeeStats(agent: AgentProfileRead): PlatformStat[] {
+  return [
+    { value: resourceCount(agent, 'knowledge_base'), label: '资料' },
+    { value: resourceCount(agent, 'general_skill'), label: '技能' },
+    { value: resourceCount(agent, 'skill'), label: 'SOP' },
+  ];
+}
+
 export default function OpenPlatformPage({
   currentUser,
   isAdmin = false,
+  onLogout,
 }: {
   currentUser?: EnterpriseAuthUser;
   isAdmin?: boolean;
+  onLogout?: () => void;
 }) {
   const navigate = useNavigate();
   const { kind } = useParams<{ kind?: PlatformKind }>();
@@ -424,77 +482,70 @@ export default function OpenPlatformPage({
   }
 
   return (
-    <div className="page open-platform-page open-platform-page-main">
-      <div className="page-title open-platform-title">
-        <div>
-          <Typography.Text type="secondary">开放广场</Typography.Text>
-          <Typography.Title level={2}>开放广场</Typography.Title>
-          <Typography.Paragraph>
-            汇总数字员工、知识库、技能、SOP 和工具五个广场。先进入广场查看详情，再把需要的能力复制到当前数字员工。
-          </Typography.Paragraph>
-        </div>
-        <Tag className="open-platform-target" icon={<AppstoreOutlined />}>
-          复制到：{targetEmployee ? employeeDisplayName(targetEmployee) : '未选择'}
-        </Tag>
-      </div>
-      <div className="open-platform-overview-shell">
-        <div className="open-platform-grid">
-          {platformStats.map((platform) => {
-            const previews = platformItems[platform.kind].slice(0, 4);
-            return (
-              <Card key={platform.kind} className="open-platform-card open-platform-row-card" hoverable loading={loading}>
-                <div className="open-platform-card-head">
-                  <span className="open-platform-card-icon">{platform.icon}</span>
-                  <strong>{platform.count}</strong>
-                  <em>{platform.metricLabel}</em>
-                </div>
-                <div className="open-platform-card-copy">
-                  <Typography.Title level={4}>{platform.title}</Typography.Title>
-                  <Typography.Paragraph type="secondary">{platform.subtitle}</Typography.Paragraph>
-                  <div className="open-platform-signal-strip">
-                    {platform.signals.map((signal) => <span key={signal}>{signal}</span>)}
-                  </div>
-                </div>
-                <div className="open-platform-preview-panel">
-                  <div className="open-platform-preview-heading">
-                    <span>广场内容</span>
-                    <em>{previews.length ? `${platform.count} 项可用` : '等待开放'}</em>
-                  </div>
-                  <div className="open-platform-card-preview-list">
-                    {previews.length === 0 ? (
-                      <span className="open-platform-preview-empty">暂无开放内容</span>
-                    ) : previews.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className={`open-platform-preview-item${item.agent ? ' is-agent-preview' : ''}`}
-                        onClick={() => setDetailItem({ kind: platform.kind, item })}
-                      >
-                        <span className="open-platform-preview-media">
-                          {item.agent ? <EmployeeAvatar agent={item.agent} size={42} /> : <span>{platform.icon}</span>}
-                        </span>
-                        <span className="open-platform-preview-copy">
-                          <strong>{item.title}</strong>
-                          <span>{item.meta}</span>
-                          <small>{item.description}</small>
-                          <span className="open-platform-preview-tags">
-                            {item.tags.slice(0, 2).map((tag) => <em key={tag}>{tag}</em>)}
-                          </span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="open-platform-card-actions">
-                  <span>{platform.detail}</span>
-                  <Button onClick={() => navigate(`/enterprise/platform/${platform.kind}`)}>
-                    查看详情 <RightOutlined />
-                  </Button>
-                </div>
-              </Card>
-            );
-          })}
-        </div>
+    <div className="flex min-h-full flex-col box-border px-[48px] pt-[32px] pb-[43px] max-[900px]:px-[16px] xl:h-full xl:min-h-0 xl:overflow-hidden">
+      <AppHeader
+        className="mb-[24px]"
+        onLogout={onLogout}
+        userName={currentUser?.username}
+        title="开放广场平台"
+        description="汇总数字员工、知识库、技能、SOP 和工具五个广场。先进入广场查看详情，再把需要的能力复制到当前数字员工。"
+      />
+      <div className="mx-auto grid w-full max-w-[1648px] grid-cols-1 gap-[12px] sm:grid-cols-2 xl:min-h-0 xl:flex-1 xl:grid-cols-5 xl:grid-rows-1">
+        {platformStats.map((platform) => {
+          const items = platformItems[platform.kind];
+          const previews = items;
+          const PlatformIcon = PLATFORM_ICON[platform.kind];
+          return (
+            <PlatformColumn
+              key={platform.kind}
+              icon={<PlatformIcon className="size-[14px]" />}
+              title={platform.title}
+              count={platform.count}
+              countLabel={platformCountLabel(platform.kind)}
+              filters={platform.signals}
+              loading={loading}
+              isEmpty={previews.length === 0}
+              onViewAll={() => navigate(`/enterprise/platform/${platform.kind}`)}
+            >
+              {previews.map((item) => (
+                platform.kind === 'agents' && item.agent ? (
+                  <PlatformEmployeeCard
+                    key={item.id}
+                    avatar={(
+                      <EmployeeAvatar
+                        agent={item.agent}
+                        width={50}
+                        height={59}
+                        fit="contain"
+                        objectPosition="center bottom"
+                        className="overflow-visible! rounded-none! border-0! bg-transparent! bg-none! shadow-none! after:hidden!"
+                      />
+                    )}
+                    name={item.title}
+                    role={item.meta}
+                    online={item.agent.status === 'active'}
+                    description={item.description}
+                    stats={employeeStats(item.agent)}
+                    onOpen={() => setDetailItem({ kind: platform.kind, item })}
+                  />
+                ) : (
+                  <PlatformResourceCard
+                    key={item.id}
+                    icon={PLATFORM_RESOURCE_ICON[platform.kind]
+                      ? <img src={PLATFORM_RESOURCE_ICON[platform.kind]} alt="" className="size-[32px] shrink-0 object-contain" />
+                      : undefined}
+                    accent={PLATFORM_ACCENT[platform.kind]}
+                    title={item.title}
+                    meta={item.meta}
+                    description={item.description}
+                    tags={item.tags.slice(0, 2)}
+                    onClick={() => setDetailItem({ kind: platform.kind, item })}
+                  />
+                )
+              ))}
+            </PlatformColumn>
+          );
+        })}
       </div>
       {renderItemDrawer()}
     </div>

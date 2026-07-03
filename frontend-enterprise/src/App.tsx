@@ -275,8 +275,8 @@ function Shell({
           {!isDistillRoute && (
             <Routes>
               <Route path="/enterprise" element={<Navigate to="/enterprise/dashboard" replace />} />
-              <Route path="/enterprise/platform" element={<OpenPlatformPage currentUser={auth.user} isAdmin={isAdmin} />} />
-              <Route path="/enterprise/platform/:kind" element={<OpenPlatformPage currentUser={auth.user} isAdmin={isAdmin} />} />
+              <Route path="/enterprise/platform" element={<OpenPlatformPage currentUser={auth.user} isAdmin={isAdmin} onLogout={onLogout} />} />
+              <Route path="/enterprise/platform/:kind" element={<OpenPlatformPage currentUser={auth.user} isAdmin={isAdmin} onLogout={onLogout} />} />
               <Route path="/enterprise/dashboard" element={<DashboardPage currentUser={auth.user} isAdmin={isAdmin} onLogout={onLogout} />} />
               <Route path="/enterprise/agents" element={<AgentsPage currentUser={auth.user} isAdmin={isAdmin} onCreateAgent={openCreateAgentModal} onLogout={onLogout} />} />
               <Route path="/enterprise/memories" element={<MemoriesPage currentUser={auth.user} onLogout={onLogout} />} />
