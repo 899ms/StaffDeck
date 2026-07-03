@@ -434,10 +434,7 @@ export default function ScheduledTasksPage({
         userName={currentUser?.username}
         left={(
           <div>
-            <Typography.Title level={3} style={{ marginBottom: 4 }}>定时任务</Typography.Title>
-            <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              为当前员工设置周期或一次性任务，到点后会新建独立执行记录，并按员工已有 SOP、技能、资料和工具执行。
-            </Typography.Paragraph>
+            <Typography.Title level={3} style={{ marginBottom: 0 }}>定时任务</Typography.Title>
           </div>
         )}
       />
