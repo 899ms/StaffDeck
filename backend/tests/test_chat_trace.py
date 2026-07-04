@@ -4,7 +4,7 @@ from app.api.chat import _build_turn_traces, _message_turn_ids_from_events
 from app.db.models import AgentEvent, Message
 
 
-def test_turn_trace_uses_router_skill_hint_for_legacy_step_event_without_skill_id() -> None:
+def test_turn_trace_uses_router_skill_hint_when_events_have_turn_id() -> None:
     started_at = datetime(2026, 6, 5, 6, 35, 4)
     messages = [
         Message(
@@ -21,7 +21,7 @@ def test_turn_trace_uses_router_skill_hint_for_legacy_step_event_without_skill_i
             tenant_id="tenant_demo",
             session_id="session_test",
             event_type="user_message_received",
-            payload_json={"message": "帮我下单a2，实际发货a3"},
+            payload_json={"message_id": "msg_user", "message": "帮我下单a2，实际发货a3"},
             created_at=started_at,
         ),
         AgentEvent(
@@ -34,6 +34,7 @@ def test_turn_trace_uses_router_skill_hint_for_legacy_step_event_without_skill_i
                 "target_step_id": "confirm_purchase",
                 "user_intent": "下单",
                 "reason": "继续购买流程",
+                "user_message_id": "msg_user",
             },
             created_at=started_at + timedelta(seconds=1),
         ),
@@ -41,14 +42,18 @@ def test_turn_trace_uses_router_skill_hint_for_legacy_step_event_without_skill_i
             tenant_id="tenant_demo",
             session_id="session_test",
             event_type="skill_step_changed",
-            payload_json={"from_step_id": "confirm_purchase", "to_step_id": "end"},
+            payload_json={
+                "from_step_id": "confirm_purchase",
+                "to_step_id": "end",
+                "user_message_id": "msg_user",
+            },
             created_at=started_at + timedelta(seconds=2),
         ),
         AgentEvent(
             tenant_id="tenant_demo",
             session_id="session_test",
             event_type="assistant_message_created",
-            payload_json={"reply": "已完成"},
+            payload_json={"user_message_id": "msg_user", "reply": "已完成"},
             created_at=started_at + timedelta(seconds=3),
         ),
     ]
@@ -107,6 +112,87 @@ def test_turn_trace_falls_back_to_knowledge_citations_without_events() -> None:
     ]
 
 
+def test_turn_trace_keeps_running_routing_status_for_refresh() -> None:
+    started_at = datetime(2026, 7, 4, 9, 0, 0)
+    messages = [
+        Message(
+            id="msg_user",
+            tenant_id="tenant_demo",
+            session_id="session_running",
+            role="user",
+            content="你好",
+            created_at=started_at,
+        )
+    ]
+    events = [
+        AgentEvent(
+            tenant_id="tenant_demo",
+            session_id="session_running",
+            event_type="user_message_received",
+            payload_json={"message_id": "msg_user", "message": "你好"},
+            created_at=started_at,
+        ),
+        AgentEvent(
+            tenant_id="tenant_demo",
+            session_id="session_running",
+            event_type="stream_status",
+            payload_json={"turn_id": "msg_user", "user_message_id": "msg_user", "phase": "routing", "text": "正在判断用户意图"},
+            created_at=started_at + timedelta(milliseconds=100),
+        ),
+    ]
+
+    traces = _build_turn_traces(messages, events, {})
+
+    assert traces[0]["completed_at"] is None
+    assert any(
+        line["id"] == "decision_router" and line["text"] == "判断意图" and line["state"] == "running"
+        for line in traces[0]["lines"]
+    )
+
+
+def test_turn_trace_cancel_event_closes_running_status_for_refresh() -> None:
+    started_at = datetime(2026, 7, 4, 9, 5, 0)
+    messages = [
+        Message(
+            id="msg_user",
+            tenant_id="tenant_demo",
+            session_id="session_cancelled",
+            role="user",
+            content="暂停测试",
+            created_at=started_at,
+        )
+    ]
+    events = [
+        AgentEvent(
+            tenant_id="tenant_demo",
+            session_id="session_cancelled",
+            event_type="user_message_received",
+            payload_json={"message_id": "msg_user", "message": "暂停测试"},
+            created_at=started_at,
+        ),
+        AgentEvent(
+            tenant_id="tenant_demo",
+            session_id="session_cancelled",
+            event_type="stream_status",
+            payload_json={"turn_id": "msg_user", "user_message_id": "msg_user", "phase": "routing", "text": "正在判断用户意图"},
+            created_at=started_at + timedelta(milliseconds=100),
+        ),
+        AgentEvent(
+            tenant_id="tenant_demo",
+            session_id="session_cancelled",
+            event_type="stream_cancelled",
+            payload_json={"turn_id": "msg_user", "user_message_id": "msg_user"},
+            created_at=started_at + timedelta(milliseconds=300),
+        ),
+    ]
+
+    traces = _build_turn_traces(messages, events, {})
+
+    assert traces[0]["completed_at"] == (started_at + timedelta(milliseconds=300)).isoformat()
+    assert all(line["state"] != "running" for line in traces[0]["lines"])
+    assert any(line["id"] == "generation_stopped" and line["text"] == "已停止生成" for line in traces[0]["lines"])
+
+
 def test_turn_trace_uses_message_id_for_repeated_user_text() -> None:
     started_at = datetime(2026, 7, 3, 10, 0, 0)
     messages = [
@@ -155,7 +241,7 @@ def test_turn_trace_uses_message_id_for_repeated_user_text() -> None:
             tenant_id="tenant_demo",
             session_id="session_repeat",
             event_type="assistant_message_created",
-            payload_json={"reply": "你好！"},
+            payload_json={"user_message_id": "msg_user_first", "reply": "你好！"},
             created_at=started_at + timedelta(seconds=2),
         ),
         AgentEvent(
@@ -169,14 +255,19 @@ def test_turn_trace_uses_message_id_for_repeated_user_text() -> None:
             tenant_id="tenant_demo",
             session_id="session_repeat",
             event_type="router_decision_created",
-            payload_json={"decision": "answer_only", "user_intent": "问候", "reason": "第二轮问候"},
+            payload_json={
+                "user_message_id": "msg_user_second",
+                "decision": "answer_only",
+                "user_intent": "问候",
+                "reason": "第二轮问候",
+            },
             created_at=started_at + timedelta(seconds=11),
         ),
         AgentEvent(
             tenant_id="tenant_demo",
             session_id="session_repeat",
             event_type="assistant_message_created",
-            payload_json={"reply": "请问有什么可以帮您？"},
+            payload_json={"user_message_id": "msg_user_second", "reply": "请问有什么可以帮您？"},
             created_at=started_at + timedelta(seconds=12),
         ),
     ]
@@ -236,7 +327,12 @@ def test_turn_trace_does_not_merge_interleaved_repeated_turns() -> None:
             tenant_id="tenant_demo",
             session_id="session_interleaved",
             event_type="router_decision_created",
-            payload_json={"decision": "answer_only", "user_intent": "问候", "reason": "第一轮问候"},
+            payload_json={
+                "user_message_id": "msg_user_first",
+                "decision": "answer_only",
+                "user_intent": "问候",
+                "reason": "第一轮问候",
+            },
             created_at=started_at + timedelta(seconds=1),
         ),
         AgentEvent(
@@ -250,7 +346,12 @@ def test_turn_trace_does_not_merge_interleaved_repeated_turns() -> None:
             tenant_id="tenant_demo",
             session_id="session_interleaved",
             event_type="router_decision_created",
-            payload_json={"decision": "answer_only", "user_intent": "问候", "reason": "第二轮问候"},
+            payload_json={
+                "user_message_id": "msg_user_second",
+                "decision": "answer_only",
+                "user_intent": "问候",
+                "reason": "第二轮问候",
+            },
             created_at=started_at + timedelta(seconds=3),
         ),
         AgentEvent(

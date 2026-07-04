@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 
 from app.agents.branching import model_for_agent
 from app.core import AgentLoop
+from app.core.cancellation import cancel_chat_turn
 from app.db import engine, get_session
 from app.db.models import (
     AgentEvent,
@@ -82,6 +83,11 @@ class HumanHandoffRead(BaseModel):
     created_at: str
     updated_at: str
     answered_at: str | None = None
+
+
+class ChatTurnCancelRequest(BaseModel):
+    tenant_id: str
+    turn_id: str
 
 
 class HumanHandoffReplyRequest(BaseModel):
@@ -638,6 +644,19 @@ def chat_stream(
                         yield _sse("scheduled_task_draft", draft.model_dump(mode="json"))
 
     return StreamingResponse(stream_events(), media_type="text/event-stream")
+
+
+@router.post("/sessions/{session_id}/cancel")
+def cancel_chat_turn_endpoint(
+    session_id: str,
+    request: ChatTurnCancelRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> dict[str, bool]:
+    _ensure_request_tenant(request.tenant_id, current_user)
+    _ensure_chat_session_available(db, request.tenant_id, current_user.id, session_id)
+    cancel_chat_turn(session_id, request.turn_id)
+    return {"ok": True}
 
 
 def _sse(event: object, data: object) -> str:
@@ -1414,7 +1433,7 @@ def _build_turn_traces(
     if not events:
         return _fallback_knowledge_citation_traces(messages)
 
-    user_messages = [message for message in messages if message.role == "user"]
+    user_messages_by_id = {message.id: message for message in messages if message.role == "user"}
     traces: list[dict] = []
     traces_by_turn_id: dict[str, dict] = {}
     skill_hints_by_turn_id: dict[str, str | None] = {}
@@ -1424,23 +1443,17 @@ def _build_turn_traces(
         payload = event.payload_json or {}
         if event.event_type == "user_message_received":
             text = str(payload.get("message") or "")
-            user_message = _matching_user_message(user_messages, payload)
-            turn_id = user_message.id if user_message else event.id
+            message_id = str(payload.get("message_id") or payload.get("user_message_id") or "").strip()
+            user_message = user_messages_by_id.get(message_id) if message_id else None
+            turn_id = message_id or event.id
             active_turn_id = turn_id
             current = {
                 "turn_id": turn_id,
-                "user_message_id": user_message.id if user_message else None,
+                "user_message_id": message_id or None,
                 "_user_message_content": user_message.content if user_message else text,
                 "started_at": event.created_at.isoformat(),
                 "completed_at": None,
-                "lines": [
-                    {
-                        "id": "thinking",
-                        "kind": "thinking",
-                        "text": "已完成思考",
-                        "state": "completed",
-                    }
-                ],
+                "lines": [],
             }
             traces.append(current)
             traces_by_turn_id[turn_id] = current
@@ -1474,10 +1487,18 @@ def _build_turn_traces(
             _complete_trace_lines(current["lines"])
             if active_turn_id == target_turn_id:
                 active_turn_id = None
+        elif event.event_type == "stream_cancelled":
+            current["completed_at"] = event.created_at.isoformat()
+            _finish_trace_if_needed(current, event.created_at)
+            if active_turn_id == target_turn_id:
+                active_turn_id = None
 
     fallback_time = events[-1].created_at if events else None
+    open_turn_id = active_turn_id
     for current in traces:
         _ensure_knowledge_query_line(current["lines"], current.get("_user_message_content"))
+        if open_turn_id and current.get("turn_id") == open_turn_id and not current.get("completed_at"):
+            continue
         _finish_trace_if_needed(current, fallback_time)
 
     for trace in traces:
@@ -1492,9 +1513,7 @@ def _event_trace_turn_id(event: AgentEvent, active_turn_id: str | None) -> str |
     explicit_turn_id = str(payload.get("turn_id") or payload.get("user_message_id") or "").strip()
     if explicit_turn_id:
         return explicit_turn_id
-    if event.event_type == "assistant_message_created":
-        return None
-    return active_turn_id
+    return None
 
 
 def _with_scheduled_draft_message_traces(traces: list[dict], messages: list[Message]) -> list[dict]:
@@ -1638,18 +1657,6 @@ def _ensure_knowledge_query_line(lines: list[dict], user_message: object | None 
     )
 
 
-def _matching_user_message(
-    user_messages: list[Message],
-    payload: dict,
-) -> Message | None:
-    message_id = str(payload.get("message_id") or payload.get("user_message_id") or "").strip()
-    if message_id:
-        for message in user_messages:
-            if message.id == message_id:
-                return message
-    return None
-
-
 def _event_trace_lines(event: AgentEvent, skill_names: dict[str, str], skill_hint: str | None = None) -> list[dict]:
     line = _event_trace_line(event, skill_names, skill_hint)
     if not line:
@@ -1663,6 +1670,42 @@ def _event_trace_line(
     event: AgentEvent, skill_names: dict[str, str], skill_hint: str | None = None
 ) -> dict | list[dict] | None:
     payload = event.payload_json or {}
+    if event.event_type == "stream_status":
+        phase = str(payload.get("phase") or "").strip()
+        text = str(payload.get("text") or "").strip()
+        if phase == "routing":
+            return {
+                "id": "decision_router",
+                "kind": "decision",
+                "text": "判断意图",
+                "detail": None,
+                "state": "running",
+            }
+        if phase == "responding":
+            return {
+                "id": "decision_responding",
+                "kind": "decision",
+                "text": "生成回复",
+                "detail": None,
+                "state": "running",
+            }
+        if phase and phase != "received":
+            return {
+                "id": f"decision_status_{phase}",
+                "kind": "decision",
+                "text": text or phase,
+                "detail": None,
+                "state": "running",
+            }
+        return None
+    if event.event_type == "stream_cancelled":
+        return {
+            "id": "generation_stopped",
+            "kind": "decision",
+            "text": "已停止生成",
+            "detail": None,
+            "state": "failed",
+        }
     if event.event_type == "general_skill_selected":
         skill_name = str(payload.get("skill_name") or payload.get("skill_slug") or "").strip()
         reason = str(payload.get("reason") or "").strip()
@@ -1734,7 +1777,7 @@ def _event_trace_line(
         intent = str(payload.get("user_intent") or "").strip()
         reason = str(payload.get("reason") or "").strip()
         return {
-            "id": f"decision_{event.id}",
+            "id": "decision_router",
             "kind": "decision",
             "text": f"判断意图 {intent}" if intent else "完成技能判断",
             "detail": reason or None,

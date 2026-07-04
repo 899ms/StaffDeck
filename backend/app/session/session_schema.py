@@ -148,6 +148,7 @@ class ChatTurnRequest(BaseModel):
     session_id: Optional[str] = None
     agent_id: Optional[str] = None
     model_config_id: Optional[str] = None
+    client_turn_id: Optional[str] = None
     user_id: str = ""
     message: str
     attachments: list["ChatAttachmentRead"] = Field(default_factory=list)

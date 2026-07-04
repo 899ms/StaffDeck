@@ -14,6 +14,7 @@ from sqlmodel import Session, select
 
 from app.agents.branching import model_for_agent, visible_knowledge_base_ids, visible_published_skills, visible_skill
 from app.core.conversation_context import build_conversation_context
+from app.core.cancellation import clear_chat_turn_cancelled, is_chat_turn_cancelled
 from app.core.reflection_agent import ReflectionAgent, ReflectionDecision, action_needs_reflection
 from app.core.response_generator import FALLBACK_REPLY, ResponseGenerator
 from app.core.router import Router
@@ -269,6 +270,13 @@ class AgentLoop:
         self.general_skill_runner = GeneralSkillRunner()
         self.tool_executor = ToolExecutor(db)
         self.memory = MemoryService(db)
+
+    def _turn_payload(self, payload: dict[str, Any], user_message_id: str | None) -> dict[str, Any]:
+        data = dict(payload)
+        if user_message_id:
+            data.setdefault("user_message_id", user_message_id)
+            data.setdefault("turn_id", user_message_id)
+        return data
 
     def _hydrate_router_decision_from_context(
         self,
@@ -599,6 +607,7 @@ class AgentLoop:
         conversation_context: dict[str, object] | None = None,
         persona_prompt: str | None = None,
         user_message_id: str | None = None,
+        is_cancelled: Callable[[], bool] | None = None,
     ) -> Iterator[dict[str, object]]:
         skill, selection = selected_general_skill
         self.events.record(
@@ -634,35 +643,44 @@ class AgentLoop:
             "general_skill_intent",
             "正在判断意图",
             {"skill_slug": skill.slug, "skill_name": skill.name, "reason": selection.reason},
+            user_message_id=user_message_id,
         )
         yield self._stream_event(
             "general_skill_trace",
             chat_session,
-            {
-                "phase": "intent_checked",
-                "message": "判断意图",
-                "skill_slug": skill.slug,
-                "skill_name": skill.name,
-                "reason": selection.reason,
-                "confidence": selection.confidence,
-            },
+            self._turn_payload(
+                {
+                    "phase": "intent_checked",
+                    "message": "判断意图",
+                    "skill_slug": skill.slug,
+                    "skill_name": skill.name,
+                    "reason": selection.reason,
+                    "confidence": selection.confidence,
+                },
+                user_message_id,
+            ),
         )
         yield self._stream_status(
             chat_session,
             "general_skill_routing",
             "正在选择通用技能",
             {"skill_slug": skill.slug, "skill_name": skill.name},
+            user_message_id=user_message_id,
         )
         yield self._stream_event(
             "general_skill_state",
             chat_session,
-            {"skillSlug": skill.slug, "skillName": skill.name, "state": "selected"},
+            self._turn_payload(
+                {"skillSlug": skill.slug, "skillName": skill.name, "state": "selected"},
+                user_message_id,
+            ),
         )
         yield self._stream_status(
             chat_session,
             "general_skill_running",
             "正在运行通用技能",
             {"skill_slug": skill.slug, "skill_name": skill.name},
+            user_message_id=user_message_id,
         )
         general_skill_events: queue.Queue[tuple[str, Any] | None] = queue.Queue()
         skill_snapshot = SimpleNamespace(
@@ -711,7 +729,11 @@ class AgentLoop:
                 break
             event_name, payload = queued
             if event_name == "trace":
-                yield self._stream_event("general_skill_trace", chat_session, payload)
+                yield self._stream_event(
+                    "general_skill_trace",
+                    chat_session,
+                    self._turn_payload(payload, user_message_id),
+                )
             elif event_name == "complete":
                 run_response = payload
             elif event_name == "error":
@@ -720,7 +742,7 @@ class AgentLoop:
         if run_response is None:
             raise LLMError("General skill stream ended without a result")
         self._record_general_skill_run_events(request.tenant_id, chat_session, run_response)
-        yield self._stream_status(chat_session, "responding", "正在生成回复")
+        yield self._stream_status(chat_session, "responding", "正在生成回复", user_message_id=user_message_id)
         step_result, tool_result = self._general_skill_agent_outputs(run_response)
         active_skill = self._get_active_skill(request.tenant_id, chat_session.active_skill_id, chat_session.agent_id)
         reply = ""
@@ -739,14 +761,26 @@ class AgentLoop:
             conversation_context or self._conversation_context(chat_session),
         ):
             reply += chunk
-            yield self._stream_event("stream_delta", chat_session, {"content": chunk})
+            yield self._stream_event(
+                "stream_delta",
+                chat_session,
+                self._turn_payload({"content": chunk}, user_message_id),
+            )
             self._pace_stream()
         if not reply.strip():
             reply = run_response.reply
             for chunk in self.response_generator.chunk_text(reply):
-                yield self._stream_event("stream_delta", chat_session, {"content": chunk})
+                yield self._stream_event(
+                    "stream_delta",
+                    chat_session,
+                    self._turn_payload({"content": chunk}, user_message_id),
+                )
                 self._pace_stream()
-        yield self._stream_event("stream_end", chat_session, {})
+        if is_cancelled and is_cancelled():
+            return
+        yield self._stream_event("stream_end", chat_session, self._turn_payload({}, user_message_id))
+        if is_cancelled and is_cancelled():
+            return
         self._finalize_turn(
             chat_session,
             request.tenant_id,
@@ -774,7 +808,11 @@ class AgentLoop:
             tool_result=tool_result,
             session_state=public_session(chat_session),
         )
-        yield self._stream_event("complete", chat_session, result.model_dump(mode="json"))
+        yield self._stream_event(
+            "complete",
+            chat_session,
+            self._turn_payload(result.model_dump(mode="json"), user_message_id),
+        )
 
     def _stream_continue_pending_after_completion(
         self,
@@ -789,6 +827,7 @@ class AgentLoop:
         completed_reply: str,
         completed_skill_ids_this_turn: set[str] | None = None,
         replace_existing_reply: bool = False,
+        user_message_id: str | None = None,
     ) -> Iterator[dict[str, object]]:
         if not (chat_session.pending_tasks_json or chat_session.skill_stack_json):
             return None
@@ -810,6 +849,7 @@ class AgentLoop:
                 "routing",
                 "正在规划后续任务",
                 {"schedule_round": schedule_round + 1},
+                user_message_id=user_message_id,
             )
             schedule = self.router.schedule_tasks_after_completion(
                 request.message,
@@ -844,7 +884,11 @@ class AgentLoop:
                 )
                 if not router_decision:
                     continue
-                yield self._stream_event("router_decision", chat_session, router_decision.model_dump(mode="json"))
+                yield self._stream_event(
+                    "router_decision",
+                    chat_session,
+                    self._turn_payload(router_decision.model_dump(mode="json"), user_message_id),
+                )
 
                 before_skill = chat_session.active_skill_id
                 before_step = chat_session.active_step_id
@@ -874,6 +918,7 @@ class AgentLoop:
                     "stepping",
                     "正在思考",
                     {"active_skill_id": chat_session.active_skill_id, "active_step_id": chat_session.active_step_id},
+                    user_message_id=user_message_id,
                 )
                 repair_stream_events: list[tuple[str, dict[str, object]]] = []
                 step_result = self._run_step_agent_with_context_repair(
@@ -887,11 +932,15 @@ class AgentLoop:
                     conversation_context,
                     repair_stream_events,
                 )
-                yield self._stream_event("step_result", chat_session, step_result.model_dump(mode="json"))
+                yield self._stream_event(
+                    "step_result",
+                    chat_session,
+                    self._turn_payload(step_result.model_dump(mode="json"), user_message_id),
+                )
                 self.db.commit()
                 self.db.refresh(chat_session)
                 for event_name, payload in repair_stream_events:
-                    yield self._stream_event(event_name, chat_session, payload)
+                    yield self._stream_event(event_name, chat_session, self._turn_payload(payload, user_message_id))
 
                 tool_result = None
                 if step_result.tool_call:
@@ -906,7 +955,7 @@ class AgentLoop:
                         tool_stream_events,
                     )
                     for event_name, payload in tool_stream_events:
-                        yield self._stream_event(event_name, chat_session, payload)
+                        yield self._stream_event(event_name, chat_session, self._turn_payload(payload, user_message_id))
 
                 reflection_stream_events: list[tuple[str, dict[str, object]]] = []
                 reflection_max_rounds = self._get_reflection_max_rounds(request.tenant_id)
@@ -916,6 +965,7 @@ class AgentLoop:
                         "reflecting",
                         "正在反思",
                         {"reflection_round": 1, "reflection_max_rounds": reflection_max_rounds},
+                        user_message_id=user_message_id,
                     )
                 (
                     active_skill,
@@ -962,9 +1012,9 @@ class AgentLoop:
                     completed_skill_ids_this_turn,
                 )
                 for event_name, payload in graph_stream_events:
-                    yield self._stream_event(event_name, chat_session, payload)
+                    yield self._stream_event(event_name, chat_session, self._turn_payload(payload, user_message_id))
 
-                yield self._stream_status(chat_session, "responding", "正在生成回复")
+                yield self._stream_status(chat_session, "responding", "正在生成回复", user_message_id=user_message_id)
                 chunks: list[str] = []
                 for chunk in self._generate_reply_stream_segment(
                     request.message,
@@ -980,25 +1030,41 @@ class AgentLoop:
                 ):
                     chunks.append(chunk)
                     if replace_existing_reply and not replaced_current_reply:
-                        yield self._stream_event("stream_replace", chat_session, {"content": ""})
+                        yield self._stream_event(
+                            "stream_replace",
+                            chat_session,
+                            self._turn_payload({"content": ""}, user_message_id),
+                        )
                         replaced_current_reply = True
-                    yield self._stream_event("stream_delta", chat_session, {"content": chunk})
+                    yield self._stream_event(
+                        "stream_delta",
+                        chat_session,
+                        self._turn_payload({"content": chunk}, user_message_id),
+                    )
                     self._pace_stream()
                 segment = "".join(chunks).strip() or FALLBACK_REPLY
                 if not chunks:
                     for chunk in self.response_generator.chunk_text(segment):
                         chunks.append(chunk)
                         if replace_existing_reply and not replaced_current_reply:
-                            yield self._stream_event("stream_replace", chat_session, {"content": ""})
+                            yield self._stream_event(
+                                "stream_replace",
+                                chat_session,
+                                self._turn_payload({"content": ""}, user_message_id),
+                            )
                             replaced_current_reply = True
-                        yield self._stream_event("stream_delta", chat_session, {"content": chunk})
+                        yield self._stream_event(
+                            "stream_delta",
+                            chat_session,
+                            self._turn_payload({"content": chunk}, user_message_id),
+                        )
                         self._pace_stream()
                 replies, replaced_reply = self._merge_scheduled_reply_segment(replies, segment)
                 if replaced_reply:
                     yield self._stream_event(
                         "stream_replace",
                         chat_session,
-                        {"content": "\n\n".join(replies).strip()},
+                        self._turn_payload({"content": "\n\n".join(replies).strip()}, user_message_id),
                     )
                 executed_actions += 1
                 finalize_state = self._finalize_execution_after_reply(
@@ -1050,6 +1116,36 @@ class AgentLoop:
         turn_finalized = False
         user_message_id: str | None = None
 
+        def mark_current_turn_cancelled() -> bool:
+            nonlocal turn_finalized
+            if not chat_session or not user_message_id:
+                return False
+            client_turn_id = (request.client_turn_id or "").strip()
+            server_cancelled = is_chat_turn_cancelled(chat_session.id, user_message_id)
+            client_cancelled = bool(client_turn_id and is_chat_turn_cancelled(chat_session.id, client_turn_id))
+            if not server_cancelled and not client_cancelled:
+                return False
+            self.db.rollback()
+            self.events.record(
+                request.tenant_id,
+                chat_session.id,
+                "stream_cancelled",
+                self._turn_payload(
+                    {
+                        "phase": "cancelled",
+                        "text": "已停止生成",
+                        "client_turn_id": client_turn_id or None,
+                    },
+                    user_message_id,
+                ),
+            )
+            self.db.commit()
+            clear_chat_turn_cancelled(chat_session.id, user_message_id)
+            if client_turn_id:
+                clear_chat_turn_cancelled(chat_session.id, client_turn_id)
+            turn_finalized = True
+            return True
+
         def finalize_turn_once(
             target_session: ChatSession,
             final_reply: str,
@@ -1091,11 +1187,35 @@ class AgentLoop:
                 "user_message_received",
                 {
                     "message_id": user_message.id,
+                    "client_turn_id": request.client_turn_id,
                     "message": request.message,
                     "channel": request.channel,
                     "user_id": request.user_id,
                 },
             )
+            yield self._stream_event(
+                "user_message_received",
+                chat_session,
+                self._turn_payload(
+                    {
+                        "message_id": user_message.id,
+                        "client_turn_id": request.client_turn_id,
+                        "message": request.message,
+                        "channel": request.channel,
+                        "user_id": request.user_id,
+                    },
+                    user_message.id,
+                ),
+            )
+            self.events.record(
+                request.tenant_id,
+                chat_session.id,
+                "stream_status",
+                self._turn_payload({"phase": "routing", "text": "正在判断用户意图"}, user_message_id),
+            )
+            self.db.commit()
+            self.db.refresh(chat_session)
+            self.db.refresh(user_message)
 
             model_config = self._get_request_model(request, chat_session.agent_id)
             if not model_config:
@@ -1122,13 +1242,18 @@ class AgentLoop:
                         self._conversation_context(chat_session),
                         persona_prompt,
                         user_message.id,
+                        mark_current_turn_cancelled,
                     )
                     return
                 router_decision = RouterDecision(
                     decision="answer_only",
                     reason="No published scene skills are available; answer as chat.",
                 )
-                yield self._stream_event("router_decision", chat_session, router_decision.model_dump(mode="json"))
+                yield self._stream_event(
+                    "router_decision",
+                    chat_session,
+                    self._turn_payload(router_decision.model_dump(mode="json"), user_message_id),
+                )
                 knowledge_stream_events: list[tuple[str, dict[str, object]]] = []
                 step_result = self._auto_knowledge_step_result(
                     request,
@@ -1138,8 +1263,8 @@ class AgentLoop:
                     stream_events=knowledge_stream_events,
                 )
                 for event_name, payload in knowledge_stream_events:
-                    yield self._stream_event(event_name, chat_session, payload)
-                yield self._stream_status(chat_session, "responding", "正在生成回复")
+                    yield self._stream_event(event_name, chat_session, self._turn_payload(payload, user_message_id))
+                yield self._stream_status(chat_session, "responding", "正在生成回复", user_message_id=user_message_id)
                 reply = ""
                 for chunk in self._generate_reply_stream_segment(
                     request.message,
@@ -1154,9 +1279,17 @@ class AgentLoop:
                     self._conversation_context(chat_session),
                 ):
                     reply += chunk
-                    yield self._stream_event("stream_delta", chat_session, {"content": chunk})
+                    yield self._stream_event(
+                        "stream_delta",
+                        chat_session,
+                        self._turn_payload({"content": chunk}, user_message_id),
+                    )
                     self._pace_stream()
-                yield self._stream_event("stream_end", chat_session, {})
+                if mark_current_turn_cancelled():
+                    return
+                yield self._stream_event("stream_end", chat_session, self._turn_payload({}, user_message_id))
+                if mark_current_turn_cancelled():
+                    return
                 finalize_turn_once(chat_session, reply, step_result, request.message)
                 self.db.commit()
                 self.db.refresh(chat_session)
@@ -1167,7 +1300,11 @@ class AgentLoop:
                     step_result=step_result,
                     session_state=public_session(chat_session),
                 )
-                yield self._stream_event("complete", chat_session, result.model_dump(mode="json"))
+                yield self._stream_event(
+                    "complete",
+                    chat_session,
+                    self._turn_payload(result.model_dump(mode="json"), user_message_id),
+                )
                 return
             self._finish_stale_completed_skill(request.tenant_id, chat_session, skills)
             memory_context = [
@@ -1192,7 +1329,7 @@ class AgentLoop:
             conversation_context = self._conversation_context(chat_session)
             router_context = self._conversation_context(chat_session, max_messages=ROUTER_CONTEXT_MESSAGES)
 
-            yield self._stream_status(chat_session, "routing", "正在判断用户意图")
+            yield self._stream_status(chat_session, "routing", "正在判断用户意图", user_message_id=user_message_id)
             router_decision = self.router.decide(
                 request.message, chat_session, skills, model_config, router_context, memory_context
             )
@@ -1210,9 +1347,13 @@ class AgentLoop:
                 request.tenant_id,
                 chat_session.id,
                 "router_decision_created",
-                router_decision.model_dump(),
+                self._turn_payload(router_decision.model_dump(), user_message_id),
             )
-            yield self._stream_event("router_decision", chat_session, router_decision.model_dump(mode="json"))
+            yield self._stream_event(
+                "router_decision",
+                chat_session,
+                self._turn_payload(router_decision.model_dump(mode="json"), user_message_id),
+            )
             if self._scene_router_deferred_to_general(router_decision):
                 selected_general_skill = self._select_general_skill(request.message, model_config, chat_session.agent_id)
                 if selected_general_skill:
@@ -1226,6 +1367,7 @@ class AgentLoop:
                         conversation_context,
                         persona_prompt,
                         user_message.id,
+                        mark_current_turn_cancelled,
                     )
                     return
 
@@ -1256,6 +1398,7 @@ class AgentLoop:
                     memory_context,
                     conversation_context,
                     "",
+                    user_message_id=user_message_id,
                 )
                 if continuation:
                     reply = continuation.reply
@@ -1265,8 +1408,12 @@ class AgentLoop:
                     tool_result = continuation.tool_result
                 else:
                     router_decision = initial_schedule_decision
-                    yield self._stream_event("router_decision", chat_session, router_decision.model_dump(mode="json"))
-                    yield self._stream_status(chat_session, "responding", "正在生成回复")
+                    yield self._stream_event(
+                        "router_decision",
+                        chat_session,
+                        self._turn_payload(router_decision.model_dump(mode="json"), user_message_id),
+                    )
+                    yield self._stream_status(chat_session, "responding", "正在生成回复", user_message_id=user_message_id)
                     chunks: list[str] = []
                     for chunk in self._generate_reply_stream_segment(
                         request.message,
@@ -1281,14 +1428,22 @@ class AgentLoop:
                         conversation_context,
                     ):
                         chunks.append(chunk)
-                        yield self._stream_event("stream_delta", chat_session, {"content": chunk})
+                        yield self._stream_event(
+                            "stream_delta",
+                            chat_session,
+                            self._turn_payload({"content": chunk}, user_message_id),
+                        )
                         self._pace_stream()
                     reply = "".join(chunks).strip() or FALLBACK_REPLY
                     if not chunks:
                         for chunk in self.response_generator.chunk_text(reply):
-                            yield self._stream_event("stream_delta", chat_session, {"content": chunk})
+                            yield self._stream_event(
+                                "stream_delta",
+                                chat_session,
+                                self._turn_payload({"content": chunk}, user_message_id),
+                            )
                             self._pace_stream()
-                yield self._stream_event("stream_end", chat_session, {})
+                yield self._stream_event("stream_end", chat_session, self._turn_payload({}, user_message_id))
                 memory_recent_messages = self._recent_messages(chat_session) if memory_model_config else []
                 finalize_turn_once(chat_session, reply, step_result, request.message)
                 self.db.commit()
@@ -1311,7 +1466,11 @@ class AgentLoop:
                     tool_result=tool_result,
                     session_state=public_session(chat_session),
                 )
-                yield self._stream_event("complete", chat_session, result.model_dump(mode="json"))
+                yield self._stream_event(
+                    "complete",
+                    chat_session,
+                    self._turn_payload(result.model_dump(mode="json"), user_message_id),
+                )
                 return
 
             before_skill = chat_session.active_skill_id
@@ -1336,8 +1495,8 @@ class AgentLoop:
                 if auto_step_result.knowledge_results:
                     step_result = auto_step_result
                 for event_name, payload in knowledge_stream_events:
-                    yield self._stream_event(event_name, chat_session, payload)
-                yield self._stream_status(chat_session, "responding", "正在生成回复")
+                    yield self._stream_event(event_name, chat_session, self._turn_payload(payload, user_message_id))
+                yield self._stream_status(chat_session, "responding", "正在生成回复", user_message_id=user_message_id)
                 for chunk in self._generate_reply_stream_segment(
                     request.message,
                     chat_session,
@@ -1351,9 +1510,13 @@ class AgentLoop:
                     conversation_context,
                 ):
                     reply += chunk
-                    yield self._stream_event("stream_delta", chat_session, {"content": chunk})
+                    yield self._stream_event(
+                        "stream_delta",
+                        chat_session,
+                        self._turn_payload({"content": chunk}, user_message_id),
+                    )
                     self._pace_stream()
-                yield self._stream_event("stream_end", chat_session, {})
+                yield self._stream_event("stream_end", chat_session, self._turn_payload({}, user_message_id))
                 finalize_turn_once(chat_session, reply, step_result, request.message)
                 self.db.commit()
                 self.db.refresh(chat_session)
@@ -1365,7 +1528,11 @@ class AgentLoop:
                     tool_result=tool_result,
                     session_state=public_session(chat_session),
                 )
-                yield self._stream_event("complete", chat_session, result.model_dump(mode="json"))
+                yield self._stream_event(
+                    "complete",
+                    chat_session,
+                    self._turn_payload(result.model_dump(mode="json"), user_message_id),
+                )
                 return
             yield self._stream_event(
                 "skill_state",
@@ -1381,6 +1548,7 @@ class AgentLoop:
                 "stepping",
                 "正在思考",
                 {"active_skill_id": chat_session.active_skill_id, "active_step_id": chat_session.active_step_id},
+                user_message_id=user_message_id,
             )
             repair_stream_events: list[tuple[str, dict[str, object]]] = []
             step_result = self._run_step_agent_with_context_repair(
@@ -1394,11 +1562,15 @@ class AgentLoop:
                 conversation_context,
                 repair_stream_events,
             )
-            yield self._stream_event("step_result", chat_session, step_result.model_dump(mode="json"))
+            yield self._stream_event(
+                "step_result",
+                chat_session,
+                self._turn_payload(step_result.model_dump(mode="json"), user_message_id),
+            )
             self.db.commit()
             self.db.refresh(chat_session)
             for event_name, payload in repair_stream_events:
-                yield self._stream_event(event_name, chat_session, payload)
+                yield self._stream_event(event_name, chat_session, self._turn_payload(payload, user_message_id))
 
             if step_result.knowledge_query:
                 knowledge_stream_events: list[tuple[str, dict[str, object]]] = []
@@ -1416,7 +1588,7 @@ class AgentLoop:
                 self.db.commit()
                 self.db.refresh(chat_session)
                 for event_name, payload in knowledge_stream_events:
-                    yield self._stream_event(event_name, chat_session, payload)
+                    yield self._stream_event(event_name, chat_session, self._turn_payload(payload, user_message_id))
             elif not step_result.knowledge_results and self._should_auto_query_knowledge(request.message, router_decision):
                 knowledge_stream_events = []
                 auto_step_result = self._auto_knowledge_step_result(
@@ -1432,7 +1604,7 @@ class AgentLoop:
                 self.db.commit()
                 self.db.refresh(chat_session)
                 for event_name, payload in knowledge_stream_events:
-                    yield self._stream_event(event_name, chat_session, payload)
+                    yield self._stream_event(event_name, chat_session, self._turn_payload(payload, user_message_id))
 
             if step_result.tool_call:
                 tool_stream_events: list[tuple[str, dict[str, object]]] = []
@@ -1446,7 +1618,7 @@ class AgentLoop:
                     tool_stream_events,
                 )
                 for event_name, payload in tool_stream_events:
-                    yield self._stream_event(event_name, chat_session, payload)
+                    yield self._stream_event(event_name, chat_session, self._turn_payload(payload, user_message_id))
 
             reflection_stream_events: list[tuple[str, dict[str, object]]] = []
             reflection_max_rounds = self._get_reflection_max_rounds(request.tenant_id)
@@ -1456,6 +1628,7 @@ class AgentLoop:
                     "reflecting",
                     "正在反思",
                     {"reflection_round": 1, "reflection_max_rounds": reflection_max_rounds},
+                    user_message_id=user_message_id,
                 )
             (
                 active_skill,
@@ -1477,7 +1650,7 @@ class AgentLoop:
                 reflection_stream_events,
             )
             for event_name, payload in reflection_stream_events:
-                yield self._stream_event(event_name, chat_session, payload)
+                yield self._stream_event(event_name, chat_session, self._turn_payload(payload, user_message_id))
 
             graph_stream_events: list[tuple[str, dict[str, object]]] = []
             (
@@ -1500,9 +1673,9 @@ class AgentLoop:
                 graph_stream_events,
             )
             for event_name, payload in graph_stream_events:
-                yield self._stream_event(event_name, chat_session, payload)
+                yield self._stream_event(event_name, chat_session, self._turn_payload(payload, user_message_id))
 
-            yield self._stream_status(chat_session, "responding", "正在生成回复")
+            yield self._stream_status(chat_session, "responding", "正在生成回复", user_message_id=user_message_id)
             chunks: list[str] = []
             for chunk in self._generate_reply_stream_segment(
                 request.message,
@@ -1517,13 +1690,21 @@ class AgentLoop:
                 conversation_context,
             ):
                 chunks.append(chunk)
-                yield self._stream_event("stream_delta", chat_session, {"content": chunk})
+                yield self._stream_event(
+                    "stream_delta",
+                    chat_session,
+                    self._turn_payload({"content": chunk}, user_message_id),
+                )
                 self._pace_stream()
             reply = "".join(chunks).strip() or FALLBACK_REPLY
             if not chunks:
                 for chunk in self.response_generator.chunk_text(reply):
                     chunks.append(chunk)
-                    yield self._stream_event("stream_delta", chat_session, {"content": chunk})
+                    yield self._stream_event(
+                        "stream_delta",
+                        chat_session,
+                        self._turn_payload({"content": chunk}, user_message_id),
+                    )
                     self._pace_stream()
             finalize_state = self._finalize_execution_after_reply(
                 request.tenant_id,
@@ -1540,62 +1721,97 @@ class AgentLoop:
                     "pending_tasks_waiting",
                     {"pending_tasks": chat_session.pending_tasks_json or []},
                 )
-            yield self._stream_event("stream_end", chat_session, {})
+            if mark_current_turn_cancelled():
+                return
+            yield self._stream_event("stream_end", chat_session, self._turn_payload({}, user_message_id))
+            if mark_current_turn_cancelled():
+                return
 
         except GeneratorExit:
-            recoverable_reply = reply.strip() or (step_result.reply or "").strip()
-            if chat_session and recoverable_reply and not turn_finalized:
+            if chat_session and user_message_id:
                 try:
-                    finalize_turn_once(chat_session, recoverable_reply, step_result, request.message)
-                    self.db.commit()
+                    if not mark_current_turn_cancelled():
+                        self.db.rollback()
                 except Exception:
                     self.db.rollback()
             raise
         except AgentLoopPreconditionError as exc:
             chat_session = chat_session or self._get_or_create_session(request)
+            if mark_current_turn_cancelled():
+                return
             self.events.record(
                 request.tenant_id,
                 chat_session.id,
                 "error_occurred",
                 {"code": exc.code, "message": exc.message},
             )
-            yield self._stream_status(chat_session, "error", exc.message, {"code": exc.code})
+            yield self._stream_status(chat_session, "error", exc.message, {"code": exc.code}, user_message_id=user_message_id)
             reply = FALLBACK_REPLY
             for chunk in self.response_generator.chunk_text(reply):
-                yield self._stream_event("stream_delta", chat_session, {"content": chunk})
+                yield self._stream_event(
+                    "stream_delta",
+                    chat_session,
+                    self._turn_payload({"content": chunk}, user_message_id),
+                )
                 self._pace_stream()
-            yield self._stream_event("stream_end", chat_session, {})
+            yield self._stream_event("stream_end", chat_session, self._turn_payload({}, user_message_id))
         except LLMError as exc:
             chat_session = chat_session or self._get_or_create_session(request)
+            if mark_current_turn_cancelled():
+                return
             self.events.record(
                 request.tenant_id,
                 chat_session.id,
                 "error_occurred",
                 {"code": "LLM_ERROR", "message": str(exc)},
             )
-            yield self._stream_status(chat_session, "error", "模型调用失败", {"code": "LLM_ERROR"})
+            yield self._stream_status(
+                chat_session,
+                "error",
+                "模型调用失败",
+                {"code": "LLM_ERROR"},
+                user_message_id=user_message_id,
+            )
             reply = FALLBACK_REPLY
             for chunk in self.response_generator.chunk_text(reply):
-                yield self._stream_event("stream_delta", chat_session, {"content": chunk})
+                yield self._stream_event(
+                    "stream_delta",
+                    chat_session,
+                    self._turn_payload({"content": chunk}, user_message_id),
+                )
                 self._pace_stream()
-            yield self._stream_event("stream_end", chat_session, {})
+            yield self._stream_event("stream_end", chat_session, self._turn_payload({}, user_message_id))
         except Exception as exc:
             chat_session = chat_session or self._get_or_create_session(request)
+            if mark_current_turn_cancelled():
+                return
             self.events.record(
                 request.tenant_id,
                 chat_session.id,
                 "error_occurred",
                 {"code": "AGENT_LOOP_ERROR", "message": str(exc)},
             )
-            yield self._stream_status(chat_session, "error", "Agent Loop 出错", {"code": "AGENT_LOOP_ERROR"})
+            yield self._stream_status(
+                chat_session,
+                "error",
+                "Agent Loop 出错",
+                {"code": "AGENT_LOOP_ERROR"},
+                user_message_id=user_message_id,
+            )
             reply = FALLBACK_REPLY
             for chunk in self.response_generator.chunk_text(reply):
-                yield self._stream_event("stream_delta", chat_session, {"content": chunk})
+                yield self._stream_event(
+                    "stream_delta",
+                    chat_session,
+                    self._turn_payload({"content": chunk}, user_message_id),
+                )
                 self._pace_stream()
-            yield self._stream_event("stream_end", chat_session, {})
+            yield self._stream_event("stream_end", chat_session, self._turn_payload({}, user_message_id))
 
         if not chat_session:
             chat_session = self._get_or_create_session(request)
+        if mark_current_turn_cancelled():
+            return
         memory_recent_messages = self._recent_messages(chat_session) if memory_model_config else []
         finalize_turn_once(chat_session, reply, step_result, request.message)
         self.db.commit()
@@ -1618,7 +1834,11 @@ class AgentLoop:
             tool_result=tool_result,
             session_state=public_session(chat_session),
         )
-        yield self._stream_event("complete", chat_session, result.model_dump(mode="json"))
+        yield self._stream_event(
+            "complete",
+            chat_session,
+            self._turn_payload(result.model_dump(mode="json"), user_message_id),
+        )
 
     def _stream_status(
         self,
@@ -1626,11 +1846,15 @@ class AgentLoop:
         phase: str,
         text: str,
         extra: dict[str, object] | None = None,
+        user_message_id: str | None = None,
     ) -> dict[str, object]:
+        payload: dict[str, object] = {"phase": phase, "text": text, **(extra or {})}
+        if user_message_id:
+            payload = self._turn_payload(payload, user_message_id)
         return self._stream_event(
             "status",
             chat_session,
-            {"phase": phase, "text": text, **(extra or {})},
+            payload,
         )
 
     def _stream_event(
@@ -1775,7 +1999,7 @@ class AgentLoop:
             request.tenant_id,
             chat_session.id,
             "router_decision_created",
-            router_decision.model_dump(),
+            self._turn_payload(router_decision.model_dump(), user_message.id),
         )
         general_response = self._try_handle_general_skill_after_scene_router(
             request,

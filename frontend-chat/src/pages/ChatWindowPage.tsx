@@ -1,5 +1,4 @@
 import { Button, Dropdown, Empty, Input, Modal, Select, Typography, message } from 'antd';
-import { Fragment } from 'react';
 import type { ChangeEvent, ClipboardEvent, DragEvent, MouseEvent, ReactNode } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -490,6 +489,14 @@ function explicitMessageTurnId(messageItem: ChatMessage): string | undefined {
   return snakeTurnId || undefined;
 }
 
+function explicitStreamTurnId(data: Record<string, unknown>, fallbackTurnId: string): string {
+  const turnId = typeof data.turn_id === 'string' ? data.turn_id.trim() : '';
+  if (turnId) return turnId;
+  const userMessageId = typeof data.user_message_id === 'string' ? data.user_message_id.trim() : '';
+  if (userMessageId) return userMessageId;
+  return fallbackTurnId;
+}
+
 function attachTurnIdsToServerMessages(
   serverMessages: ChatMessage[],
   realtimeMessages: ChatMessage[],
@@ -742,6 +749,29 @@ function stepResultTraceLine(data: Record<string, unknown>): TraceLine {
   };
 }
 
+function mergeTraceLine(existing: TraceLine, incoming: TraceLine): TraceLine {
+  const keepExistingText =
+    incoming.id === 'decision_router' &&
+    incoming.text === '判断意图' &&
+    existing.text !== '判断意图';
+  const nextState =
+    existing.state !== 'running' && incoming.state === 'running'
+      ? existing.state
+      : incoming.state;
+  return {
+    ...existing,
+    ...incoming,
+    text: keepExistingText ? existing.text : incoming.text || existing.text,
+    detail: incoming.detail ?? existing.detail,
+    code: incoming.code ?? existing.code,
+    language: incoming.language ?? existing.language,
+    output: incoming.output ?? existing.output,
+    outputLanguage: incoming.outputLanguage ?? existing.outputLanguage,
+    outputTitle: incoming.outputTitle ?? existing.outputTitle,
+    state: nextState,
+  };
+}
+
 function formatTracePayload(value: unknown): string {
   if (value === undefined || value === null || value === '') return '';
   if (typeof value === 'string') {
@@ -838,7 +868,7 @@ function traceSummary(trace: TurnTrace, lines: TraceLine[]): { text: string; sta
     return { text: '执行记录', state: 'completed' };
   }
   if (lines.some((line) => line.state === 'running')) {
-    return { text: '正在执行', state: 'running' };
+    return { text: '执行记录', state: 'running' };
   }
   if (lines.some((line) => line.state === 'failed')) {
     return { text: '执行遇到问题', state: 'failed' };
@@ -1574,7 +1604,7 @@ export default function ChatWindowPage() {
     const index = trace.lines.findIndex((item) => item.id === line.id);
     if (index >= 0) {
       trace.lines = [...trace.lines];
-      trace.lines[index] = nextLine;
+      trace.lines[index] = mergeTraceLine(trace.lines[index], nextLine);
     } else {
       trace.lines = [...trace.lines, nextLine].slice(-80);
     }
@@ -1624,17 +1654,44 @@ export default function ChatWindowPage() {
     notifyStream();
   }, [getSlot, getStreamSlot, notifyStore, notifyStream]);
 
+  const rekeyTurnTrace = useCallback((fromTurnId: string, toTurnId: string) => {
+    if (!fromTurnId || !toTurnId || fromTurnId === toTurnId) return;
+    const source = turnTraceRef.current.get(fromTurnId);
+    if (!source) return;
+    const target = turnTraceRef.current.get(toTurnId);
+    if (!target) {
+      turnTraceRef.current.set(toTurnId, source);
+    } else {
+      const nextLines = [...target.lines];
+      source.lines.forEach((line) => {
+        const index = nextLines.findIndex((item) => item.id === line.id);
+        if (index >= 0) {
+          nextLines[index] = mergeTraceLine(nextLines[index], line);
+        } else {
+          nextLines.push(line);
+        }
+      });
+      target.lines = nextLines.slice(-80);
+      target.startedAt = Math.min(target.startedAt, source.startedAt);
+      target.completedAt = target.completedAt || source.completedAt;
+    }
+    turnTraceRef.current.delete(fromTurnId);
+    notifyTrace();
+  }, [notifyTrace]);
+
   const bindRealtimeUserToServerMessage = useCallback((id: string, turnId: string, serverMessageId: string) => {
     if (!turnId || !serverMessageId) return;
     const slot = getSlot(id);
+    const stream = getStreamSlot(id);
     let changed = false;
     slot.realtimeMessages = slot.realtimeMessages.map((item) => {
-      if (item.role !== 'user' || item.turnId !== turnId) return item;
+      if (item.turnId !== turnId) return item;
       changed = true;
       return {
         ...item,
-        id: serverMessageId,
-        serverMessageId,
+        id: item.role === 'user' ? serverMessageId : item.id,
+        serverMessageId: item.role === 'user' ? serverMessageId : item.serverMessageId,
+        turnId: serverMessageId,
       };
     });
     slot.serverMessages = slot.serverMessages.map((item) => {
@@ -1642,11 +1699,25 @@ export default function ChatWindowPage() {
       changed = true;
       return {
         ...item,
-        turnId,
+        turnId: serverMessageId,
       };
     });
+    if (stream.turnId === turnId) {
+      stream.turnId = serverMessageId;
+      changed = true;
+    }
+    if (stream.cancelledTurnId === turnId) {
+      stream.cancelledTurnId = serverMessageId;
+      changed = true;
+    }
+    setRunningTurn((current) => (
+      current?.sessionId === id && current.turnId === turnId
+        ? { sessionId: id, turnId: serverMessageId }
+        : current
+    ));
+    rekeyTurnTrace(turnId, serverMessageId);
     if (changed) notifyStore();
-  }, [getSlot, notifyStore]);
+  }, [getSlot, getStreamSlot, notifyStore, rekeyTurnTrace]);
 
   const displayedMessages = useMemo(() => {
     if (!activeConversationId) return [];
@@ -1660,6 +1731,24 @@ export default function ChatWindowPage() {
     void streamTick;
     return activeConversationId ? getStreamSlot(activeConversationId) : createStreamSlot();
   }, [activeConversationId, getStreamSlot, streamTick]);
+  const activeRunningTraceId = currentStream.loading
+    ? (currentStream.turnId || (runningTurn?.sessionId === activeConversationId ? runningTurn.turnId : '') || '')
+    : '';
+  const hasCurrentTurnAssistantMessage = useMemo(() => {
+    void traceTick;
+    if (!activeRunningTraceId) return false;
+    return displayedMessages.some((item) => (
+      item.role === 'assistant'
+      && (item.turnId || item.id) === activeRunningTraceId
+      && (
+        Boolean(normalizeMessageText(item.content))
+        || Boolean(turnTraceRef.current.get(item.turnId || item.id)?.lines.length)
+        || messageAttachments(item).length > 0
+        || Boolean(scheduledDraftForMessage(item))
+        || Boolean(createdScheduledTaskForMessage(item))
+      )
+    ));
+  }, [activeRunningTraceId, displayedMessages, traceTick]);
   const hasRunningDisplayedTrace = useMemo(() => {
     void traceTick;
     return displayedMessages.some((item) => {
@@ -1671,7 +1760,7 @@ export default function ChatWindowPage() {
   const currentSessionRunning = Boolean(
     currentStream.loading
     || (activeConversationId && runningTurn?.sessionId === activeConversationId)
-    || hasRunningDisplayedTrace,
+    || (currentStream.loading && hasRunningDisplayedTrace),
   );
   const readyComposerAttachments = useMemo(
     () => composerAttachments.filter((item) => item.uploadStatus === 'ready'),
@@ -1686,19 +1775,15 @@ export default function ChatWindowPage() {
   ), [displayedMessages]);
   const hasInlineCurrentTrace = useMemo(() => {
     void traceTick;
-    const activeTraceIds = new Set(
-      [currentStream.turnId, runningTurn?.turnId].filter((value): value is string => Boolean(value)),
-    );
-    if (!activeTraceIds.size) return false;
+    if (!activeRunningTraceId) return false;
     return displayedMessages.some((item) => {
       if (item.role !== 'assistant') return false;
       const traceTurnId = item.turnId || item.id;
-      if (!activeTraceIds.has(traceTurnId)) return false;
+      if (traceTurnId !== activeRunningTraceId) return false;
       const trace = turnTraceRef.current.get(traceTurnId);
       return Boolean(trace?.lines.length);
     });
-  }, [currentStream.turnId, displayedMessages, runningTurn?.turnId, traceTick]);
-  const showFallbackRunningStatus = currentSessionRunning && !hasStreamingAssistantMessage && !hasInlineCurrentTrace;
+  }, [activeRunningTraceId, displayedMessages, traceTick]);
   const composerActive = Boolean(
     input.trim()
     || composerAttachments.length > 0
@@ -1765,19 +1850,26 @@ export default function ChatWindowPage() {
       )}
     </div>
   );
-  const fallbackRunningTraceId = currentStream.turnId || runningTurn?.turnId || '';
+  const fallbackRunningTraceId = activeRunningTraceId;
   const fallbackRunningTrace = fallbackRunningTraceId ? turnTraceRef.current.get(fallbackRunningTraceId) : undefined;
   const fallbackTraceLines = fallbackRunningTrace?.lines || [];
   const fallbackAllowedTrace = fallbackTraceLines.filter((line) => traceLineAllowed(line, uiConfig));
   const fallbackVisibleTrace = fallbackAllowedTrace.length > 0 ? fallbackAllowedTrace : fallbackTraceLines;
-  const fallbackTraceSummary = fallbackRunningTrace && fallbackVisibleTrace.length > 0
-    ? traceSummary(fallbackRunningTrace, fallbackVisibleTrace)
+  const fallbackTraceSummary = fallbackVisibleTrace.length > 0
+    ? traceSummary(fallbackRunningTrace || { lines: fallbackVisibleTrace, startedAt: Date.now() }, fallbackVisibleTrace)
     : null;
   const fallbackTraceDetails = traceDetails(fallbackVisibleTrace);
   const fallbackTraceDefaultExpanded = fallbackTraceSummary?.state === 'running';
   const fallbackTraceExpanded = Boolean(
     (fallbackRunningTraceId && expandedTraceIds.includes(fallbackRunningTraceId))
     || (fallbackTraceDefaultExpanded && !collapsedTraceIds.includes(fallbackRunningTraceId))
+  );
+  const showFallbackRunningStatus = Boolean(
+    currentStream.loading
+    && fallbackTraceSummary
+    && !hasCurrentTurnAssistantMessage
+    && !hasInlineCurrentTrace
+    && !hasStreamingAssistantMessage
   );
   const modelMenuItems = useMemo(() => {
     if (!enabledModelConfigs.length) {
@@ -1999,11 +2091,12 @@ export default function ChatWindowPage() {
     notifyFeedback();
   }, [getSlot, notifyFeedback]);
 
-  const updateStreaming = useCallback((id: string, text: string, turnId?: string) => {
+  const updateStreaming = useCallback((id: string, text: string, turnId?: string, allowEmpty = false) => {
     const slot = getSlot(id);
     const stream = getStreamSlot(id);
     const streamId = `__streaming_${id}`;
     const index = slot.realtimeMessages.findIndex((item) => item.id === streamId);
+    if (!text && index < 0 && !allowEmpty) return;
     const previousMessage = index >= 0 ? slot.realtimeMessages[index] : undefined;
     const activeTurnId = turnId || stream.turnId || undefined;
     const previousCreatedAt = previousMessage && previousMessage.turnId === activeTurnId
@@ -2110,12 +2203,12 @@ export default function ChatWindowPage() {
       scrollChatToBottom({ preserveShortContentTop: true, force: true });
       return;
     }
-    scrollChatToBottom({ preserveShortContentTop: true });
+    scrollChatToBottom();
   }, [activeConversationId, displayedMessages.length, scrollChatToBottom, storeTick, traceTick]);
 
   useEffect(() => {
     if (!currentStream.loading) return;
-    scrollChatToBottom({ preserveShortContentTop: true });
+    scrollChatToBottom();
   }, [currentStream.loading, currentStream.phase, scrollChatToBottom, storeTick, streamTick, traceTick]);
 
   useEffect(() => {
@@ -2177,29 +2270,34 @@ export default function ChatWindowPage() {
   function abortStream() {
     if (!activeConversationId) return;
     const stream = getStreamSlot(activeConversationId);
-    const cancelledTurnId = stream.turnId;
-    stream.abortController?.abort();
-    stream.abortController = null;
-    stream.cancelledTurnId = cancelledTurnId;
+    if (!stream.loading && stream.cancelledTurnId) return;
+    const cancelledTurnId = stream.turnId || (
+      runningTurn?.sessionId === activeConversationId ? runningTurn.turnId : null
+    );
+    const controller = stream.abortController;
     locallyCancelledSessionIdsRef.current.add(activeConversationId);
+    const cancelRequest = cancelledTurnId && !isDraftConversationKey(activeConversationId)
+      ? api.post(`/api/chat/sessions/${activeConversationId}/cancel`, {
+          tenant_id: tenantId,
+          turn_id: cancelledTurnId,
+        }).catch(() => undefined)
+      : Promise.resolve();
     if (cancelledTurnId) {
-      turnTraceRef.current.delete(cancelledTurnId);
-      notifyTrace();
+      upsertTraceLine(cancelledTurnId, {
+        id: 'generation_stopped',
+        kind: 'decision',
+        text: '已停止生成',
+        state: 'failed',
+      });
+      finishTrace(cancelledTurnId, true);
     }
-    finalizeStreaming(activeConversationId);
-    const slot = getSlot(activeConversationId);
-    slot.realtimeMessages = slot.realtimeMessages.filter((item) => !item.id.startsWith('local_interrupt_'));
-    appendRealtime(activeConversationId, {
-      id: `local_interrupt_${Date.now()}`,
-      role: 'system',
-      content: '已停止生成',
-      created_at: new Date().toISOString(),
-    });
-    const nextStream = createStreamSlot();
-    nextStream.cancelledTurnId = cancelledTurnId;
-    streamRef.current.set(activeConversationId, nextStream);
+    clearStreamSlot(activeConversationId, true);
+    const stoppedStream = getStreamSlot(activeConversationId);
+    stoppedStream.cancelledTurnId = cancelledTurnId;
     setRunningTurn((current) => (current?.sessionId === activeConversationId ? null : current));
     notifyStream();
+    controller?.abort();
+    void cancelRequest;
   }
 
   async function rateMessage(item: ChatMessage, rating: 'up' | 'down') {
@@ -2282,6 +2380,7 @@ export default function ChatWindowPage() {
 
   const handleStreamEvent = useCallback((item: ChatStreamEvent, baseSessionId: string, turnId: string) => {
     const eventSessionId = String(item.data.sessionId || baseSessionId);
+    const traceTurnId = explicitStreamTurnId(item.data, turnId);
     if (item.event === 'session_created') {
       return;
     }
@@ -2293,11 +2392,11 @@ export default function ChatWindowPage() {
       return;
     }
     if (item.event === 'router_decision') {
-      upsertTraceLine(turnId, routerDecisionTraceLine(item.data));
+      upsertTraceLine(traceTurnId, routerDecisionTraceLine(item.data));
       return;
     }
     if (item.event === 'step_result') {
-      upsertTraceLine(turnId, stepResultTraceLine(item.data));
+      upsertTraceLine(traceTurnId, stepResultTraceLine(item.data));
       return;
     }
     if (item.event === 'skill_state') {
@@ -2307,7 +2406,7 @@ export default function ChatWindowPage() {
         .filter((entry): entry is TraceSkill => Boolean(entry))
         .forEach((skill) => {
           const label = streamSkillLabel(item.data, skill);
-          upsertTraceLine(turnId, {
+          upsertTraceLine(traceTurnId, {
             id: `skill_${skill.skillId}_${skill.state || 'active'}`,
             kind: 'skill',
             text: `${label} ${skill.name || skill.skillId}`,
@@ -2320,7 +2419,7 @@ export default function ChatWindowPage() {
     if (item.event === 'general_skill_state') {
       const skillName = typeof item.data.skillName === 'string' ? item.data.skillName : '';
       const skillSlug = typeof item.data.skillSlug === 'string' ? item.data.skillSlug : '';
-      upsertTraceLine(turnId, {
+      upsertTraceLine(traceTurnId, {
         id: `general_skill_${skillSlug || skillName || 'selected'}`,
         kind: 'skill',
         text: `选择技能 ${skillName || skillSlug || ''}`.trim(),
@@ -2337,7 +2436,7 @@ export default function ChatWindowPage() {
       const attempt = typeof item.data.attempt === 'number' || typeof item.data.attempt === 'string'
         ? String(item.data.attempt)
         : '';
-      const trace = getTurnTrace(turnId);
+      const trace = getTurnTrace(traceTurnId);
       const sequence = trace.lines.length;
       const isOutputChunk = phase === 'stdout_chunk' || phase === 'stderr_chunk';
       const id = isOutputChunk
@@ -2367,7 +2466,7 @@ export default function ChatWindowPage() {
         'reflection_reviewing',
         'replying',
       ]);
-      upsertTraceLine(turnId, {
+      upsertTraceLine(traceTurnId, {
         id,
         kind: codePhases.has(phase) ? 'code' : 'decision',
         text,
@@ -2383,7 +2482,7 @@ export default function ChatWindowPage() {
       return;
     }
     if (item.event === 'knowledge_result') {
-      upsertTraceLine(turnId, {
+      upsertTraceLine(traceTurnId, {
         id: 'knowledge_lookup',
         kind: 'knowledge',
         text: '读取知识库',
@@ -2395,7 +2494,7 @@ export default function ChatWindowPage() {
     if (item.event === 'tool_result') {
       const tool = normalizeTraceTool(item.data);
       if (tool) {
-        upsertTraceLine(turnId, {
+        upsertTraceLine(traceTurnId, {
           id: `tool_${tool.toolCallId || tool.rawToolName || tool.toolId}`,
           kind: 'tool',
           text: `${tool.isError ? '工具调用失败' : '调用工具'} ${tool.toolName}`,
@@ -2410,7 +2509,7 @@ export default function ChatWindowPage() {
         ? String(item.data.iteration)
         : '1';
       const targetTool = typeof item.data.target_tool_name === 'string' ? item.data.target_tool_name : '';
-      upsertTraceLine(turnId, {
+      upsertTraceLine(traceTurnId, {
         id: `decision_stepping_tool_continuation_${iteration}`,
         kind: 'decision',
         text: '重新分析',
@@ -2420,7 +2519,7 @@ export default function ChatWindowPage() {
         state: 'completed',
       });
       if (item.event === 'agent_loop_completed') {
-        upsertTraceLine(turnId, {
+        upsertTraceLine(traceTurnId, {
           id: 'decision_responding',
           kind: 'decision',
           text: '生成回复',
@@ -2432,7 +2531,7 @@ export default function ChatWindowPage() {
     if (item.event === 'reflection_decision') {
       const needsRetry = item.data.needs_retry === true;
       const skipped = item.data.skipped === true;
-      upsertTraceLine(turnId, {
+      upsertTraceLine(traceTurnId, {
         id: 'reflection',
         kind: 'decision',
         text: skipped ? '反思已关闭' : needsRetry ? '反思后继续尝试' : '反思通过',
@@ -2443,20 +2542,23 @@ export default function ChatWindowPage() {
     }
     if (item.event === 'status') {
       const eventStream = getStreamSlot(eventSessionId);
+      if (traceTurnId && eventStream.turnId !== traceTurnId) {
+        eventStream.turnId = traceTurnId;
+      }
       const phase = typeof item.data.phase === 'string' ? item.data.phase : 'thinking';
       eventStream.phase = publicStreamPhase(item.data);
       if (phase === 'tool' && typeof item.data.tool_name === 'string') {
         const toolCallId = typeof item.data.tool_call_id === 'string' ? item.data.tool_call_id : item.data.tool_name;
-        upsertTraceLine(turnId, {
+        upsertTraceLine(traceTurnId, {
           id: `tool_${toolCallId}`,
           kind: 'tool',
           text: `正在调用 ${item.data.tool_name}`,
           state: 'running',
         });
       } else if (phase === 'routing') {
-        upsertTraceLine(turnId, { id: 'decision_router', kind: 'decision', text: '判断意图', state: 'running' });
+        upsertTraceLine(traceTurnId, { id: 'decision_router', kind: 'decision', text: '判断意图', state: 'running' });
       } else if (isKnowledgeTracePhase(phase)) {
-        upsertTraceLine(turnId, {
+        upsertTraceLine(traceTurnId, {
           id: 'knowledge_lookup',
           kind: 'knowledge',
           text: knowledgeTraceText(item.data),
@@ -2468,18 +2570,18 @@ export default function ChatWindowPage() {
         const iteration = typeof item.data.iteration === 'number' || typeof item.data.iteration === 'string'
           ? `_${item.data.iteration}`
           : '';
-        upsertTraceLine(turnId, {
+        upsertTraceLine(traceTurnId, {
           id: `decision_stepping_${repairReason}${iteration}`,
           kind: 'decision',
           text: repairReason === 'main' ? '决定下一步' : '重新分析',
           state: 'running',
         });
       } else if (phase === 'reflecting') {
-        upsertTraceLine(turnId, { id: 'reflection', kind: 'decision', text: '正在反思', state: 'running' });
+        upsertTraceLine(traceTurnId, { id: 'reflection', kind: 'decision', text: '正在反思', state: 'running' });
       } else if (phase === 'responding') {
-        upsertTraceLine(turnId, { id: 'decision_responding', kind: 'decision', text: '生成回复', state: 'running' });
+        upsertTraceLine(traceTurnId, { id: 'decision_responding', kind: 'decision', text: '生成回复', state: 'running' });
       } else if (phase === 'scheduled_task_draft') {
-        upsertTraceLine(turnId, {
+        upsertTraceLine(traceTurnId, {
           id: 'scheduled_task_draft',
           kind: 'decision',
           text: '生成定时任务草案',
@@ -2487,14 +2589,12 @@ export default function ChatWindowPage() {
           state: 'completed',
         });
       } else if (phase !== 'received') {
-        upsertTraceLine(turnId, {
+        upsertTraceLine(traceTurnId, {
           id: `decision_status_${phase}`,
           kind: 'decision',
           text: eventStream.phase,
           state: 'running',
         });
-      } else {
-        upsertTraceLine(turnId, { id: 'thinking', kind: 'thinking', text: '正在思考', state: 'running' });
       }
       notifyStream();
       return;
@@ -2507,7 +2607,7 @@ export default function ChatWindowPage() {
         eventStream.timer = null;
       }
       eventStream.accumulated = next;
-      updateStreaming(eventSessionId, next, turnId);
+      updateStreaming(eventSessionId, next, getStreamSlot(eventSessionId).turnId || traceTurnId);
       notifyStream();
       return;
     }
@@ -2518,21 +2618,21 @@ export default function ChatWindowPage() {
       const wasEmpty = !eventStream.accumulated;
       eventStream.accumulated += piece;
       if (wasEmpty) {
-        updateStreaming(eventSessionId, eventStream.accumulated, turnId);
+        updateStreaming(eventSessionId, eventStream.accumulated, eventStream.turnId || traceTurnId);
         notifyStream();
         return;
       }
       if (!eventStream.timer) {
         eventStream.timer = window.setTimeout(() => {
           eventStream.timer = null;
-          updateStreaming(eventSessionId, eventStream.accumulated, turnId);
+          updateStreaming(eventSessionId, eventStream.accumulated, eventStream.turnId || traceTurnId);
         }, 100);
       }
       return;
     }
     if (item.event === 'stream_end') {
-      finishTrace(turnId);
-      upsertTraceLine(turnId, { id: 'thinking', kind: 'thinking', text: '执行记录', state: 'completed' });
+      finishTrace(traceTurnId);
+      upsertTraceLine(traceTurnId, { id: 'thinking', kind: 'thinking', text: '执行记录', state: 'completed' });
       finalizeStreaming(eventSessionId);
       const eventStream = getStreamSlot(eventSessionId);
       eventStream.loading = false;
@@ -2541,12 +2641,24 @@ export default function ChatWindowPage() {
       notifyStream();
       return;
     }
+    if (item.event === 'stream_cancelled') {
+      const cancelledStreamTurnId = getStreamSlot(eventSessionId).turnId || traceTurnId;
+      finishTrace(traceTurnId, true);
+      clearStreamSlot(eventSessionId, true);
+      setRunningTurn((current) => (
+        current?.sessionId === eventSessionId && (current.turnId === traceTurnId || current.turnId === cancelledStreamTurnId)
+          ? null
+          : current
+      ));
+      notifyStream();
+      return;
+    }
     if (item.event === 'complete' || item.event === 'done') {
       const result = item.data as ChatTurnResponse;
       const userIntent = typeof result.router_decision?.user_intent === 'string' ? result.router_decision.user_intent : '';
       const decisionReason = typeof result.router_decision?.reason === 'string' ? result.router_decision.reason : '';
       if (userIntent || decisionReason) {
-        upsertTraceLine(turnId, {
+        upsertTraceLine(traceTurnId, {
           id: 'decision_router',
           kind: 'decision',
           text: userIntent ? `判断意图 ${userIntent}` : '完成技能判断',
@@ -2554,8 +2666,8 @@ export default function ChatWindowPage() {
           state: 'completed',
         });
       }
-      finishTrace(turnId);
-      upsertTraceLine(turnId, { id: 'thinking', kind: 'thinking', text: '执行记录', state: 'completed' });
+      finishTrace(traceTurnId);
+      upsertTraceLine(traceTurnId, { id: 'thinking', kind: 'thinking', text: '执行记录', state: 'completed' });
       finalizeStreaming(eventSessionId);
       setLastTurn(result);
       const eventStream = getStreamSlot(eventSessionId);
@@ -2574,9 +2686,10 @@ export default function ChatWindowPage() {
       eventStream.loading = false;
       eventStream.phase = '';
       eventStream.abortController = null;
-      finishTrace(turnId, true);
+      finishTrace(eventStream.turnId || traceTurnId, true);
       appendRealtime(eventSessionId, {
         id: `scheduled_error_${Date.now()}`,
+        turnId: eventStream.turnId || traceTurnId,
         role: 'assistant',
         content: typeof item.data.message === 'string' ? item.data.message : '定时任务执行失败。',
         created_at: new Date().toISOString(),
@@ -2586,6 +2699,7 @@ export default function ChatWindowPage() {
     }
   }, [
     appendRealtime,
+    clearStreamSlot,
     finalizeStreaming,
     finishTrace,
     getStreamSlot,
@@ -2609,6 +2723,7 @@ export default function ChatWindowPage() {
     event.event === 'complete' ||
     event.event === 'done' ||
     event.event === 'stream_end' ||
+    event.event === 'stream_cancelled' ||
     event.event === 'error'
   ), []);
 
@@ -2619,6 +2734,8 @@ export default function ChatWindowPage() {
 
   const hydrateRunningSessionFromEvents = useCallback((id: string, events: ChatSessionEventRead[]) => {
     if (locallyCancelledSessionIdsRef.current.has(id)) return false;
+    const runnableEvents = events.filter((event) => Boolean(event.run_id));
+    if (!runnableEvents.length) return false;
     const slot = getSlot(id);
     if (slot.serverMessages.length === 0) return false;
     const latestUserTime = Math.max(
@@ -2641,7 +2758,7 @@ export default function ChatWindowPage() {
     if (stream.loading) return false;
 
     const groups = new Map<string, ChatSessionEventRead[]>();
-    events.forEach((event) => {
+    runnableEvents.forEach((event) => {
       const key = `${id}:${event.run_id || id}`;
       const bucket = groups.get(key) || [];
       bucket.push(event);
@@ -2694,7 +2811,9 @@ export default function ChatWindowPage() {
     stream.loading = true;
     stream.phase = '执行中';
     stream.accumulated = text;
-    updateStreaming(id, text, turnId);
+    if (text) {
+      updateStreaming(id, text, turnId);
+    }
 
     runningGroup.forEach((event) => {
       scheduledEventIdsRef.current.add(event.id);
@@ -2722,8 +2841,9 @@ export default function ChatWindowPage() {
     return api
       .get<ChatSessionEventRead[]>(`/api/chat/sessions/${id}/events?tenant_id=${tenantId}`)
       .then((events) => {
-        if (!events.length) return;
-        hydrateRunningSessionFromEvents(id, events);
+        const runnableEvents = events.filter((event) => Boolean(event.run_id));
+        if (!runnableEvents.length) return;
+        hydrateRunningSessionFromEvents(id, runnableEvents);
         const slot = getSlot(id);
         if (slot.serverMessages.length === 0) return;
         const latestLoadedMessageTime = Math.max(
@@ -2732,7 +2852,7 @@ export default function ChatWindowPage() {
         );
         const now = Date.now();
         const stream = getStreamSlot(id);
-        const unseenEvents = events.filter((event) => {
+        const unseenEvents = runnableEvents.filter((event) => {
           if (scheduledEventIdsRef.current.has(event.id)) return false;
           const timestamp = eventTime(event);
           return (
@@ -2756,10 +2876,12 @@ export default function ChatWindowPage() {
           if (!stream.turnId) {
             stream.turnId = turnId;
           }
-          if (!stream.loading && event.event !== 'complete' && event.event !== 'done' && event.event !== 'stream_end') {
+          if (!stream.loading && !isTerminalEvent(event)) {
             stream.loading = true;
             stream.phase = '执行中';
-            updateStreaming(id, stream.accumulated || '', turnId);
+            if (stream.accumulated) {
+              updateStreaming(id, stream.accumulated, turnId);
+            }
             notifyStream();
           }
           handleStreamEvent({ event: event.event, data: event.data || {} }, id, turnId);
@@ -2886,7 +3008,6 @@ export default function ChatWindowPage() {
     if (!auth) return;
     const pollBackgroundSessions = () => {
       const ids = new Set<string>();
-      if (sessionId) ids.add(sessionId);
       sessions.forEach((session) => {
         const looksRunning = (
           session.status === 'running'
@@ -2956,10 +3077,10 @@ export default function ChatWindowPage() {
       },
       created_at: new Date().toISOString(),
     });
-    upsertTraceLine(turnId, { id: 'thinking', kind: 'thinking', text: '正在思考', state: 'running' });
-    updateStreaming(currentConversationId, '', turnId);
+    upsertTraceLine(turnId, { id: 'decision_router', kind: 'decision', text: '判断意图', state: 'running' });
     stream.loading = true;
     stream.phase = '正在思考';
+    updateStreaming(currentConversationId, '', turnId, true);
     setRunningTurn({ sessionId: currentConversationId, turnId });
     notifyStream();
 
@@ -2984,16 +3105,17 @@ export default function ChatWindowPage() {
     };
 
     const appendInterruptedResponse = (reason: string) => {
+      const activeTurnId = getStreamSlot(liveConversationId).turnId || turnId;
       clearStreamSlot(liveConversationId, true);
       appendRealtime(liveConversationId, {
-        id: `stream_interrupted_${turnId}_${Date.now()}`,
-        turnId,
+        id: `stream_interrupted_${activeTurnId}_${Date.now()}`,
+        turnId: activeTurnId,
         role: 'assistant',
         content: reason,
         created_at: new Date().toISOString(),
         isError: true,
       });
-      finishTrace(turnId, true);
+      finishTrace(activeTurnId, true);
       clearRunningTurn(liveConversationId);
       notifyStream();
       window.setTimeout(() => {
@@ -3006,7 +3128,13 @@ export default function ChatWindowPage() {
     const failStalledStream = () => {
       if (receivedTerminalEvent || controller.signal.aborted) return;
       const activeStream = getStreamSlot(liveConversationId);
-      if (activeStream.abortController !== controller || activeStream.cancelledTurnId === turnId) return;
+      if (
+        activeStream.abortController !== controller
+        || activeStream.cancelledTurnId === turnId
+        || (activeStream.turnId && activeStream.cancelledTurnId === activeStream.turnId)
+      ) {
+        return;
+      }
       controller.abort();
       appendInterruptedResponse('本次响应等待时间过长，已停止等待。请重试发送。');
     };
@@ -3086,6 +3214,7 @@ export default function ChatWindowPage() {
         user_id: userId,
         agent_id: sessionAgentId,
         message: userText,
+        client_turn_id: turnId,
         attachments: outgoingAttachments,
         channel: 'web',
         interaction_mode: resolvedInteractionMode,
@@ -3107,7 +3236,14 @@ export default function ChatWindowPage() {
           ? currentConversationId
           : String(item.data.sessionId || liveConversationId);
         const eventStream = getStreamSlot(eventSessionId);
-        if (controller.signal.aborted || eventStream.cancelledTurnId === turnId) return;
+        const traceTurnId = explicitStreamTurnId(item.data, eventStream.turnId || turnId);
+        if (
+          controller.signal.aborted
+          || eventStream.cancelledTurnId === turnId
+          || Boolean(traceTurnId && eventStream.cancelledTurnId === traceTurnId)
+        ) {
+          return;
+        }
         if (item.event === 'session_created') {
           return;
         }
@@ -3115,6 +3251,9 @@ export default function ChatWindowPage() {
           const serverMessageId = typeof item.data.message_id === 'string' ? item.data.message_id : '';
           bindRealtimeUserToServerMessage(eventSessionId, turnId, serverMessageId);
           return;
+        }
+        if (traceTurnId && eventStream.turnId !== traceTurnId) {
+          eventStream.turnId = traceTurnId;
         }
         if (item.event === 'scheduled_task_draft') {
           const draft = item.data as unknown as ScheduledTaskDraftRead;
@@ -3124,11 +3263,11 @@ export default function ChatWindowPage() {
           return;
         }
         if (item.event === 'router_decision') {
-          upsertTraceLine(turnId, routerDecisionTraceLine(item.data));
+          upsertTraceLine(traceTurnId, routerDecisionTraceLine(item.data));
           return;
         }
         if (item.event === 'step_result') {
-          upsertTraceLine(turnId, stepResultTraceLine(item.data));
+          upsertTraceLine(traceTurnId, stepResultTraceLine(item.data));
           return;
         }
         if (item.event === 'skill_state') {
@@ -3138,7 +3277,7 @@ export default function ChatWindowPage() {
             .filter((entry): entry is TraceSkill => Boolean(entry))
             .forEach((skill) => {
               const label = streamSkillLabel(item.data, skill);
-              upsertTraceLine(turnId, {
+              upsertTraceLine(traceTurnId, {
                 id: `skill_${skill.skillId}_${skill.state || 'active'}`,
                 kind: 'skill',
                 text: `${label} ${skill.name || skill.skillId}`,
@@ -3151,7 +3290,7 @@ export default function ChatWindowPage() {
         if (item.event === 'general_skill_state') {
           const skillName = typeof item.data.skillName === 'string' ? item.data.skillName : '';
           const skillSlug = typeof item.data.skillSlug === 'string' ? item.data.skillSlug : '';
-          upsertTraceLine(turnId, {
+          upsertTraceLine(traceTurnId, {
             id: `general_skill_${skillSlug || skillName || 'selected'}`,
             kind: 'skill',
             text: `选择技能 ${skillName || skillSlug || ''}`.trim(),
@@ -3168,7 +3307,7 @@ export default function ChatWindowPage() {
           const attempt = typeof item.data.attempt === 'number' || typeof item.data.attempt === 'string'
             ? String(item.data.attempt)
             : '';
-          const trace = getTurnTrace(turnId);
+          const trace = getTurnTrace(traceTurnId);
           const sequence = trace.lines.length;
           const isOutputChunk = phase === 'stdout_chunk' || phase === 'stderr_chunk';
           const id = isOutputChunk
@@ -3198,7 +3337,7 @@ export default function ChatWindowPage() {
             'reflection_reviewing',
             'replying',
           ]);
-          upsertTraceLine(turnId, {
+          upsertTraceLine(traceTurnId, {
             id,
             kind: codePhases.has(phase) ? 'code' : 'decision',
             text,
@@ -3214,7 +3353,7 @@ export default function ChatWindowPage() {
           return;
         }
         if (item.event === 'knowledge_result') {
-          upsertTraceLine(turnId, {
+          upsertTraceLine(traceTurnId, {
             id: 'knowledge_lookup',
             kind: 'knowledge',
             text: '读取知识库',
@@ -3226,7 +3365,7 @@ export default function ChatWindowPage() {
         if (item.event === 'tool_result') {
           const tool = normalizeTraceTool(item.data);
           if (tool) {
-            upsertTraceLine(turnId, {
+            upsertTraceLine(traceTurnId, {
               id: `tool_${tool.toolCallId || tool.rawToolName || tool.toolId}`,
               kind: 'tool',
               text: `${tool.isError ? '工具调用失败' : '调用工具'} ${tool.toolName}`,
@@ -3241,7 +3380,7 @@ export default function ChatWindowPage() {
             ? String(item.data.iteration)
             : '1';
           const targetTool = typeof item.data.target_tool_name === 'string' ? item.data.target_tool_name : '';
-          upsertTraceLine(turnId, {
+          upsertTraceLine(traceTurnId, {
             id: `decision_stepping_tool_continuation_${iteration}`,
             kind: 'decision',
             text: '重新分析',
@@ -3251,7 +3390,7 @@ export default function ChatWindowPage() {
             state: 'completed',
           });
           if (item.event === 'agent_loop_completed') {
-            upsertTraceLine(turnId, {
+            upsertTraceLine(traceTurnId, {
               id: 'decision_responding',
               kind: 'decision',
               text: '生成回复',
@@ -3263,7 +3402,7 @@ export default function ChatWindowPage() {
         if (item.event === 'reflection_decision') {
           const needsRetry = item.data.needs_retry === true;
           const skipped = item.data.skipped === true;
-          upsertTraceLine(turnId, {
+          upsertTraceLine(traceTurnId, {
             id: 'reflection',
             kind: 'decision',
             text: skipped ? '反思已关闭' : needsRetry ? '反思后继续尝试' : '反思通过',
@@ -3278,16 +3417,16 @@ export default function ChatWindowPage() {
           eventStream.phase = publicStreamPhase(item.data);
           if (phase === 'tool' && typeof item.data.tool_name === 'string') {
             const toolCallId = typeof item.data.tool_call_id === 'string' ? item.data.tool_call_id : item.data.tool_name;
-            upsertTraceLine(turnId, {
+            upsertTraceLine(traceTurnId, {
               id: `tool_${toolCallId}`,
               kind: 'tool',
               text: `正在调用 ${item.data.tool_name}`,
               state: 'running',
             });
           } else if (phase === 'routing') {
-            upsertTraceLine(turnId, { id: 'decision_router', kind: 'decision', text: '判断意图', state: 'running' });
+            upsertTraceLine(traceTurnId, { id: 'decision_router', kind: 'decision', text: '判断意图', state: 'running' });
           } else if (isKnowledgeTracePhase(phase)) {
-            upsertTraceLine(turnId, {
+            upsertTraceLine(traceTurnId, {
               id: 'knowledge_lookup',
               kind: 'knowledge',
               text: knowledgeTraceText(item.data),
@@ -3299,18 +3438,18 @@ export default function ChatWindowPage() {
             const iteration = typeof item.data.iteration === 'number' || typeof item.data.iteration === 'string'
               ? `_${item.data.iteration}`
               : '';
-            upsertTraceLine(turnId, {
+            upsertTraceLine(traceTurnId, {
               id: `decision_stepping_${repairReason}${iteration}`,
               kind: 'decision',
               text: repairReason === 'main' ? '决定下一步' : '重新分析',
               state: 'running',
             });
           } else if (phase === 'reflecting') {
-            upsertTraceLine(turnId, { id: 'reflection', kind: 'decision', text: '正在反思', state: 'running' });
+            upsertTraceLine(traceTurnId, { id: 'reflection', kind: 'decision', text: '正在反思', state: 'running' });
           } else if (phase === 'responding') {
-            upsertTraceLine(turnId, { id: 'decision_responding', kind: 'decision', text: '生成回复', state: 'running' });
+            upsertTraceLine(traceTurnId, { id: 'decision_responding', kind: 'decision', text: '生成回复', state: 'running' });
           } else if (phase === 'scheduled_task_draft') {
-            upsertTraceLine(turnId, {
+            upsertTraceLine(traceTurnId, {
               id: 'scheduled_task_draft',
               kind: 'decision',
               text: '生成定时任务草案',
@@ -3318,14 +3457,12 @@ export default function ChatWindowPage() {
               state: 'completed',
             });
           } else if (phase !== 'received') {
-            upsertTraceLine(turnId, {
+            upsertTraceLine(traceTurnId, {
               id: `decision_status_${phase}`,
               kind: 'decision',
               text: eventStream.phase,
               state: 'running',
             });
-          } else {
-            upsertTraceLine(turnId, { id: 'thinking', kind: 'thinking', text: '正在思考', state: 'running' });
           }
           notifyStream();
           return;
@@ -3337,7 +3474,7 @@ export default function ChatWindowPage() {
             eventStream.timer = null;
           }
           eventStream.accumulated = next;
-          updateStreaming(eventSessionId, next, turnId);
+          updateStreaming(eventSessionId, next, eventStream.turnId || traceTurnId);
           notifyStream();
           return;
         }
@@ -3347,29 +3484,39 @@ export default function ChatWindowPage() {
           const wasEmpty = !eventStream.accumulated;
           eventStream.accumulated += piece;
           if (wasEmpty) {
-            updateStreaming(eventSessionId, eventStream.accumulated, turnId);
+            updateStreaming(eventSessionId, eventStream.accumulated, eventStream.turnId || traceTurnId);
             notifyStream();
             return;
           }
           if (!eventStream.timer) {
             eventStream.timer = window.setTimeout(() => {
               eventStream.timer = null;
-              updateStreaming(eventSessionId, eventStream.accumulated, turnId);
+              updateStreaming(eventSessionId, eventStream.accumulated, eventStream.turnId || traceTurnId);
             }, 100);
           }
           return;
         }
         if (item.event === 'stream_end') {
           markStreamTerminal();
-          finishTrace(turnId);
-          upsertTraceLine(turnId, { id: 'thinking', kind: 'thinking', text: '执行记录', state: 'completed' });
+          finishTrace(traceTurnId);
+          upsertTraceLine(traceTurnId, { id: 'thinking', kind: 'thinking', text: '执行记录', state: 'completed' });
           finalizeStreaming(eventSessionId);
           const eventStream = getStreamSlot(eventSessionId);
           eventStream.loading = false;
           eventStream.phase = '';
           eventStream.abortController = null;
           setRunningTurn((current) => (
-            current?.sessionId === eventSessionId && current.turnId === turnId ? null : current
+            current?.sessionId === eventSessionId && (current.turnId === turnId || current.turnId === traceTurnId) ? null : current
+          ));
+          notifyStream();
+          return;
+        }
+        if (item.event === 'stream_cancelled') {
+          markStreamTerminal();
+          finishTrace(traceTurnId, true);
+          clearStreamSlot(eventSessionId, true);
+          setRunningTurn((current) => (
+            current?.sessionId === eventSessionId && (current.turnId === turnId || current.turnId === traceTurnId) ? null : current
           ));
           notifyStream();
           return;
@@ -3381,7 +3528,7 @@ export default function ChatWindowPage() {
           const userIntent = typeof result.router_decision?.user_intent === 'string' ? result.router_decision.user_intent : '';
           const decisionReason = typeof result.router_decision?.reason === 'string' ? result.router_decision.reason : '';
           if (userIntent || decisionReason) {
-            upsertTraceLine(turnId, {
+            upsertTraceLine(traceTurnId, {
               id: 'decision_router',
               kind: 'decision',
               text: userIntent ? `判断意图 ${userIntent}` : '完成技能判断',
@@ -3389,15 +3536,15 @@ export default function ChatWindowPage() {
               state: 'completed',
             });
           }
-          finishTrace(turnId);
-          upsertTraceLine(turnId, { id: 'thinking', kind: 'thinking', text: '执行记录', state: 'completed' });
+          finishTrace(traceTurnId);
+          upsertTraceLine(traceTurnId, { id: 'thinking', kind: 'thinking', text: '执行记录', state: 'completed' });
           finalizeStreaming(eventSessionId);
           setLastTurn(result);
           eventStream.loading = false;
           eventStream.phase = '';
           eventStream.abortController = null;
           setRunningTurn((current) => (
-            current?.sessionId === eventSessionId && current.turnId === turnId ? null : current
+            current?.sessionId === eventSessionId && (current.turnId === turnId || current.turnId === traceTurnId) ? null : current
           ));
           notifyStream();
           if (isDraftConversation && completedSessionId) {
@@ -3415,9 +3562,10 @@ export default function ChatWindowPage() {
       clearStreamWatchdog();
       if (!receivedTerminalEvent && !controller.signal.aborted) {
         const activeStream = getStreamSlot(liveConversationId);
+        const activeTurnId = activeStream.turnId || turnId;
         if (activeStream.accumulated) {
-          finishTrace(turnId);
-          upsertTraceLine(turnId, { id: 'thinking', kind: 'thinking', text: '执行记录', state: 'completed' });
+          finishTrace(activeTurnId);
+          upsertTraceLine(activeTurnId, { id: 'thinking', kind: 'thinking', text: '执行记录', state: 'completed' });
           finalizeStreaming(liveConversationId);
           activeStream.loading = false;
           activeStream.phase = '';
@@ -3441,23 +3589,24 @@ export default function ChatWindowPage() {
       if (isAuthError(error)) {
         clearAuthSession();
         navigate('/login', { replace: true });
-        finishTrace(turnId, true);
+        finishTrace(getStreamSlot(liveConversationId).turnId || turnId, true);
         clearStreamSlot(liveConversationId, true);
         clearRunningTurn();
         notifyStream();
         return;
       }
+      const activeTurnId = getStreamSlot(liveConversationId).turnId || turnId;
       clearStreamSlot(liveConversationId, true);
       appendRealtime(liveConversationId, {
         id: `error_${Date.now()}`,
-        turnId,
+        turnId: activeTurnId,
         role: 'assistant',
         content: '发送失败，请稍后重试',
         created_at: new Date().toISOString(),
         isError: true,
       });
       notifyRequestError('send', error, '发送失败');
-      finishTrace(turnId, true);
+      finishTrace(activeTurnId, true);
       clearRunningTurn();
       notifyStream();
     } finally {
@@ -3692,33 +3841,15 @@ export default function ChatWindowPage() {
               const persistedCreatedTask = item.role === 'assistant'
                 ? createdScheduledTaskForMessage(item)
                 : undefined;
-              const streamingWithoutContent = Boolean(
-                item.role === 'assistant'
-                && item.isStreaming
-                && !visibleContent
-                && !scheduledDraft
-                && !persistedCreatedTask
-                && citations.length === 0
-              );
-              const runningStatusOnly = Boolean(
-                streamingWithoutContent
-                && (!summary || summary.state === 'running')
-              );
               const stoppedStatusOnly = Boolean(
                 item.role === 'system'
                 && item.id.startsWith('local_interrupt_')
                 && visibleContent === '已停止生成'
               );
               const attachments = messageAttachments(item);
-              const statusOnly = stoppedStatusOnly || (runningStatusOnly && !summary);
-              const statusOnlyText = runningStatusOnly ? '正在执行...' : visibleContent;
-              const splitStreamingTrace = Boolean(
-                item.role === 'assistant'
-                && item.isStreaming
-                && visibleContent
-                && summary?.state === 'running'
-              );
-              const showInlineTrace = Boolean(summary && !stoppedStatusOnly && !splitStreamingTrace);
+              const statusOnly = stoppedStatusOnly;
+              const statusOnlyText = visibleContent;
+              const showInlineTrace = Boolean(summary && !stoppedStatusOnly);
               if (
                 item.role === 'assistant'
                 && !visibleContent
@@ -3832,35 +3963,19 @@ export default function ChatWindowPage() {
                   </div>
                 </div>
               );
-              if (splitStreamingTrace && summary) {
-                return (
-                  <Fragment key={item.id}>
-                    <div className="message-item assistant running-trace-item">
-                      <div className="message-row assistant">
-                        <div className="bubble has-trace">
-                          {renderAssistantTrace(traceTurnId, summary, details, expanded)}
-                        </div>
-                      </div>
-                    </div>
-                    {messageNode}
-                  </Fragment>
-                );
-              }
               return messageNode;
             })}
             {showFallbackRunningStatus && (
-              <div className={`message-item assistant ${fallbackTraceSummary ? 'running-trace-item' : 'status-only-item'}`}>
+              <div className="message-item assistant running-trace-item">
                 <div className="message-row assistant">
-                  <div className={`bubble ${fallbackTraceSummary ? 'has-trace' : 'status-only'}`}>
-                    {fallbackTraceSummary ? (
+                  <div className="bubble has-trace">
+                    {fallbackTraceSummary && (
                       renderAssistantTrace(
                         fallbackRunningTraceId,
                         fallbackTraceSummary,
                         fallbackTraceDetails,
                         fallbackTraceExpanded,
                       )
-                    ) : (
-                      <div className="assistant-running-status">正在执行...</div>
                     )}
                   </div>
                 </div>
@@ -4047,6 +4162,10 @@ export default function ChatWindowPage() {
                   type="primary"
                   htmlType={currentSessionRunning ? 'button' : 'submit'}
                   icon={<StaffdeckIcon name={currentSessionRunning ? 'stop' : 'send'} />}
+                  onMouseDown={currentSessionRunning ? (event) => {
+                    event.preventDefault();
+                    abortStream();
+                  } : undefined}
                   onClick={currentSessionRunning ? abortStream : undefined}
                   className={`composer-send-button${currentSessionRunning ? ' stop-button' : ''}`}
                   disabled={!currentSessionRunning && ((!input.trim() && readyComposerAttachments.length === 0) || uploadingComposerAttachment)}

@@ -5291,7 +5291,8 @@ body,
 
 .message-stack {
   width: min(960px, calc(100% - 260px)) !important;
-  margin: 16px auto 58px !important;
+  margin: auto auto 58px !important;
+  padding-top: 16px !important;
 }
 
 .chat-layout.sidebar-collapsed .message-stack {
