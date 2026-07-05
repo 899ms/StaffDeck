@@ -2426,7 +2426,8 @@ textarea,
 
 .trace-icon-slot .anticon,
 .trace-chevron-slot .anticon,
-.trace-terminal-icon {
+.trace-terminal-icon,
+.cot-trace-icon {
   color: #7e8b86;
 }
 
@@ -2446,9 +2447,53 @@ textarea,
   height: 17px;
 }
 
+.cot-trace-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+  flex: 0 0 auto;
+  background-color: currentColor;
+  -webkit-mask: var(--cot-trace-icon-url) center / contain no-repeat;
+  mask: var(--cot-trace-icon-url) center / contain no-repeat;
+  transition: transform 160ms ease;
+}
+
+.cot-trace-icon-advance {
+  --cot-trace-icon-url: url('./assets/staffdeck/cot-icons/advance.svg');
+}
+
+.cot-trace-icon-execute {
+  --cot-trace-icon-url: url('./assets/staffdeck/cot-icons/execute.svg');
+}
+
+.cot-trace-icon-generated {
+  --cot-trace-icon-url: url('./assets/staffdeck/cot-icons/generated.svg');
+}
+
+.cot-trace-icon-judge {
+  --cot-trace-icon-url: url('./assets/staffdeck/cot-icons/judge.svg');
+}
+
+.cot-trace-icon-loading {
+  --cot-trace-icon-url: url('./assets/staffdeck/cot-icons/loading.svg');
+}
+
+.cot-trace-icon-select {
+  --cot-trace-icon-url: url('./assets/staffdeck/cot-icons/select.svg');
+}
+
+.cot-trace-icon-tool {
+  --cot-trace-icon-url: url('./assets/staffdeck/cot-icons/tool.svg');
+}
+
+.cot-trace-icon.is-expanded {
+  transform: rotate(90deg);
+}
+
 .turn-trace-summary.running .trace-icon-slot,
 .turn-trace-line.running .trace-icon-slot,
-.turn-trace-line.running .trace-terminal-icon {
+.turn-trace-line.running .trace-terminal-icon,
+.turn-trace-line.running .cot-trace-icon {
   animation: none;
   color: #7e8b86;
 }
@@ -5335,15 +5380,17 @@ body,
 
 .assistant-trace .turn-trace-summary {
   min-height: 16px !important;
-  grid-template-columns: minmax(0, auto) 14px !important;
-  column-gap: 2px !important;
+  grid-template-columns: 14px minmax(0, auto) 14px !important;
+  column-gap: 6px !important;
   color: #858b9c !important;
   font-size: 12px !important;
   line-height: 16px !important;
 }
 
 .assistant-trace .turn-trace-summary > .trace-icon-slot {
-  display: none !important;
+  width: 14px !important;
+  height: 16px !important;
+  display: grid !important;
 }
 
 .assistant-trace .trace-chevron-slot {
@@ -5351,7 +5398,9 @@ body,
   height: 16px !important;
 }
 
-.assistant-trace .trace-chevron-slot .sd1-icon {
+.assistant-trace .trace-chevron-slot .sd1-icon,
+.assistant-trace .trace-chevron-slot .cot-trace-icon,
+.assistant-trace .turn-trace-summary .cot-trace-icon {
   width: 14px !important;
   height: 14px !important;
 }
@@ -5374,13 +5423,15 @@ body,
 
 .assistant-trace .turn-trace-line > .trace-icon-slot,
 .assistant-trace .turn-trace-line .trace-icon-slot,
-.assistant-trace .turn-trace-line .trace-terminal-icon {
+.assistant-trace .turn-trace-line .trace-terminal-icon,
+.assistant-trace .turn-trace-line .cot-trace-icon {
   width: 12px !important;
   height: 12px !important;
 }
 
 .assistant-trace .turn-trace-line .sd1-icon,
-.assistant-trace .turn-trace-line .anticon svg {
+.assistant-trace .turn-trace-line .anticon svg,
+.assistant-trace .turn-trace-line .cot-trace-icon {
   width: 12px !important;
   height: 12px !important;
 }
