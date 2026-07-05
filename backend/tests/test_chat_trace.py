@@ -193,6 +193,47 @@ def test_turn_trace_cancel_event_closes_running_status_for_refresh() -> None:
     assert any(line["id"] == "generation_stopped" and line["text"] == "已停止生成" for line in traces[0]["lines"])
 
 
+def test_turn_trace_without_terminal_event_stays_open_for_refresh_recovery() -> None:
+    started_at = datetime(2026, 7, 4, 9, 6, 0)
+    messages = [
+        Message(
+            id="msg_user",
+            tenant_id="tenant_demo",
+            session_id="session_refresh",
+            role="user",
+            content="你是谁",
+            created_at=started_at,
+        )
+    ]
+    events = [
+        AgentEvent(
+            tenant_id="tenant_demo",
+            session_id="session_refresh",
+            event_type="user_message_received",
+            payload_json={"message_id": "msg_user", "message": "你是谁"},
+            created_at=started_at,
+        ),
+        AgentEvent(
+            tenant_id="tenant_demo",
+            session_id="session_refresh",
+            event_type="stream_status",
+            payload_json={
+                "turn_id": "msg_user",
+                "user_message_id": "msg_user",
+                "phase": "routing",
+                "text": "正在判断用户意图",
+            },
+            created_at=started_at + timedelta(milliseconds=100),
+        ),
+    ]
+
+    traces = _build_turn_traces(messages, events, {})
+
+    assert traces[0]["completed_at"] is None
+    assert any(line["id"] == "decision_router" and line["state"] == "running" for line in traces[0]["lines"])
+    assert all(line["id"] != "generation_stopped" for line in traces[0]["lines"])
+
+
 def test_turn_trace_keeps_legacy_general_skill_events_without_turn_id() -> None:
     started_at = datetime(2026, 7, 4, 9, 8, 0)
     messages = [

@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from app.core.agent_loop import GRAPH_PENDING_STEPS_SLOT, AgentLoop
 from app.core.skill_runtime import SkillRuntime
 from app.db.models import ChatSession, Message, Skill, Tool
@@ -18,6 +20,7 @@ class FakeEvents:
 class FakeDb:
     def __init__(self) -> None:
         self.commits = 0
+        self.rollbacks = 0
         self.refreshed: list[object] = []
         self.added: list[object] = []
 
@@ -26,6 +29,9 @@ class FakeDb:
 
     def commit(self) -> None:
         self.commits += 1
+
+    def rollback(self) -> None:
+        self.rollbacks += 1
 
     def refresh(self, row: object) -> None:
         self.refreshed.append(row)
@@ -178,6 +184,72 @@ def test_stream_emits_router_decision_before_reply_delta() -> None:
     router_payload = events[router_index]["data"]
     assert router_payload["user_intent"] == "问候"
     assert router_payload["reason"] == "普通问候，不需要进入业务流程。"
+
+
+def test_stream_disconnect_does_not_persist_stop_event_without_cancel_flag() -> None:
+    db = FakeDb()
+    loop = object.__new__(AgentLoop)
+    session = ChatSession(
+        id="session_test",
+        tenant_id="tenant_demo",
+        user_id="user_demo",
+        agent_id="agent_demo",
+        slots_json={},
+        skill_stack_json=[],
+        pending_tasks_json=[],
+        knowledge_context_json=[],
+    )
+    user_message = Message(
+        id="msg_user",
+        tenant_id="tenant_demo",
+        session_id=session.id,
+        role="user",
+        content="你好",
+    )
+
+    loop.db = db
+    loop.events = FakeEvents()
+    loop.memory = SimpleNamespace(recall=lambda *_args, **_kwargs: [])
+    loop.runtime = SimpleNamespace(apply_decision=lambda *_args, **_kwargs: None)
+    loop.router = SimpleNamespace(
+        decide=lambda *_args, **_kwargs: RouterDecision(
+            decision="answer_only",
+            user_intent="问候",
+            reason="普通问候，不需要进入业务流程。",
+        )
+    )
+    loop._get_or_create_session = lambda _request: session
+    loop._append_message = lambda *_args, **_kwargs: user_message
+    loop._get_request_model = lambda *_args, **_kwargs: _model_config()
+    loop._list_published_skills = lambda *_args, **_kwargs: [_purchase_skill()]
+    loop._list_enabled_tools = lambda *_args, **_kwargs: []
+    loop._tools_with_general_skills = lambda *_args, **_kwargs: []
+    loop._get_persona_prompt = lambda *_args, **_kwargs: None
+    loop._drop_unavailable_skill_state = lambda *_args, **_kwargs: False
+    loop._finish_stale_completed_skill = lambda *_args, **_kwargs: None
+    loop._scene_router_deferred_to_general = lambda *_args, **_kwargs: False
+    loop._hydrate_router_decision_from_context = lambda *_args, **_kwargs: {}
+    loop._initial_scheduler_queue_decision = lambda *_args, **_kwargs: None
+    loop._conversation_context = lambda *_args, **_kwargs: {}
+    loop._get_active_skill = lambda *_args, **_kwargs: None
+    loop._should_record_runtime_event_after_prune = lambda *_args, **_kwargs: False
+    loop._should_run_step_agent = lambda *_args, **_kwargs: False
+    loop._auto_knowledge_step_result = lambda *_args, **_kwargs: StepAgentResult()
+
+    def disconnected_reply_stream(*_args, **_kwargs):
+        raise GeneratorExit
+        yield ""
+
+    loop._generate_reply_stream_segment = disconnected_reply_stream
+    loop._finalize_turn = lambda *_args, **_kwargs: None
+    loop._recent_messages = lambda *_args, **_kwargs: []
+    loop._enqueue_memory_capture = lambda *_args, **_kwargs: None
+
+    with pytest.raises(GeneratorExit):
+        list(loop.handle_turn_stream(_request("你好")))
+
+    assert db.rollbacks == 1
+    assert "stream_cancelled" not in [record[2] for record in loop.events.records]
 
 
 def test_compound_turn_seeds_primary_and_created_tasks_for_scheduler() -> None:

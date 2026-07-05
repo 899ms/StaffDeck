@@ -1751,10 +1751,7 @@ class AgentLoop:
             if chat_session and user_message_id:
                 try:
                     if not mark_current_turn_cancelled():
-                        if reply.strip():
-                            self.db.rollback()
-                        else:
-                            record_current_turn_cancelled()
+                        self.db.rollback()
                 except Exception:
                     self.db.rollback()
             raise
