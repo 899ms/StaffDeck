@@ -381,18 +381,20 @@ function Shell({
       />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div
-          className={`content flex-1 ${selected === "/enterprise/dashboard" ? "sd1-dashboard-content" : ""} ${selected !== "/enterprise/dashboard" && !isDistillRoute ? "sd1-management-content" : ""}`}
+          className={`content flex-1 ${isDistillRoute ? "flex min-h-0 flex-col overflow-hidden !p-0" : ""} ${selected === "/enterprise/dashboard" ? "sd1-dashboard-content" : ""} ${selected !== "/enterprise/dashboard" && !isDistillRoute ? "sd1-management-content" : ""}`}
         >
           <div
             className={
               isDistillRoute
-                ? "persistent-distill active"
+                ? "persistent-distill active flex min-h-0 flex-1 flex-col"
                 : "persistent-distill hidden"
             }
           >
             <DistillPage
               active={isDistillRoute}
               searchParamsOverride={distillSearchParams}
+              currentUser={auth.user}
+              onLogout={onLogout}
             />
           </div>
           {!isDistillRoute && (

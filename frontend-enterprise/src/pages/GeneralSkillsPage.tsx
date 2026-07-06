@@ -82,7 +82,7 @@ const EMPTY_SKILL_MARKDOWN = `# 技能说明
 在这里编写技能文档。名称、Slug 和描述由上方表单维护，系统不会从文档中自动抽取。`;
 
 const SECTION_CARD_CLASS =
-  'rounded-[14px] border border-[#eceef1] bg-white dark:border-white/10 dark:bg-[#26272d]';
+  'flex flex-col gap-[24px] rounded-[20px_20px_0_0] bg-[#FFF] p-[18px] shadow-[0_-4px_16px_0_rgba(0,0,0,0.05)] dark:bg-(--surface)';
 const SECTION_CARD_TITLE_CLASS = 'text-[14px] font-medium text-[#18181a] dark:text-white';
 const FIELD_LABEL_CLASS = 'text-[13px] font-medium text-[#18181a] dark:text-white';
 const RETURN_BUTTON_CLASS =
@@ -96,7 +96,7 @@ const EDITOR_ACTION_PRIMARY_CLASS = PRIMARY_BUTTON_CLASS;
 const HIDDEN_FILE_INPUT_CLASS =
   'pointer-events-none fixed size-px opacity-0 [inset:auto_auto_0_0]';
 const SKILL_EDITOR_DRAG_ACTIVE_CLASS =
-  'border-[#18181a] shadow-[0_0_0_1px_#eef1f6,var(--tw-shadow)] shadow-sm dark:border-white dark:shadow-[0_0_0_1px_rgba(255,255,255,0.12),var(--tw-shadow)]';
+  'ring-1 ring-[#18181a]/20 shadow-[0_-4px_16px_0_rgba(0,0,0,0.08)] dark:ring-white/25';
 const SKILL_DROP_HINT_CLASS =
   'pointer-events-none absolute inset-x-[18px] bottom-[18px] top-[46px] z-[6] flex items-center justify-center gap-3 rounded-[14px] border border-dashed border-[#18181a] bg-white/90 text-[15px] font-semibold text-[#18181a] shadow-sm backdrop-blur-sm dark:border-white dark:bg-[#26272d]/90 dark:text-white';
 const SKILL_FILE_EDITOR_CLASS =
@@ -713,7 +713,7 @@ export default function GeneralSkillsPage({ embedded = false, currentUser, onLog
         </>
       )}
 
-      <div className="flex flex-col gap-[24px] rounded-[20px_20px_0_0] bg-white p-[18px_18px_24px_18px] shadow-[0_-4px_16px_0_rgba(0,0,0,0.05)] dark:bg-(--surface)">
+      <div className="flex flex-col gap-[24px] rounded-[20px_20px_0_0] bg-[#FFF] p-[18px] shadow-[0_-4px_16px_0_rgba(0,0,0,0.05)] dark:bg-(--surface)">
         <div className="flex flex-wrap items-stretch gap-[20px]" aria-label="技能统计">
           <StatCard label="技能总数" value={stats.total} />
           <StatCard label="已启用" value={stats.published} tone="green" />
@@ -1079,14 +1079,14 @@ function SectionCard({
   children?: ReactNode;
 } & Omit<HTMLAttributes<HTMLDivElement>, 'title'>) {
   return (
-    <section className={cn(SECTION_CARD_CLASS, 'flex flex-col overflow-hidden', className)} {...rest}>
+    <section className={cn(SECTION_CARD_CLASS, 'overflow-hidden', className)} {...rest}>
       {(title || extra) && (
-        <div className="flex min-h-[54px] items-center justify-between gap-[12px] border-b border-[#eceef1] px-[20px] py-[10px] dark:border-white/10">
+        <div className="flex min-h-[40px] items-center justify-between gap-[12px]">
           <div className={cn('min-w-0', SECTION_CARD_TITLE_CLASS)}>{title}</div>
           {extra ? <div className="shrink-0">{extra}</div> : null}
         </div>
       )}
-      <div className={cn('p-[20px]', bodyClassName)}>
+      <div className={cn('min-h-0 flex-1', bodyClassName)}>
         {loading ? (
           <div className="py-[24px] text-center text-[13px] text-[#858b9c] dark:text-muted-foreground">加载中…</div>
         ) : (
@@ -1877,7 +1877,6 @@ function GeneralSkillEditorPage({ mode, currentUser, onLogout }: { mode: 'new' |
         <UIButton variant="outline" className={RETURN_BUTTON_CLASS}>
           <UploadOutlined className="size-[14px]!" />
           导入
-          <IconChevronDown className="size-[12px]" />
         </UIButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className={MENU_CONTENT_CLASS}>

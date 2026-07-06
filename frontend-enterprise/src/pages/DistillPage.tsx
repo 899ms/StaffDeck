@@ -63,8 +63,195 @@ import {
 import { Button as UIButton } from '@/components/ui/button';
 import { notify } from '@/components/ui/app-toast';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import AppHeader from '@/components/AppHeader';
 import { cn } from '@/lib/utils';
 import { MENU_CONTENT_CLASS, MENU_ITEM_CLASS, SELECT_TRIGGER_CLASS } from '@/lib/enterprise-ui';
+import type { EnterpriseAuthUser } from '../auth';
+import {
+  ACTION_EMPTY_CLASS,
+  ACTION_LIST_CLASS,
+  CARD_OUTLINE_BUTTON_CLASS,
+  CHAT_ACTIONS_GROUP_CLASS,
+  CHAT_CARD_BODY_CLASS,
+  CHAT_ATTACHMENT_CLASS,
+  CHAT_ATTACHMENT_ICON_CLASS,
+  CHAT_ATTACHMENT_MAIN_CLASS,
+  CHAT_ATTACHMENT_NAME_CLASS,
+  CHAT_ATTACHMENT_TYPE_CLASS,
+  CHAT_ATTACHMENT_USER_CLASS,
+  CHAT_ATTACHMENTS_CLASS,
+  CHAT_ATTACHMENTS_USER_CLASS,
+  CHAT_CARD_CLASS,
+  CHAT_CARD_DRAGGING_CLASS,
+  CHAT_ACTIONS_CLASS,
+  CHAT_COMPOSER_SHELL_CLASS,
+  CHAT_CONFIRM_CLASS,
+  CHAT_CONTENT_CLASS,
+  CHAT_CONTENT_USER_ATTACHMENTS_CLASS,
+  CHAT_DECISION_CLASS,
+  CHAT_EDIT_ACTIONS_CLASS,
+  CHAT_EDIT_PANEL_CLASS,
+  CHAT_EDIT_PANEL_USER_ATTACHMENTS_CLASS,
+  CHAT_EDIT_TEXTAREA_CLASS,
+  CHAT_HOVER_ACTIONS_CLASS,
+  CHAT_HOVER_BUTTON_CLASS,
+  CHAT_MESSAGES_CLASS,
+  CHAT_PANEL_CLASS,
+  CHAT_COMPOSER_CLASS,
+  CHAT_TEXTAREA_CLASS,
+  CHAT_THINKING_BLOCK_CLASS,
+  CHAT_THINKING_BUTTON_CLASS,
+  CHAT_THINKING_DETAIL_CLASS,
+  CHAT_THINKING_DETAILS_CLASS,
+  CHAT_TIME_CLASS,
+  CHAT_UPLOAD_DROP_HINT_CLASS,
+  CHAT_WARNING_CLASS,
+  CHAT_WARNING_ITEM_CLASS,
+  CHAT_WARNING_TITLE_CLASS,
+  CONDITION_EDITOR_CLASS,
+  CONDITION_INPUT_CLASS,
+  CONDITION_PRESET_CLASS,
+  CONDITION_READABLE_CLASS,
+  DIFF_NEW_CLASS,
+  DIFF_OLD_CLASS,
+  DISTILL_CARD_BODY_CLASS,
+  DISTILL_CARD_CLASS,
+  DISTILL_CARD_HEADER_CLASS,
+  DISTILL_ACTIONS_CLASS,
+  DISTILL_PAGE_CLASS,
+  FLOW_CHIP_CLASS,
+  FLOW_CHIP_LIST_CLASS,
+  FLOW_CHIP_MUTED_CLASS,
+  FLOW_CLASS,
+  FLOW_COMPACT_META_CLASS,
+  FLOW_COMPACT_ROW_CLASS,
+  FLOW_EDGES_CLASS,
+  FLOW_EDGE_PATH_CLASS,
+  FLOW_GRAPH_CANVAS_CLASS,
+  FLOW_META_CLASS,
+  FLOW_META_LABEL_CLASS,
+  FLOW_META_ROW_CLASS,
+  FLOW_NODE_BADGES_CLASS,
+  FLOW_NODE_POSITION_CLASS,
+  FLOW_NODE_SHELL_CLASS,
+  FLOW_NODE_SUMMARY_CLASS,
+  FLOW_ROOT_POSITION_CLASS,
+  FLOW_ROUTE_COUNT_CLASS,
+  FLOW_RULE_CONDITION_CONTROLS_CLASS,
+  FLOW_RULE_CONDITION_INPUT_CLASS,
+  FLOW_RULE_DELETE_CLASS,
+  FLOW_RULE_EDITOR_CLASS,
+  FLOW_RULE_EMPTY_CLASS,
+  FLOW_RULE_FIELD_CLASS,
+  FLOW_RULE_FIELD_CONDITION_CLASS,
+  FLOW_RULE_FIELD_LABEL_CLASS,
+  FLOW_RULE_FIELD_PRIORITY_CLASS,
+  FLOW_RULE_FIELD_TARGET_CLASS,
+  FLOW_RULE_HEAD_CLASS,
+  FLOW_RULE_ITEM_CLASS,
+  FLOW_RULE_LABEL_INPUT_CLASS,
+  FLOW_RULE_LIST_CLASS,
+  FLOW_RULE_PRIORITY_CLASS,
+  FLOW_RULE_TARGET_CLASS,
+  FLOW_ZOOM_SHELL_CLASS,
+  FLOW_ZOOM_STEP_BUTTON_CLASS,
+  FLOW_ZOOM_TOOLBAR_CLASS,
+  FLOW_ZOOM_VALUE_CLASS,
+  flowZoomPresetButtonClass,
+  INLINE_ADD_CLASS,
+  INLINE_ADD_SETTLED_CLASS,
+  INLINE_REMOVE_CLASS,
+  NODE_DELETE_CONFIRM_CLASS,
+  PILL_OUTLINE_BUTTON_CLASS,
+  NODE_INSERT_BUTTON_CLASS,
+  NODE_INSERT_ROW_CLASS,
+  NODE_INSERT_ROW_EDGE_CLASS,
+  RETRY_POLICY_EDITOR_CLASS,
+  RETRY_POLICY_FIELD_CLASS,
+  PRIMARY_BUTTON_CLASS,
+  RETURN_BUTTON_CLASS,
+  REWRITE_MODEL_BUTTON_CLASS,
+  SAVE_REVIEW_ACTION_DIFF_CLASS,
+  SAVE_REVIEW_ACTION_DIFF_NEW_CLASS,
+  SAVE_REVIEW_ACTION_DIFF_OLD_CLASS,
+  SAVE_REVIEW_DIFF_CLASS,
+  SAVE_REVIEW_DIFF_PATH_CLASS,
+  SAVE_REVIEW_DIFF_ROW_CLASS,
+  SAVE_REVIEW_DIFF_SIGN_CLASS,
+  SAVE_REVIEW_DIFF_SIGN_NEW_CLASS,
+  SAVE_REVIEW_DIFF_SIGN_OLD_CLASS,
+  SAVE_REVIEW_FORM_CLASS,
+  SAVE_REVIEW_FORM_LABEL_CLASS,
+  SECTION_CARD_TITLE_CLASS,
+  SELECTION_MARK_CLASS,
+  SOURCE_ACTION_ADD_CLASS,
+  SOURCE_ACTION_EDIT_BUTTON_CLASS,
+  SOURCE_ACTION_EDITOR_CLASS,
+  SOURCE_ACTION_LIST_CLASS,
+  SOURCE_ACTION_LIST_EDITABLE_CLASS,
+  SOURCE_ACTION_PICKER_CLASS,
+  SOURCE_ACTION_REMOVE_CLASS,
+  SOURCE_ACTION_SELECT_CLASS,
+  SOURCE_ACTION_TOKEN_CLASS,
+  SOURCE_EMPTY_STATE_CLASS,
+  SOURCE_EMPTY_TEXT_CLASS,
+  SOURCE_CARD_CLASS,
+  SOURCE_COLLAPSIBLE_EDITOR_CLASS,
+  SOURCE_COLLAPSIBLE_HEAD_CLASS,
+  SOURCE_COLLAPSIBLE_PREVIEW_CLASS,
+  SOURCE_COLLAPSIBLE_PREVIEW_MUTED_CLASS,
+  SOURCE_COLLAPSIBLE_TOGGLE_CLASS,
+  SOURCE_EDIT_FIELD_CLASS,
+  SOURCE_EDIT_HINT_CLASS,
+  SOURCE_EDIT_INPUT_CLASS,
+  SOURCE_GROUP_TITLE_CLASS,
+  SOURCE_INPUT_CLASS,
+  SOURCE_JSON_INLINE_CLASS,
+  SOURCE_KEY_CLASS,
+  SOURCE_LINE_CLASS,
+  SOURCE_MD_CLASS,
+  SOURCE_META_LIST_CLASS,
+  SOURCE_READONLY_VALUE_CLASS,
+  SOURCE_RENDERED_CLASS,
+  SOURCE_SELECT_CLASS,
+  SOURCE_STEP_BLOCK_CLASS,
+  SOURCE_STEP_HEADER_CLASS,
+  SOURCE_STEP_TITLE_EDIT_CLASS,
+  SOURCE_STEPS_CLASS,
+  SOURCE_TITLE_INPUT_CLASS,
+  SOURCE_TOOLBAR_CLASS,
+  SOURCE_VALUE_CLASS,
+  TOOL_ACTION_BUTTON_CLASS,
+  TOOL_ACTION_CONFIRM_CLASS,
+  TOOL_ACTION_GROUP_CLASS,
+  TOOL_ACTION_GROUP_DETAIL_CLASS,
+  TOOL_ACTION_REJECT_CLASS,
+  TOOL_METHOD_CLASS,
+  TOOL_SUGGESTION_ACTIONS_CLASS,
+  TOOL_SUGGESTION_CLASS,
+  TOOL_SUGGESTION_DESC_CLASS,
+  TOOL_SUGGESTION_DETAIL_CLASS,
+  TOOL_SUGGESTION_DETAIL_FOOTER_CLASS,
+  TOOL_SUGGESTION_DETAIL_PRE_CLASS,
+  TOOL_SUGGESTION_HEAD_CLASS,
+  TOOL_SUGGESTION_MAIN_CLASS,
+  TOOL_SUGGESTION_META_CLASS,
+  TOOL_SUGGESTION_TITLE_CLASS,
+  TOOL_SUGGESTIONS_CLASS,
+  UPLOAD_LIST_CLASS,
+  UPLOAD_NAME_CLASS,
+  UPLOAD_STATUS_CLASS,
+  WORKBENCH_CLASS,
+  actionChipClass,
+  chatBubbleClass,
+  chatRowClass,
+  distillFlowNodeClass,
+  distillSourceSectionClass,
+  flowEdgeLabelClass,
+  toolStatusBadgeClass,
+  uploadItemClass,
+  type ToolStatusBadgeVariant,
+} from './distillPageStyles';
 import { api, streamGet, streamPost, TENANT_ID } from '../api/client';
 import type { ModelConfigRead, SkillCard, SkillRead, ToolProbeResponse, ToolRead, ToolSuggestion } from '../types';
 
@@ -286,9 +473,11 @@ type EditingMessage = {
 type DistillPageProps = {
   active?: boolean;
   searchParamsOverride?: URLSearchParams;
+  currentUser?: EnterpriseAuthUser;
+  onLogout?: () => void;
 };
 
-export default function DistillPage({ active = true, searchParamsOverride }: DistillPageProps = {}) {
+export default function DistillPage({ active = true, searchParamsOverride, currentUser, onLogout }: DistillPageProps = {}) {
   const navigate = useNavigate();
   const [routerSearchParams] = useSearchParams();
   const searchParams = searchParamsOverride || routerSearchParams;
@@ -1808,42 +1997,44 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
     animationTimersRef.current = [];
   }
 
+  const pageTitle = mode === 'create' && !skillId ? '新建 SOP' : '编辑 SOP';
+
   return (
-    <div className="skill-distill-page">
-      <div className="page-title">
-        <div>
-          <h3>编辑 SOP</h3>
-        </div>
-        <div className="flex items-center gap-[8px]">
-          <UIButton variant="outline" onClick={() => navigate('/enterprise/skills')}>
-            <ArrowLeftOutlined />
-            返回
-          </UIButton>
-        </div>
+    <div className={DISTILL_PAGE_CLASS}>
+      <AppHeader className="shrink-0" onLogout={onLogout} userName={currentUser?.username} title={pageTitle} />
+      <div className={DISTILL_ACTIONS_CLASS}>
+        <UIButton variant="outline" className={RETURN_BUTTON_CLASS} onClick={() => navigate('/enterprise/skills')}>
+          <ArrowLeftOutlined />
+          返回
+        </UIButton>
       </div>
-      <div className="skill-workbench">
-        <EditorCard
-          className={`skill-chat-card ${dragActive ? 'dragging' : ''}`}
+      <div className={WORKBENCH_CLASS}>
+        <DistillSectionCard
+          className={cn(CHAT_CARD_CLASS, 'h-full min-h-0', dragActive && CHAT_CARD_DRAGGING_CLASS)}
+          bodyClassName={CHAT_CARD_BODY_CLASS}
+          title="对话蒸馏"
           onDragEnter={handleDragEnter}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
-          <div className="skill-chat-panel">
-            {dragActive && <div className="skill-upload-drop-hint">松开上传文档</div>}
-            <div className="skill-chat-messages" ref={chatMessagesRef}>
+          <div className={CHAT_PANEL_CLASS}>
+            {dragActive && <div className={CHAT_UPLOAD_DROP_HINT_CLASS}>松开上传文档</div>}
+            <div className={CHAT_MESSAGES_CLASS} ref={chatMessagesRef}>
               {messages.map((item, index) => (
-                <div key={item.id} className={`skill-chat-row ${item.role}`}>
+                <div key={item.id} className={chatRowClass(item.role)}>
                   <div
-                    className={`skill-chat-bubble ${editingMessage?.id === item.id ? 'editing' : ''} ${
-                      item.role === 'user' && item.attachments?.length ? 'has-attachments' : ''
-                    }`}
+                    className={chatBubbleClass({
+                      role: item.role,
+                      editing: editingMessage?.id === item.id,
+                      hasAttachments: item.role === 'user' && Boolean(item.attachments?.length),
+                    })}
                   >
                     {item.role === 'assistant' && item.thinking && (
-                      <div className={`skill-chat-thinking-block ${item.thinking}`}>
+                      <div className={CHAT_THINKING_BLOCK_CLASS}>
                         <button
                           type="button"
-                          className="skill-chat-thinking"
+                          className={CHAT_THINKING_BUTTON_CLASS}
                           onClick={() => toggleThinking(item.id)}
                         >
                           {item.thinking === 'running' ? <LoadingOutlined /> : <CheckOutlined />}
@@ -1851,9 +2042,9 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                           {item.thinkingOpen ? <DownOutlined /> : <RightOutlined />}
                         </button>
                         {item.thinkingOpen && (
-                          <div className="skill-chat-thinking-details">
+                          <div className={CHAT_THINKING_DETAILS_CLASS}>
                             {(item.thinkingDetails || []).map((detail, index) => (
-                              <div key={`${item.id}_detail_${index}`} className="skill-chat-thinking-detail">
+                              <div key={`${item.id}_detail_${index}`} className={CHAT_THINKING_DETAIL_CLASS}>
                                 {detail}
                               </div>
                             ))}
@@ -1862,23 +2053,29 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                       </div>
                     )}
                     {item.role === 'user' && item.attachments && item.attachments.length > 0 && (
-                      <div className="skill-chat-attachments">
+                      <div className={cn(CHAT_ATTACHMENTS_CLASS, CHAT_ATTACHMENTS_USER_CLASS)}>
                         {item.attachments.map((attachment) => (
-                          <div className="skill-chat-attachment" key={attachment.id} title={attachment.name}>
-                            <span className="skill-chat-attachment-icon">
+                          <div className={cn(CHAT_ATTACHMENT_CLASS, CHAT_ATTACHMENT_USER_CLASS)} key={attachment.id} title={attachment.name}>
+                            <span className={CHAT_ATTACHMENT_ICON_CLASS}>
                               <FileTextOutlined />
                             </span>
-                            <span className="skill-chat-attachment-main">
-                              <span className="skill-chat-attachment-name">{attachment.name}</span>
-                              <span className="skill-chat-attachment-type">{attachment.type}</span>
+                            <span className={CHAT_ATTACHMENT_MAIN_CLASS}>
+                              <span className={CHAT_ATTACHMENT_NAME_CLASS}>{attachment.name}</span>
+                              <span className={CHAT_ATTACHMENT_TYPE_CLASS}>{attachment.type}</span>
                             </span>
                           </div>
                         ))}
                       </div>
                     )}
                     {item.role === 'user' && editingMessage?.id === item.id ? (
-                      <div className="skill-chat-edit-panel">
+                      <div
+                        className={cn(
+                          CHAT_EDIT_PANEL_CLASS,
+                          item.attachments?.length ? CHAT_EDIT_PANEL_USER_ATTACHMENTS_CLASS : undefined,
+                        )}
+                      >
                         <Textarea
+                          className={CHAT_EDIT_TEXTAREA_CLASS}
                           value={editingMessage.text}
                           rows={3}
                           autoFocus
@@ -1890,7 +2087,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                             }
                           }}
                         />
-                        <div className="skill-chat-edit-actions">
+                        <div className={CHAT_EDIT_ACTIONS_CLASS}>
                           <UIButton variant="outline" onClick={cancelEditingMessage}>取消</UIButton>
                           <UIButton onClick={submitEditingMessage} disabled={!(editingMessage?.text || '').trim()}>
                             发送
@@ -1900,18 +2097,26 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                     ) : (
                       <>
                         {item.content ? (
-                          <div className="skill-chat-content">{visibleChatContent(item)}</div>
+                          <div
+                            className={cn(
+                              CHAT_CONTENT_CLASS,
+                              item.role === 'user' && item.attachments?.length ? CHAT_CONTENT_USER_ATTACHMENTS_CLASS : undefined,
+                            )}
+                          >
+                            {visibleChatContent(item)}
+                          </div>
                         ) : item.role === 'assistant' && item.thinking === 'running' ? null : item.role === 'assistant' ? (
                           '正在处理...'
                         ) : null}
                         {item.role === 'user' && (
-                          <div className="skill-chat-hover-actions">
-                            <span className="skill-chat-time">{formatMessageTime(item.createdAt)}</span>
-                            <button type="button" title="复制" onClick={() => void copyHistoryMessage(item)}>
+                          <div className={CHAT_HOVER_ACTIONS_CLASS}>
+                            <span className={CHAT_TIME_CLASS}>{formatMessageTime(item.createdAt)}</span>
+                            <button type="button" className={CHAT_HOVER_BUTTON_CLASS} title="复制" onClick={() => void copyHistoryMessage(item)}>
                               <CopyGlyph />
                             </button>
                             <button
                               type="button"
+                              className={CHAT_HOVER_BUTTON_CLASS}
                               title="修改"
                               onClick={() => requestEditHistoryMessage(item, index)}
                               disabled={loading}
@@ -1926,13 +2131,13 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                       const warnings = compactWarningItems(item.warnings || [], item.toolSuggestions);
                       if (warnings.length === 0) return null;
                       return (
-                        <div className="skill-chat-warning">
-                          <div className="skill-chat-warning-title">
+                        <div className={CHAT_WARNING_CLASS}>
+                          <div className={CHAT_WARNING_TITLE_CLASS}>
                             <WarningOutlined />
                             <span>提示</span>
                           </div>
                           {warnings.map((warning, index) => (
-                            <div key={`${item.id}_warning_${index}`} className="skill-chat-warning-item" title={warning.title}>
+                            <div key={`${item.id}_warning_${index}`} className={CHAT_WARNING_ITEM_CLASS} title={warning.title}>
                               {warning.text}
                             </div>
                           ))}
@@ -1940,7 +2145,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                       );
                     })()}
                     {item.toolSuggestions && item.toolSuggestions.length > 0 && (
-                      <div className="skill-tool-suggestions">
+                      <div className={TOOL_SUGGESTIONS_CLASS}>
                         {item.toolSuggestions.map((suggestion) => {
                           const canResolveSuggestion =
                             toolSuggestionResolution(suggestion) === 'new_candidate' &&
@@ -1948,27 +2153,27 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                             suggestion.status !== 'created' &&
                             suggestion.status !== 'rejected';
                           return (
-                            <div className="skill-tool-suggestion" key={`${item.id}_${suggestion.name}`}>
-                              <div className="skill-tool-suggestion-main">
-                                <div className="skill-tool-suggestion-head">
-                                  <div className="skill-tool-suggestion-title">{toolSuggestionTitle(suggestion)}</div>
-                                  <span className={`skill-tool-status ${toolSuggestionStatusClass(suggestion)}`}>
+                            <div className={TOOL_SUGGESTION_CLASS} key={`${item.id}_${suggestion.name}`}>
+                              <div className={TOOL_SUGGESTION_MAIN_CLASS}>
+                                <div className={TOOL_SUGGESTION_HEAD_CLASS}>
+                                  <div className={TOOL_SUGGESTION_TITLE_CLASS}>{toolSuggestionTitle(suggestion)}</div>
+                                  <span className={toolStatusBadgeClass(toolSuggestionStatusClass(suggestion))}>
                                     {toolSuggestionStatusText(suggestion)}
                                   </span>
                                 </div>
-                                <div className="skill-tool-suggestion-desc">
+                                <div className={TOOL_SUGGESTION_DESC_CLASS}>
                                   {suggestion.reason || suggestion.description || suggestion.name}
                                 </div>
-                                <div className="skill-tool-suggestion-meta">
-                                  <span className="skill-tool-method">{suggestion.method || 'POST'}</span>
+                                <div className={TOOL_SUGGESTION_META_CLASS}>
+                                  <span className={TOOL_METHOD_CLASS}>{suggestion.method || 'POST'}</span>
                                   <span>{suggestion.url || '-'}</span>
                                 </div>
                               </div>
-                              <div className="skill-tool-suggestion-actions top">
-                                <span className="skill-tool-action-group detail">
+                              <div className={TOOL_SUGGESTION_ACTIONS_CLASS}>
+                                <span className={cn(TOOL_ACTION_GROUP_CLASS, TOOL_ACTION_GROUP_DETAIL_CLASS)}>
                                   <SimpleTooltip title="查看详情">
                                     <UIButton
-                                      className="skill-tool-action"
+                                      className={TOOL_ACTION_BUTTON_CLASS}
                                       variant="ghost"
                                       size="icon"
                                       onClick={() => openToolDetail(item.id, suggestion)}
@@ -1978,10 +2183,10 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                                   </SimpleTooltip>
                                 </span>
                                 {canResolveSuggestion && (
-                                  <span className="skill-tool-action-group decision">
+                                  <span className={TOOL_ACTION_GROUP_CLASS}>
                                     <SimpleTooltip title="确认新增">
                                       <UIButton
-                                        className="skill-tool-action confirm"
+                                        className={cn(TOOL_ACTION_BUTTON_CLASS, TOOL_ACTION_CONFIRM_CLASS)}
                                         variant="ghost"
                                         size="icon"
                                         disabled={!suggestion.probe_result?.success}
@@ -1992,7 +2197,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                                     </SimpleTooltip>
                                     <SimpleTooltip title="拒绝">
                                       <UIButton
-                                        className="skill-tool-action reject"
+                                        className={cn(TOOL_ACTION_BUTTON_CLASS, TOOL_ACTION_REJECT_CLASS)}
                                         variant="ghost"
                                         size="icon"
                                         onClick={() => rejectToolSuggestion(item.id, suggestion.name)}
@@ -2009,7 +2214,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                       </div>
                     )}
                     {item.actionState === 'pending' && (
-                      <div className="skill-chat-confirm">
+                      <div className={CHAT_CONFIRM_CLASS}>
                         <UIButton size="sm" onClick={() => confirmPendingChange()}>
                           确认
                         </UIButton>
@@ -2018,22 +2223,21 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                         </UIButton>
                       </div>
                     )}
-                    {item.actionState === 'confirmed' && <div className="skill-chat-decision">已确认</div>}
-                    {item.actionState === 'rejected' && <div className="skill-chat-decision">已拒绝</div>}
+                    {item.actionState === 'confirmed' && <div className={CHAT_DECISION_CLASS}>已确认</div>}
+                    {item.actionState === 'rejected' && <div className={CHAT_DECISION_CLASS}>已拒绝</div>}
                   </div>
                 </div>
               ))}
             </div>
-            <div
-              className="skill-chat-composer"
-            >
+            <div className={CHAT_COMPOSER_SHELL_CLASS}>
+              <div className={CHAT_COMPOSER_CLASS}>
               {attachments.length > 0 && (
-                <div className="skill-upload-list">
+                <div className={UPLOAD_LIST_CLASS}>
                   {attachments.map((attachment) => (
-                    <div className={`skill-upload-item ${attachment.status}`} key={attachment.id}>
+                    <div className={uploadItemClass(attachment.status)} key={attachment.id}>
                       <FileTextOutlined />
-                      <span className="skill-upload-name">{attachment.name}</span>
-                      <span className="skill-upload-status">
+                      <span className={UPLOAD_NAME_CLASS}>{attachment.name}</span>
+                      <span className={UPLOAD_STATUS_CLASS}>
                         {attachment.status === 'uploading' && '读取中'}
                         {attachment.status === 'ready' && '已读取'}
                         {attachment.status === 'error' && (attachment.error || '读取失败')}
@@ -2050,6 +2254,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                 </div>
               )}
               <Textarea
+                className={CHAT_TEXTAREA_CLASS}
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 onPaste={handleComposerPaste}
@@ -2066,9 +2271,9 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                     : '输入“标题：... 原始SOP文本：...”或直接粘贴流程说明'
                 }
               />
-              <div className="skill-chat-actions">
-                <span className="text-[13px] text-[#858b9c] dark:text-muted-foreground">{streamStatus}</span>
-                <div className="flex items-center gap-[8px]">
+              <div className={CHAT_ACTIONS_CLASS}>
+                <span className="min-w-0 truncate text-[12px] text-[#858b9c] dark:text-muted-foreground">{streamStatus}</span>
+                <div className={CHAT_ACTIONS_GROUP_CLASS}>
                   <label>
                     <input
                       type="file"
@@ -2082,7 +2287,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                         event.target.value = '';
                       }}
                     />
-                    <UIButton asChild variant="outline" disabled={uploadingFile || loading}>
+                    <UIButton asChild variant="outline" disabled={uploadingFile || loading} className={CARD_OUTLINE_BUTTON_CLASS}>
                       <span>
                         <UploadOutlined />
                         上传文件
@@ -2090,7 +2295,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                     </UIButton>
                   </label>
                   {loading && (
-                    <UIButton variant="outline" onClick={stopStream}>
+                    <UIButton variant="outline" className={CARD_OUTLINE_BUTTON_CLASS} onClick={stopStream}>
                       <StopOutlined />
                       停止
                     </UIButton>
@@ -2099,7 +2304,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                     <DropdownMenuTrigger asChild>
                       <UIButton
                         variant="outline"
-                        className="skill-rewrite-model-button"
+                        className={REWRITE_MODEL_BUTTON_CLASS}
                         disabled={loading || modelConfigs.length === 0}
                       >
                         <span>{selectedRewriteModel?.name || selectedRewriteModel?.model || '默认模型'}</span>
@@ -2135,6 +2340,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                   </DropdownMenu>
                   <UIButton
                     disabled={loading || uploadingFile || (!input.trim() && readyAttachments.length === 0)}
+                    className={PRIMARY_BUTTON_CLASS}
                     onClick={() => void send()}
                   >
                     {loading ? <LoadingOutlined className="animate-spin" /> : <SendOutlined />}
@@ -2142,19 +2348,26 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                   </UIButton>
                 </div>
               </div>
+              </div>
             </div>
           </div>
-        </EditorCard>
-        <EditorCard
-          className="skill-source-card"
+        </DistillSectionCard>
+        <DistillSectionCard
+          className={cn(SOURCE_CARD_CLASS, 'h-full min-h-0')}
+          bodyClassName={DISTILL_CARD_BODY_CLASS}
           title={viewMode === 'source' ? '源码' : '流程图'}
           extra={
             <div className="flex flex-wrap justify-end gap-[8px]">
-              <UIButton variant="outline" disabled={loading} onClick={handleClearClick}>
+              <UIButton variant="outline" className={CARD_OUTLINE_BUTTON_CLASS} disabled={loading} onClick={handleClearClick}>
                 清空
               </UIButton>
               <SimpleTooltip title={draft && !hasSaveableDraftChanges ? '当前没有内容变化' : ''}>
-                <UIButton variant="outline" disabled={!draft || loading || !hasSaveableDraftChanges} onClick={() => openSaveReview()}>
+                <UIButton
+                  variant="outline"
+                  className={CARD_OUTLINE_BUTTON_CLASS}
+                  disabled={!draft || loading || !hasSaveableDraftChanges}
+                  onClick={() => openSaveReview()}
+                >
                   <SaveOutlined />
                   保存草稿
                 </UIButton>
@@ -2162,22 +2375,27 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
             </div>
           }
         >
-          <div className="skill-source-toolbar">
-            <div className="flex items-center gap-[8px]">
+          <div className={SOURCE_TOOLBAR_CLASS}>
+            <div className="flex flex-wrap items-center gap-[8px]">
               <UIButton
                 variant="outline"
+                className={CARD_OUTLINE_BUTTON_CLASS}
                 onClick={() => setViewMode(viewMode === 'source' ? 'flow' : 'source')}
               >
                 {viewMode === 'source' ? <BranchesOutlined /> : <CodeOutlined />}
                 {viewMode === 'source' ? '显示流程' : '显示源码'}
               </UIButton>
-              <UIButton variant="outline" disabled={!draft} onClick={toggleAllTargets}>
+              <UIButton variant="outline" className={CARD_OUTLINE_BUTTON_CLASS} disabled={!draft} onClick={toggleAllTargets}>
                 {allSelected ? '清空选择' : '全选'}
               </UIButton>
             </div>
           </div>
           {!draft ? (
-            <EmptyState description="暂无技能草稿" />
+            <div className={SOURCE_EMPTY_STATE_CLASS}>
+              <FileTextOutlined className="text-[28px] text-[#c0c6d4] dark:text-muted-foreground" />
+              <p className={SOURCE_EMPTY_TEXT_CLASS}>暂无技能草稿</p>
+              <p className="text-[12px] leading-[18px] text-[#c0c6d4] dark:text-muted-foreground">在左侧输入说明或上传文档后开始生成</p>
+            </div>
           ) : viewMode === 'source' ? (
             <SkillSource
               skill={draft}
@@ -2193,20 +2411,22 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
               onEdit={handleSourceEdit}
             />
           ) : (
-            <SkillFlow
-              skill={draft}
-              selectedPaths={selectedPaths}
-              highlightedPaths={highlightedPaths}
-              updatingPaths={updatingPaths}
-              dirtyPaths={dirtyPaths}
-              textDiffs={textDiffs}
-              toolDescriptions={toolDescriptions}
-              toolStatuses={toolStatuses}
-              containerRef={sourceScrollRef}
-              onToggle={toggleTarget}
-            />
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <SkillFlow
+                skill={draft}
+                selectedPaths={selectedPaths}
+                highlightedPaths={highlightedPaths}
+                updatingPaths={updatingPaths}
+                dirtyPaths={dirtyPaths}
+                textDiffs={textDiffs}
+                toolDescriptions={toolDescriptions}
+                toolStatuses={toolStatuses}
+                containerRef={sourceScrollRef}
+                onToggle={toggleTarget}
+              />
+            </div>
           )}
-        </EditorCard>
+        </DistillSectionCard>
       </div>
       <KDialog
         open={clearConfirmOpen}
@@ -2252,28 +2472,28 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
           </div>
         }
       >
-        <div className="save-review-form">
-          <label>
+        <div className={SAVE_REVIEW_FORM_CLASS}>
+          <label className={SAVE_REVIEW_FORM_LABEL_CLASS}>
             <span>技能名称</span>
             <Input value={saveName} onChange={(event) => setSaveName(event.target.value)} />
           </label>
-          <label>
+          <label className={SAVE_REVIEW_FORM_LABEL_CLASS}>
             <span>业务域</span>
             <Input value={saveDomain} onChange={(event) => setSaveDomain(event.target.value)} />
           </label>
-          <label>
+          <label className={SAVE_REVIEW_FORM_LABEL_CLASS}>
             <span>版本号</span>
             <Input value={saveVersion} disabled={!saveReviewHasContentChanges} onChange={(event) => setSaveVersion(event.target.value)} />
           </label>
         </div>
-        <div className="save-review-diff">
+        <div className={SAVE_REVIEW_DIFF_CLASS}>
           <strong className="text-[13px] font-semibold text-foreground">本轮修改 diff</strong>
           {saveReviewDiffs.length === 0 ? (
             <EmptyState description="暂无结构差异" />
           ) : (
             saveReviewDiffs.map((diff) => (
-              <div key={diff.key} className="save-review-diff-row">
-                <div className="save-review-diff-path">{diffTargetLabel(diff.path, saveReviewDraft)} / {fieldLabel(diff.field)}</div>
+              <div key={diff.key} className={SAVE_REVIEW_DIFF_ROW_CLASS}>
+                <div className={SAVE_REVIEW_DIFF_PATH_CLASS}>{diffTargetLabel(diff.path, saveReviewDraft)} / {fieldLabel(diff.field)}</div>
                 <SaveReviewDiffValue diff={diff} toolDescriptions={toolDescriptions} toolStatuses={toolStatuses} />
               </div>
             ))
@@ -2286,7 +2506,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
         title="工具详情"
         width={1040}
         footer={
-          <div className="tool-suggestion-detail-footer flex flex-wrap justify-end gap-[8px]">
+          <div className={cn(TOOL_SUGGESTION_DETAIL_FOOTER_CLASS, "flex flex-wrap justify-end gap-[8px]")}>
             <UIButton variant="outline" onClick={() => setToolDetail(null)}>关闭</UIButton>
             {toolDetail && toolSuggestionResolution(toolDetail) === 'new_candidate' && (
               <>
@@ -2304,7 +2524,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
         }
       >
         {toolDetail && (
-          <div className="tool-suggestion-detail">
+          <div className={TOOL_SUGGESTION_DETAIL_CLASS}>
             <div><strong>解析状态：</strong>{toolSuggestionResolutionLabel(toolDetail)}</div>
             {toolDetail.matched_tool_name && (
               <div><strong>匹配工具：</strong>{toolDetail.matched_tool_display_name || toolDetail.matched_tool_name}</div>
@@ -2324,13 +2544,13 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
               onChange={(event) => setProbeArgsText(event.target.value)}
             />
             <strong className="text-[13px] font-semibold text-foreground">输入 Schema</strong>
-            <pre>{JSON.stringify(toolDetail.input_schema || {}, null, 2)}</pre>
+            <pre className={TOOL_SUGGESTION_DETAIL_PRE_CLASS}>{JSON.stringify(toolDetail.input_schema || {}, null, 2)}</pre>
             <strong className="text-[13px] font-semibold text-foreground">输出 Schema</strong>
-            <pre>{JSON.stringify(toolDetail.output_schema || {}, null, 2)}</pre>
+            <pre className={TOOL_SUGGESTION_DETAIL_PRE_CLASS}>{JSON.stringify(toolDetail.output_schema || {}, null, 2)}</pre>
             {toolDetail.probe_result && (
               <>
                 <strong className="text-[13px] font-semibold text-foreground">测试结果</strong>
-                <pre>{JSON.stringify(toolDetail.probe_result, null, 2)}</pre>
+                <pre className={TOOL_SUGGESTION_DETAIL_PRE_CLASS}>{JSON.stringify(toolDetail.probe_result, null, 2)}</pre>
               </>
             )}
           </div>
@@ -2384,7 +2604,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
   );
 }
 
-function EditorCard({
+function DistillSectionCard({
   className,
   bodyClassName,
   title,
@@ -2399,17 +2619,15 @@ function EditorCard({
   children?: ReactNode;
 } & Omit<HTMLAttributes<HTMLDivElement>, 'title'>) {
   return (
-    <div className={cn('ant-card border border-solid', className)} {...rest}>
+    <section className={cn(DISTILL_CARD_CLASS, 'h-full min-h-0', className)} {...rest}>
       {(title || extra) && (
-        <div className="ant-card-head">
-          <div className="ant-card-head-wrapper flex min-h-[46px] items-center justify-between gap-[12px]">
-            <div className="ant-card-head-title min-w-0">{title}</div>
-            {extra ? <div className="ant-card-extra min-w-0">{extra}</div> : null}
-          </div>
+        <div className={DISTILL_CARD_HEADER_CLASS}>
+          <div className={cn('min-w-0', SECTION_CARD_TITLE_CLASS)}>{title}</div>
+          {extra ? <div className="shrink-0">{extra}</div> : null}
         </div>
       )}
-      <div className={cn('ant-card-body', bodyClassName)}>{children}</div>
-    </div>
+      <div className={cn(DISTILL_CARD_BODY_CLASS, bodyClassName)}>{children}</div>
+    </section>
   );
 }
 
@@ -2477,9 +2695,7 @@ function DistillTag({ children }: { children: ReactNode }) {
 }
 
 /**
- * Inline text input for the SOP source editor. Rendered as a native input with
- * the existing `ant-input` styling hooks so the bespoke source-editor CSS keeps
- * applying after the Ant Design migration.
+ * Inline text input for the SOP source editor.
  */
 function SourceInput({
   className,
@@ -2492,7 +2708,7 @@ function SourceInput({
   style?: CSSProperties;
   onChange?: ChangeEventHandler<HTMLInputElement>;
 }) {
-  return <input className={cn('ant-input', className)} {...rest} />;
+  return <Input className={cn(SOURCE_INPUT_CLASS, className)} {...rest} />;
 }
 
 /** Auto-growing textarea replacement for Ant Design's `Input.TextArea autoSize`. */
@@ -2517,7 +2733,15 @@ function AutoGrowTextarea({
     el.style.height = 'auto';
     el.style.height = `${el.scrollHeight}px`;
   }, [value]);
-  return <textarea ref={ref} rows={minRows} value={value} className={cn('ant-input', className)} {...rest} />;
+  return (
+    <Textarea
+      ref={ref}
+      rows={minRows}
+      value={value}
+      className={cn(SOURCE_INPUT_CLASS, className)}
+      {...rest}
+    />
+  );
 }
 
 /** Native number input replacement for Ant Design's `InputNumber`. */
@@ -2535,9 +2759,9 @@ function SourceNumberInput({
   onChange: (value: number | null) => void;
 }) {
   return (
-    <input
+    <Input
       type="number"
-      className={cn('ant-input', className)}
+      className={cn(SOURCE_INPUT_CLASS, className)}
       value={value ?? ''}
       min={min}
       placeholder={placeholder}
@@ -2585,7 +2809,7 @@ function ActionCombobox({
     >
       <PopoverTrigger asChild>
         <input
-          className="ant-input skill-source-action-select"
+          className={SOURCE_ACTION_SELECT_CLASS}
           autoFocus
           value={query}
           placeholder={placeholder}
@@ -2931,7 +3155,7 @@ function SkillSource({
         title={`确认删除 Node ${index + 1}：${String(node.name || nodeId)}？`}
         confirmText="确认删除"
         description={
-          <div className="skill-node-delete-confirm">
+          <div className={NODE_DELETE_CONFIRM_CLASS}>
             <p>删除后会同时移除所有连接到这个节点、或从这个节点发出的流转规则。</p>
             <strong>将受影响的连接</strong>
             <ul>
@@ -2977,17 +3201,17 @@ function SkillSource({
   const actionOptions = buildActionOptions(toolDescriptions, toolStatuses, steps);
 
   return (
-    <div className="skill-source-md" ref={containerRef}>
-      <div className="skill-source-group-title">基础信息</div>
+    <div className={SOURCE_MD_CLASS} ref={containerRef}>
+      <div className={SOURCE_GROUP_TITLE_CLASS}>基础信息</div>
       <SelectableTarget
-        className={targetClass('skill-source-section', 'basic', selectedPaths, highlightedPaths, updatingPaths, dirtyPaths)}
+        className={distillSourceSectionClass('basic', selectedPaths, highlightedPaths, updatingPaths, dirtyPaths)}
         target={{ path: 'basic', label: '基础信息' }}
         onToggle={onToggle}
       >
-        {selectedPaths.includes('basic') && <span className="selection-mark"><CheckOutlined /></span>}
-        <div className="skill-source-rendered">
+        {selectedPaths.includes('basic') && <span className={SELECTION_MARK_CLASS}><CheckOutlined /></span>}
+        <div className={SOURCE_RENDERED_CLASS}>
           <EditableSourceHeading value={skill.name} onChange={(value) => editBasic('name', value)} />
-          <div className="skill-source-meta-list">
+          <div className={SOURCE_META_LIST_CLASS}>
             <EditableSourceTextLine label={fieldLabel('skill_id')} value={skill.skill_id} onChange={(value) => editBasic('skill_id', value)} />
             <EditableSourceTextLine label={fieldLabel('version')} value={skill.version} onChange={(value) => editBasic('version', value)} />
             <EditableSourceTextLine label={fieldLabel('business_domain')} value={skill.business_domain || ''} onChange={(value) => editBasic('business_domain', value)} />
@@ -3000,10 +3224,10 @@ function SkillSource({
           </div>
         </div>
       </SelectableTarget>
-      <div className="skill-source-group-title">详细节点</div>
-      <div className="skill-source-steps">
-        <div className="skill-node-insert-row edge">
-          <UIButton variant="outline" size="sm" onClick={() => insertNodeBetween(-1)}>
+      <div className={SOURCE_GROUP_TITLE_CLASS}>详细节点</div>
+      <div className={SOURCE_STEPS_CLASS}>
+        <div className={cn(NODE_INSERT_ROW_CLASS, NODE_INSERT_ROW_EDGE_CLASS)}>
+          <UIButton variant="outline" size="sm" className={NODE_INSERT_BUTTON_CLASS} onClick={() => insertNodeBetween(-1)}>
             <PlusOutlined />
             {steps.length > 0 ? '在最前新增节点' : '新增第一个节点'}
           </UIButton>
@@ -3018,23 +3242,23 @@ function SkillSource({
             terminalNodeIds.has(stepId) ? '终止节点' : '流程节点',
           ].filter(Boolean).join(' · ');
           return (
-            <div className="skill-source-step-block" key={path}>
+            <div className={SOURCE_STEP_BLOCK_CLASS} key={path}>
               {index > 0 && (
-                <div className="skill-node-insert-row">
-                  <UIButton variant="outline" size="sm" onClick={() => insertNodeBetween(index - 1)}>
+                <div className={NODE_INSERT_ROW_CLASS}>
+                  <UIButton variant="outline" size="sm" className={NODE_INSERT_BUTTON_CLASS} onClick={() => insertNodeBetween(index - 1)}>
                     <PlusOutlined />
                     在 Node {index} 和 Node {index + 1} 之间新增节点
                   </UIButton>
                 </div>
               )}
               <SelectableTarget
-                className={targetClass('skill-source-section', path, selectedPaths, highlightedPaths, updatingPaths, dirtyPaths)}
+                className={distillSourceSectionClass(path, selectedPaths, highlightedPaths, updatingPaths, dirtyPaths)}
                 target={{ path, label: `节点 ${index + 1}：${step.name || stepId}` }}
                 onToggle={onToggle}
               >
-                {selectedPaths.includes(path) && <span className="selection-mark"><CheckOutlined /></span>}
-                <div className="skill-source-rendered">
-                  <div className="skill-source-step-header">
+                {selectedPaths.includes(path) && <span className={SELECTION_MARK_CLASS}><CheckOutlined /></span>}
+                <div className={SOURCE_RENDERED_CLASS}>
+                  <div className={SOURCE_STEP_HEADER_CLASS}>
                     <EditableSourceStepHeading
                       index={index}
                       value={String(step.name || '')}
@@ -3048,7 +3272,7 @@ function SkillSource({
                       </UIButton>
                     </EditableSourceField>
                   </div>
-                  <div className="skill-source-meta-list">
+                  <div className={SOURCE_META_LIST_CLASS}>
                     <EditableSourceTextLine label={fieldLabel('step_id')} value={stepId} onChange={(value) => editStep(index, 'step_id', value)} />
                     <EditableSourceSelectLine
                       label={fieldLabel('type')}
@@ -3094,8 +3318,8 @@ function SkillSource({
           );
         })}
         {steps.length > 0 && (
-          <div className="skill-node-insert-row edge">
-            <UIButton variant="outline" size="sm" onClick={() => insertNodeBetween(steps.length - 1)}>
+          <div className={cn(NODE_INSERT_ROW_CLASS, NODE_INSERT_ROW_EDGE_CLASS)}>
+            <UIButton variant="outline" size="sm" className={NODE_INSERT_BUTTON_CLASS} onClick={() => insertNodeBetween(steps.length - 1)}>
               <PlusOutlined />
               在最后新增节点
             </UIButton>
@@ -3172,23 +3396,45 @@ function SkillFlow({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [containerRef, flowZoom, graphKey, graphLayout.root.x, graphLayout.root.width]);
+  const isFitZoom = Math.abs(flowZoom - 0.64) < 0.001;
+  const isFullZoom = Math.abs(flowZoom - 1) < 0.001;
   return (
     <>
-      <div className="skill-flow-zoom-toolbar" aria-label="流程图缩放">
-        <span>缩放</span>
-        <UIButton variant="outline" size="sm" onClick={() => updateZoom(flowZoom - 0.08)}>-</UIButton>
-        <span className="skill-flow-zoom-value">{Math.round(flowZoom * 100)}%</span>
-        <UIButton variant="outline" size="sm" onClick={() => updateZoom(flowZoom + 0.08)}>+</UIButton>
-        <UIButton variant="outline" size="sm" onClick={() => updateZoom(0.64)}>适配</UIButton>
-        <UIButton variant="outline" size="sm" onClick={() => updateZoom(1)}>100%</UIButton>
+      <div className={FLOW_ZOOM_TOOLBAR_CLASS} aria-label="流程图缩放">
+        <span className="shrink-0">缩放</span>
+        <UIButton variant="outline" size="sm" className={FLOW_ZOOM_STEP_BUTTON_CLASS} onClick={() => updateZoom(flowZoom - 0.08)} aria-label="缩小">
+          -
+        </UIButton>
+        <span className={FLOW_ZOOM_VALUE_CLASS}>{Math.round(flowZoom * 100)}%</span>
+        <UIButton variant="outline" size="sm" className={FLOW_ZOOM_STEP_BUTTON_CLASS} onClick={() => updateZoom(flowZoom + 0.08)} aria-label="放大">
+          +
+        </UIButton>
+        <UIButton
+          variant="outline"
+          size="sm"
+          className={flowZoomPresetButtonClass(isFitZoom)}
+          aria-pressed={isFitZoom}
+          onClick={() => updateZoom(0.64)}
+        >
+          适配
+        </UIButton>
+        <UIButton
+          variant="outline"
+          size="sm"
+          className={flowZoomPresetButtonClass(isFullZoom)}
+          aria-pressed={isFullZoom}
+          onClick={() => updateZoom(1)}
+        >
+          100%
+        </UIButton>
       </div>
-      <div className="skill-flow" ref={containerRef}>
+      <div className={FLOW_CLASS} ref={containerRef}>
         <div
-          className="skill-flow-zoom-shell"
+          className={FLOW_ZOOM_SHELL_CLASS}
           style={{ width: zoomedWidth, height: zoomedHeight }}
         >
           <div
-            className="skill-flow-graph-canvas"
+            className={FLOW_GRAPH_CANVAS_CLASS}
             style={{
               width: graphLayout.width,
               height: graphLayout.height,
@@ -3196,7 +3442,7 @@ function SkillFlow({
             }}
           >
             <svg
-              className="skill-flow-edges"
+              className={FLOW_EDGES_CLASS}
               width={graphLayout.width}
               height={graphLayout.height}
               viewBox={`0 0 ${graphLayout.width} ${graphLayout.height}`}
@@ -3209,7 +3455,7 @@ function SkillFlow({
               </defs>
               {graphLayout.edges.map((edge) => (
                 <path
-                  className="skill-flow-edge-path"
+                  className={FLOW_EDGE_PATH_CLASS}
                   d={edge.path}
                   key={edge.id}
                   markerEnd="url(#skill-flow-arrow)"
@@ -3221,7 +3467,7 @@ function SkillFlow({
             </svg>
             {graphLayout.edges.map((edge) => (
               <span
-                className={['skill-flow-edge-label', edge.labelTone || edge.kind].filter(Boolean).join(' ')}
+                className={flowEdgeLabelClass(edge.labelTone || edge.kind)}
                 key={`${edge.id}_label`}
                 style={{ left: edge.labelX, top: edge.labelY }}
                 title={edge.title}
@@ -3230,22 +3476,22 @@ function SkillFlow({
               </span>
             ))}
             <div
-              className="skill-flow-root-position"
+              className={FLOW_ROOT_POSITION_CLASS}
               style={{ left: graphLayout.root.x, top: graphLayout.root.y, width: graphLayout.root.width, height: graphLayout.root.height }}
             >
               <SelectableTarget
-                className={targetClass('skill-flow-node root', 'basic', selectedPaths, highlightedPaths, updatingPaths, dirtyPaths)}
+                className={distillFlowNodeClass('basic', true, selectedPaths, highlightedPaths, updatingPaths, dirtyPaths)}
                 target={{ path: 'basic', label: '基础信息' }}
                 onToggle={onToggle}
               >
-                {selectedPaths.includes('basic') && <span className="selection-mark"><CheckOutlined /></span>}
+                {selectedPaths.includes('basic') && <span className={SELECTION_MARK_CLASS}><CheckOutlined /></span>}
                 <span>基础信息</span>
                 <strong><InlineDiffText path="basic" field="name" value={skill.name} diffs={textDiffs} /></strong>
                 <small>{skill.skill_id}</small>
                 <p><InlineDiffText path="basic" field="description" value={skill.description || '暂无描述'} diffs={textDiffs} /></p>
-                <div className="skill-flow-meta">
+                <div className={FLOW_META_CLASS}>
                   <FlowMetaRow label="业务域">
-                    <span className="skill-flow-chip">{skill.business_domain || '-'}</span>
+                    <span className={FLOW_CHIP_CLASS}>{skill.business_domain || '-'}</span>
                   </FlowMetaRow>
                   <FlowMetaRow label="必填信息">
                     <PlainChipList values={skill.required_info} />
@@ -3258,7 +3504,7 @@ function SkillFlow({
             </div>
             {graphLayout.nodes.map((item) => (
               <div
-                className="skill-flow-node-position"
+                className={FLOW_NODE_POSITION_CLASS}
                 key={item.nodeId}
                 style={{ left: item.x, top: item.y, width: item.width, height: item.height }}
               >
@@ -3318,38 +3564,38 @@ function SkillFlowNodeCard({
   const actionList = asStringList(step.allowed_actions);
   const instruction = String(step.instruction || '暂无说明');
   return (
-    <div className="skill-flow-node-shell">
+    <div className={FLOW_NODE_SHELL_CLASS}>
       <SelectableTarget
-        className={targetClass('skill-flow-node', path, selectedPaths, highlightedPaths, updatingPaths, dirtyPaths)}
+        className={distillFlowNodeClass(path, false, selectedPaths, highlightedPaths, updatingPaths, dirtyPaths)}
         target={{ path, label: `节点 ${index + 1}：${step.name || nodeId}` }}
         onToggle={onToggle}
       >
-        {selectedPaths.includes(path) && <span className="selection-mark"><CheckOutlined /></span>}
+        {selectedPaths.includes(path) && <span className={SELECTION_MARK_CLASS}><CheckOutlined /></span>}
         <span>节点 {index + 1}</span>
         <strong><InlineDiffText path={path} field="name" value={String(step.name || nodeId)} diffs={textDiffs} /></strong>
         <small>{nodeId}</small>
-        <div className="skill-flow-node-badges">
-          <span className="skill-flow-chip">{nodeTypeLabel(String(step.type || 'collect_info'))}</span>
-          {Boolean(step.optional) && <span className="skill-flow-chip">可选</span>}
-          {terminal && <span className="skill-flow-chip terminal">终止</span>}
+        <div className={FLOW_NODE_BADGES_CLASS}>
+          <span className={FLOW_CHIP_CLASS}>{nodeTypeLabel(String(step.type || 'collect_info'))}</span>
+          {Boolean(step.optional) && <span className={FLOW_CHIP_CLASS}>可选</span>}
+          {terminal && <span className={FLOW_CHIP_CLASS}>终止</span>}
         </div>
-        <p className="skill-flow-node-summary" title={instruction}>
+        <p className={FLOW_NODE_SUMMARY_CLASS} title={instruction}>
           <InlineDiffText path={path} field="instruction" value={instruction} diffs={textDiffs} />
         </p>
-        <div className="skill-flow-compact-meta">
+        <div className={FLOW_COMPACT_META_CLASS}>
           {expectedInfo.length > 0 && (
-            <div className="skill-flow-compact-row">
+            <div className={FLOW_COMPACT_ROW_CLASS}>
               <span>字段</span>
               <PlainChipList values={expectedInfo.slice(0, 4)} />
             </div>
           )}
           {actionList.length > 0 && (
-            <div className="skill-flow-compact-row">
+            <div className={FLOW_COMPACT_ROW_CLASS}>
               <span>动作</span>
               <ActionList actions={actionList.slice(0, 4)} toolDescriptions={toolDescriptions} toolStatuses={toolStatuses} />
             </div>
           )}
-          {outgoingEdges.length > 0 && <span className="skill-flow-route-count">{outgoingRouteCountLabel(outgoingEdges)}</span>}
+          {outgoingEdges.length > 0 && <span className={FLOW_ROUTE_COUNT_CLASS}>{outgoingRouteCountLabel(outgoingEdges)}</span>}
         </div>
       </SelectableTarget>
     </div>
@@ -3358,8 +3604,8 @@ function SkillFlowNodeCard({
 
 function FlowMetaRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="skill-flow-meta-row">
-      <span className="skill-flow-meta-label">{label}</span>
+    <div className={FLOW_META_ROW_CLASS}>
+      <span className={FLOW_META_LABEL_CLASS}>{label}</span>
       {children}
     </div>
   );
@@ -3367,11 +3613,11 @@ function FlowMetaRow({ label, children }: { label: string; children: ReactNode }
 
 function PlainChipList({ values }: { values: unknown }) {
   const items = asStringList(values);
-  if (items.length === 0) return <span className="skill-flow-chip muted">-</span>;
+  if (items.length === 0) return <span className={cn(FLOW_CHIP_CLASS, FLOW_CHIP_MUTED_CLASS)}>-</span>;
   return (
-    <div className="skill-flow-chip-list">
+    <div className={FLOW_CHIP_LIST_CLASS}>
       {items.map((item, index) => (
-        <span className="skill-flow-chip" key={`${item}_${index}`}>
+        <span className={FLOW_CHIP_CLASS} key={`${item}_${index}`}>
           {item}
         </span>
       ))}
@@ -4125,7 +4371,7 @@ function EditableSourceHeading({ value, onChange }: { value: string; onChange: (
   return (
     <EditableSourceField>
       <SourceInput
-        className="skill-source-title-input"
+        className={SOURCE_TITLE_INPUT_CLASS}
         style={compactInputStyle(value, 10, 56)}
         value={value}
         onChange={(event) => onChange(event.target.value)}
@@ -4147,7 +4393,7 @@ function EditableSourceStepHeading({
 }) {
   return (
     <EditableSourceField>
-      <div className="skill-source-step-title-edit">
+      <div className={SOURCE_STEP_TITLE_EDIT_CLASS}>
         <span>Node {index + 1}:</span>
         <SourceInput
           value={value}
@@ -4184,28 +4430,28 @@ function EditableSourceTextLine({
   }, [canCollapse, value]);
 
   return (
-    <div className={`skill-source-line ${canCollapse ? 'collapsible' : ''}`.trim()}>
-      <span className="skill-source-key">{label}</span>
-      <span className="skill-source-value">
+    <div className={cn(SOURCE_LINE_CLASS, canCollapse && "collapsible")}>
+      <span className={SOURCE_KEY_CLASS}>{label}</span>
+      <span className={SOURCE_VALUE_CLASS}>
         <EditableSourceField>
           {canCollapse ? (
-            <div className="skill-source-collapsible-editor">
+            <div className={SOURCE_COLLAPSIBLE_EDITOR_CLASS}>
               <button
                 type="button"
-                className={`skill-source-collapsible-head ${collapsed ? 'collapsed' : 'expanded'}`}
+                className={SOURCE_COLLAPSIBLE_HEAD_CLASS}
                 onClick={() => setCollapsed((current) => !current)}
               >
-                <span className={`skill-source-collapsible-preview ${collapsed ? '' : 'muted'}`}>
+                <span className={cn(SOURCE_COLLAPSIBLE_PREVIEW_CLASS, !collapsed && SOURCE_COLLAPSIBLE_PREVIEW_MUTED_CLASS)}>
                   {collapsed ? previewSourceText(value) : '正在编辑节点说明'}
                 </span>
-                <span className="skill-source-collapsible-toggle">
+                <span className={SOURCE_COLLAPSIBLE_TOGGLE_CLASS}>
                   {collapsed ? <RightOutlined /> : <DownOutlined />}
                   {collapsed ? '展开' : '收起'}
                 </span>
               </button>
               {!collapsed && (
                 <AutoGrowTextarea
-                  className="skill-source-edit-input"
+                  className={SOURCE_EDIT_INPUT_CLASS}
                   value={value}
                   style={sourceInputStyle(value, true)}
                   minRows={3}
@@ -4215,7 +4461,7 @@ function EditableSourceTextLine({
             </div>
           ) : multiline ? (
             <AutoGrowTextarea
-              className="skill-source-edit-input"
+              className={SOURCE_EDIT_INPUT_CLASS}
               value={value}
               style={sourceInputStyle(value, true)}
               minRows={2}
@@ -4223,7 +4469,7 @@ function EditableSourceTextLine({
             />
           ) : (
             <SourceInput
-              className="skill-source-edit-input"
+              className={SOURCE_EDIT_INPUT_CLASS}
               value={value}
               style={sourceInputStyle(value)}
               onChange={(event) => onChange(event.target.value)}
@@ -4245,12 +4491,12 @@ function EditableSourceListLine({
   onChange: (value: string) => void;
 }) {
   return (
-    <div className="skill-source-line">
-      <span className="skill-source-key">{label}</span>
-      <span className="skill-source-value">
+    <div className={SOURCE_LINE_CLASS}>
+      <span className={SOURCE_KEY_CLASS}>{label}</span>
+      <span className={SOURCE_VALUE_CLASS}>
         <EditableSourceField>
           <AutoGrowTextarea
-            className="skill-source-edit-input"
+            className={SOURCE_EDIT_INPUT_CLASS}
             value={values.join('\n')}
             style={sourceInputStyle(values.join('\n'), true)}
             minRows={1}
@@ -4277,12 +4523,12 @@ function EditableSourceSelectLine({
     ? options
     : [...options, { value, label: value }];
   return (
-    <div className="skill-source-line">
-      <span className="skill-source-key">{label}</span>
-      <span className="skill-source-value">
+    <div className={SOURCE_LINE_CLASS}>
+      <span className={SOURCE_KEY_CLASS}>{label}</span>
+      <span className={SOURCE_VALUE_CLASS}>
         <EditableSourceField>
           <SourceSelect
-            className="skill-source-select w-[220px]"
+            className={cn(SOURCE_SELECT_CLASS, "w-[220px]")}
             value={value}
             options={mergedOptions}
             onChange={onChange}
@@ -4303,13 +4549,13 @@ function EditableConditionLine({
   const presetValue = conditionPresetValue(value);
   const naturalValue = conditionNaturalText(value);
   return (
-    <div className="skill-source-line skill-condition-line">
-      <span className="skill-source-key">{fieldLabel('condition')}</span>
-      <span className="skill-source-value">
+    <div className={SOURCE_LINE_CLASS}>
+      <span className={SOURCE_KEY_CLASS}>{fieldLabel('condition')}</span>
+      <span className={SOURCE_VALUE_CLASS}>
         <EditableSourceField>
-          <div className="skill-condition-editor">
+          <div className={CONDITION_EDITOR_CLASS}>
             <SourceSelect
-              className="skill-condition-preset"
+              className={CONDITION_PRESET_CLASS}
               value={presetValue}
               options={CONDITION_PRESET_OPTIONS}
               onChange={(nextValue) => {
@@ -4321,13 +4567,13 @@ function EditableConditionLine({
               }}
             />
             <AutoGrowTextarea
-              className="skill-source-edit-input skill-condition-input"
+              className={cn(SOURCE_EDIT_INPUT_CLASS, CONDITION_INPUT_CLASS)}
               value={naturalValue}
               placeholder="用一句话描述什么时候进入，例如：用户已经提供商品名称后进入"
               minRows={1}
               onChange={(event) => onChange(event.target.value)}
             />
-            <span className="skill-condition-readable">{conditionReadableText(value)}</span>
+            <span className={CONDITION_READABLE_CLASS}>{conditionReadableText(value)}</span>
           </div>
         </EditableSourceField>
       </span>
@@ -4337,9 +4583,9 @@ function EditableConditionLine({
 
 function SourceReadonlyLine({ label, value }: { label: string; value: string }) {
   return (
-    <div className="skill-source-line readonly">
-      <span className="skill-source-key">{label}</span>
-      <span className="skill-source-value skill-source-readonly-value">{value || '-'}</span>
+    <div className={cn(SOURCE_LINE_CLASS, "readonly")}>
+      <span className={SOURCE_KEY_CLASS}>{label}</span>
+      <span className={cn(SOURCE_VALUE_CLASS, SOURCE_READONLY_VALUE_CLASS)}>{value || '-'}</span>
     </div>
   );
 }
@@ -4347,10 +4593,10 @@ function SourceReadonlyLine({ label, value }: { label: string; value: string }) 
 function SourceJsonLine({ label, value }: { label: string; value: unknown }) {
   if (!hasReadableSourceObject(value)) return null;
   return (
-    <div className="skill-source-line readonly">
-      <span className="skill-source-key">{label}</span>
-      <span className="skill-source-value">
-        <pre className="skill-source-json-inline">{JSON.stringify(value, null, 2)}</pre>
+    <div className={cn(SOURCE_LINE_CLASS, "readonly")}>
+      <span className={SOURCE_KEY_CLASS}>{label}</span>
+      <span className={SOURCE_VALUE_CLASS}>
+        <pre className={SOURCE_JSON_INLINE_CLASS}>{JSON.stringify(value, null, 2)}</pre>
       </span>
     </div>
   );
@@ -4399,12 +4645,12 @@ function EditableRetryPolicyLine({
   }
 
   return (
-    <div className="skill-source-line skill-retry-policy-line">
-      <span className="skill-source-key">重试策略</span>
-      <span className="skill-source-value">
+    <div className={SOURCE_LINE_CLASS}>
+      <span className={SOURCE_KEY_CLASS}>重试策略</span>
+      <span className={SOURCE_VALUE_CLASS}>
         <EditableSourceField>
-          <div className="skill-retry-policy-editor">
-            <label className="skill-retry-policy-field attempts">
+          <div className={RETRY_POLICY_EDITOR_CLASS}>
+            <label className={RETRY_POLICY_FIELD_CLASS}>
               <span>最多重试</span>
               <SourceNumberInput
                 min={0}
@@ -4413,7 +4659,7 @@ function EditableRetryPolicyLine({
                 onChange={updateAttempts}
               />
             </label>
-            <label className="skill-retry-policy-field strategy">
+            <label className={RETRY_POLICY_FIELD_CLASS}>
               <span>失败后</span>
               <SourceSelect
                 value={strategy || undefined}
@@ -4422,7 +4668,7 @@ function EditableRetryPolicyLine({
                 onChange={(nextValue) => updateStrategy(nextValue)}
               />
             </label>
-            <label className="skill-retry-policy-field message">
+            <label className={RETRY_POLICY_FIELD_CLASS}>
               <span>追问文案</span>
               <SourceInput
                 value={retryMessage}
@@ -4469,9 +4715,9 @@ function EditableSourceActionLine({
   onChange: (value: string) => void;
 }) {
   return (
-    <div className="skill-source-line">
-      <span className="skill-source-key">{fieldLabel('allowed_actions')}</span>
-      <span className="skill-source-value">
+    <div className={SOURCE_LINE_CLASS}>
+      <span className={SOURCE_KEY_CLASS}>{fieldLabel('allowed_actions')}</span>
+      <span className={SOURCE_VALUE_CLASS}>
         <EditableSourceField>
           <EditableActionList
             actions={values}
@@ -4552,40 +4798,41 @@ function EditableActionList({
   }
 
   return (
-    <div className="skill-source-action-editor">
-      <div className="skill-action-list editable">
+    <div className={cn(SOURCE_ACTION_EDITOR_CLASS, "group/action-editor")}>
+      <div className={cn(SOURCE_ACTION_LIST_CLASS, SOURCE_ACTION_LIST_EDITABLE_CLASS)}>
         {actions.map((action, index) => (
           editingIndex === index ? (
-            <span className="skill-source-action-picker" key={`editing_${index}`}>
+            <span className={SOURCE_ACTION_PICKER_CLASS} key={`editing_${index}`}>
               {actionSelect(index, action)}
             </span>
           ) : (
-            <span className="skill-source-action-token" key={`${action}_${index}`}>
+            <span className={cn(SOURCE_ACTION_TOKEN_CLASS, "group/token")} key={`${action}_${index}`}>
               <button
                 type="button"
-                className="skill-source-action-edit-button"
+                className={SOURCE_ACTION_EDIT_BUTTON_CLASS}
                 onClick={() => setEditingIndex(index)}
               >
                 <ActionChip action={action} toolDescriptions={toolDescriptions} toolStatuses={toolStatuses} />
               </button>
-              <button type="button" className="skill-source-action-remove" onClick={() => removeAction(index)} aria-label={`移除 ${actionLabel(action)}`}>
+              <button type="button" className={SOURCE_ACTION_REMOVE_CLASS} onClick={() => removeAction(index)} aria-label={`移除 ${actionLabel(action)}`}>
                 ×
               </button>
             </span>
           )
         ))}
         {editingIndex !== null && editingIndex >= actions.length && (
-          <span className="skill-source-action-picker">
+          <span className={SOURCE_ACTION_PICKER_CLASS}>
             {actionSelect(editingIndex)}
           </span>
         )}
         {editingIndex === null && (
-          <button type="button" className="skill-source-action-add" onClick={() => setEditingIndex(actions.length)}>
-            <PlusOutlined /> 新增动作
+          <button type="button" className={SOURCE_ACTION_ADD_CLASS} onClick={() => setEditingIndex(actions.length)}>
+            <PlusOutlined />
+            新增动作
           </button>
         )}
       </div>
-      <span className="skill-source-edit-hint">每次新增一个动作；点击已有动作可重新选择。</span>
+      <span className={SOURCE_EDIT_HINT_CLASS}>每次新增一个动作；点击已有动作可重新选择。</span>
     </div>
   );
 }
@@ -4613,48 +4860,48 @@ function EditableFlowRulesLine({
     .map((edge, index) => ({ edge, index }))
     .sort((a, b) => edgePriority(a.edge, a.index) - edgePriority(b.edge, b.index));
   return (
-    <div className="skill-source-line skill-flow-rule-line">
-      <span className="skill-source-key">流转规则</span>
-      <span className="skill-source-value">
+    <div className={SOURCE_LINE_CLASS}>
+      <span className={SOURCE_KEY_CLASS}>流转规则</span>
+      <span className={SOURCE_VALUE_CLASS}>
         <EditableSourceField>
-          <div className="skill-flow-rule-editor">
-            <div className="skill-flow-rule-head">
+          <div className={FLOW_RULE_EDITOR_CLASS}>
+            <div className={FLOW_RULE_HEAD_CLASS}>
               <span>从 {nodeDisplayNameById(nodes, sourceNodeId)} 出发</span>
-              <UIButton variant="outline" size="sm" onClick={onAdd}>
+              <UIButton variant="outline" size="sm" className={PILL_OUTLINE_BUTTON_CLASS} onClick={onAdd}>
                 <PlusOutlined />
                 新增规则
               </UIButton>
             </div>
             {orderedEdges.length === 0 ? (
-              <div className="skill-flow-rule-empty">{terminal ? '当前节点是终止节点，默认流程结束。' : '还没有后续节点，请新增流转规则。'}</div>
+              <div className={FLOW_RULE_EMPTY_CLASS}>{terminal ? '当前节点是终止节点，默认流程结束。' : '还没有后续节点，请新增流转规则。'}</div>
             ) : (
-              <div className="skill-flow-rule-list">
+              <div className={FLOW_RULE_LIST_CLASS}>
                 {orderedEdges.map(({ edge, index }) => (
-                  <div className="skill-flow-rule-item" key={`${String(edge.next_node_id)}_${index}`}>
-                    <label className="skill-flow-rule-field target">
+                  <div className={FLOW_RULE_ITEM_CLASS} key={`${String(edge.next_node_id)}_${index}`}>
+                    <label className={cn(FLOW_RULE_FIELD_CLASS, FLOW_RULE_FIELD_TARGET_CLASS)}>
                       <span>目标 Node</span>
                       <SourceSelect
-                        className="skill-flow-rule-target"
+                        className={FLOW_RULE_TARGET_CLASS}
                         value={String(edge.next_node_id || '') || undefined}
                         options={nodeOptions}
                         placeholder="选择目标 Node"
                         onChange={(value) => onUpdate(index, { next_node_id: value })}
                       />
                     </label>
-                    <label className="skill-flow-rule-field label">
+                    <label className={cn(FLOW_RULE_FIELD_CLASS, FLOW_RULE_FIELD_LABEL_CLASS)}>
                       <span>规则名称</span>
                       <SourceInput
-                        className="skill-flow-rule-label-input"
+                        className={FLOW_RULE_LABEL_INPUT_CLASS}
                         value={String(edge.label || '')}
                         placeholder="例如：信息完整后继续"
                         onChange={(event) => onUpdate(index, { label: event.target.value })}
                       />
                     </label>
-                    <div className="skill-flow-rule-field condition">
+                    <div className={cn(FLOW_RULE_FIELD_CLASS, FLOW_RULE_FIELD_CONDITION_CLASS)}>
                       <span>进入条件</span>
-                      <div className="skill-flow-rule-condition-controls">
+                      <div className={FLOW_RULE_CONDITION_CONTROLS_CLASS}>
                         <SourceSelect
-                          className="skill-condition-preset"
+                          className={CONDITION_PRESET_CLASS}
                           value={conditionPresetValue(String(edge.condition || ''))}
                           options={CONDITION_PRESET_OPTIONS}
                           onChange={(nextValue) => {
@@ -4666,7 +4913,7 @@ function EditableFlowRulesLine({
                           }}
                         />
                         <AutoGrowTextarea
-                          className="skill-flow-rule-condition-input"
+                          className={FLOW_RULE_CONDITION_INPUT_CLASS}
                           value={conditionNaturalText(String(edge.condition || ''))}
                           placeholder="用一句话描述，例如：报文已获取后进入"
                           minRows={1}
@@ -4675,16 +4922,16 @@ function EditableFlowRulesLine({
                       </div>
                       <em>{flowRuleConditionText(String(edge.condition || ''))}</em>
                     </div>
-                    <label className="skill-flow-rule-field priority">
+                    <label className={cn(FLOW_RULE_FIELD_CLASS, FLOW_RULE_FIELD_PRIORITY_CLASS)}>
                       <span>优先级</span>
                       <SourceNumberInput
-                        className="skill-flow-rule-priority"
+                        className={FLOW_RULE_PRIORITY_CLASS}
                         min={0}
                         value={edgePriority(edge, index)}
                         onChange={(value) => onUpdate(index, { priority: Number(value ?? 0) })}
                       />
                     </label>
-                    <UIButton variant="destructive" size="icon" className="skill-flow-rule-delete" onClick={() => onDelete(index)}>
+                    <UIButton variant="destructive" size="icon" className={FLOW_RULE_DELETE_CLASS} onClick={() => onDelete(index)}>
                       <DeleteOutlined />
                     </UIButton>
                   </div>
@@ -4704,7 +4951,7 @@ function EditableSourceField({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="skill-source-edit-field" onMouseDown={stop} onClick={stop} onDoubleClick={stop} onKeyDown={stop}>
+    <div className={SOURCE_EDIT_FIELD_CLASS} onMouseDown={stop} onClick={stop} onDoubleClick={stop} onKeyDown={stop}>
       {children}
     </div>
   );
@@ -4759,9 +5006,9 @@ function ActionDiffList({
   const inserted = new Set(newActions.filter((action) => !oldActions.includes(action)));
   const removed = oldActions.filter((action) => !newActions.includes(action));
   const phaseClass = diff.phase === 'mark' ? 'marked' : diff.phase === 'type' ? 'typing' : 'settled';
-  if (visibleActions.length === 0 && removed.length === 0) return <span className="skill-action-empty">-</span>;
+  if (visibleActions.length === 0 && removed.length === 0) return <span className={ACTION_EMPTY_CLASS}>-</span>;
   return (
-    <div className="skill-action-list">
+    <div className={ACTION_LIST_CLASS}>
       {removed.map((action, index) => (
         <ActionChip
           action={action}
@@ -4793,9 +5040,9 @@ function ActionList({
   toolDescriptions: ToolDescriptionMap;
   toolStatuses: ToolStatusMap;
 }) {
-  if (actions.length === 0) return <span className="skill-action-empty">-</span>;
+  if (actions.length === 0) return <span className={ACTION_EMPTY_CLASS}>-</span>;
   return (
-    <div className="skill-action-list">
+    <div className={ACTION_LIST_CLASS}>
       {actions.map((action, index) => (
         <ActionChip
           action={action}
@@ -4822,15 +5069,24 @@ function ActionChip({
   const toolName = toolNameFromAction(action);
   const description = toolName ? toolDescriptions[toolName] || '当前工具配置中暂无描述' : '';
   const status = toolName ? toolStatuses[toolName] || 'incomplete' : '';
-  const chip = (
+  const variant = className.includes('removed')
+    ? 'removed'
+    : className.includes('added')
+      ? className.includes('typing')
+        ? 'typing'
+        : className.includes('settled')
+          ? 'settled'
+          : 'added'
+      : undefined;
+
+  return (
     <span
-      className={`skill-action-chip ${toolName ? `tool ${status}` : ''} ${className}`.trim()}
+      className={actionChipClass({ toolName: toolName || undefined, status, variant })}
       title={description || undefined}
     >
       {actionLabel(action)}
     </span>
   );
-  return chip;
 }
 
 function SaveReviewDiffValue({
@@ -4848,14 +5104,14 @@ function SaveReviewDiffValue({
     return (
       <>
         {diff.removed && (
-          <div className="save-review-action-diff old">
-            <span className="save-review-diff-sign">-</span>
+          <div className={cn(SAVE_REVIEW_ACTION_DIFF_CLASS, SAVE_REVIEW_ACTION_DIFF_OLD_CLASS)}>
+            <span className={cn(SAVE_REVIEW_DIFF_SIGN_CLASS, SAVE_REVIEW_DIFF_SIGN_OLD_CLASS)}>-</span>
             <ActionList actions={removedActions} toolDescriptions={toolDescriptions} toolStatuses={toolStatuses} />
           </div>
         )}
         {diff.inserted && (
-          <div className="save-review-action-diff new">
-            <span className="save-review-diff-sign">+</span>
+          <div className={cn(SAVE_REVIEW_ACTION_DIFF_CLASS, SAVE_REVIEW_ACTION_DIFF_NEW_CLASS)}>
+            <span className={cn(SAVE_REVIEW_DIFF_SIGN_CLASS, SAVE_REVIEW_DIFF_SIGN_NEW_CLASS)}>+</span>
             <ActionList actions={insertedActions} toolDescriptions={toolDescriptions} toolStatuses={toolStatuses} />
           </div>
         )}
@@ -4864,8 +5120,8 @@ function SaveReviewDiffValue({
   }
   return (
     <>
-      {diff.removed && <div><span className="diff-old">- {diff.removed}</span></div>}
-      {diff.inserted && <div><span className="diff-new">+ {diff.inserted}</span></div>}
+      {diff.removed && <div><span className={DIFF_OLD_CLASS}>- {diff.removed}</span></div>}
+      {diff.inserted && <div><span className={DIFF_NEW_CLASS}>+ {diff.inserted}</span></div>}
     </>
   );
 }
@@ -4887,7 +5143,7 @@ function InlineDiffText({
     return (
       <>
         {diff.prefix}
-        {diff.removed ? <span className="skill-inline-remove">{diff.removed}</span> : null}
+        {diff.removed ? <span className={INLINE_REMOVE_CLASS}>{diff.removed}</span> : null}
         {diff.suffix}
       </>
     );
@@ -4896,7 +5152,7 @@ function InlineDiffText({
   return (
     <>
       {diff.prefix}
-      {typedInsert ? <span className={`skill-inline-add ${diff.phase}`}>{typedInsert}</span> : null}
+      {typedInsert ? <span className={cn(INLINE_ADD_CLASS, diff.phase === 'settled' && INLINE_ADD_SETTLED_CLASS)}>{typedInsert}</span> : null}
       {diff.suffix}
     </>
   );
@@ -5478,7 +5734,7 @@ function toolSuggestionStatusText(suggestion: ToolSuggestionItem): string {
   return '待新增';
 }
 
-function toolSuggestionStatusClass(suggestion: ToolSuggestionItem): string {
+function toolSuggestionStatusClass(suggestion: ToolSuggestionItem): ToolStatusBadgeVariant {
   if (suggestion.status === 'accepted' || suggestion.status === 'created' || suggestion.probe_result?.success || toolSuggestionResolution(suggestion) === 'existing') {
     return 'success';
   }
@@ -5663,22 +5919,6 @@ function reconcileSelectedPaths(paths: string[], skill: SkillCard): string[] {
   return next.length > 0 ? next : DEFAULT_TARGET_PATHS;
 }
 
-function targetClass(
-  baseClass: string,
-  path: string,
-  selectedPaths: string[],
-  highlightedPaths: string[],
-  updatingPaths: string[],
-  dirtyPaths: string[],
-): string {
-  return [
-    baseClass,
-    selectedPaths.includes(path) ? 'active' : '',
-    highlightedPaths.includes(path) ? 'changed' : '',
-    updatingPaths.includes(path) ? 'updating' : '',
-    dirtyPaths.includes(path) ? 'dirty' : '',
-  ].filter(Boolean).join(' ');
-}
 
 function mergePaths(current: string[], next: string[]): string[] {
   return Array.from(new Set([...current, ...next]));
