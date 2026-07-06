@@ -33,6 +33,7 @@ from app.db.models import (
     Skill,
     Tool,
     UIConfig,
+    User,
     new_id,
     utc_now,
 )
@@ -2398,18 +2399,27 @@ class AgentLoop:
     def _human_handoff_assignee_user_id(
         self, tenant_id: str, agent_id: str | None, fallback_user_id: str | None
     ) -> str | None:
-        if not agent_id:
-            return fallback_user_id
-        agent = self.db.exec(
-            select(AgentProfile).where(AgentProfile.tenant_id == tenant_id, AgentProfile.id == agent_id)
-        ).first()
-        metadata = agent.metadata_json if agent else {}
-        if isinstance(metadata, dict):
-            for key in ("owner_user_id", "created_by_user_id", "creator_user_id", "created_by", "owner_id"):
-                value = metadata.get(key)
-                if value:
-                    return str(value)
+        if agent_id:
+            agent = self.db.exec(
+                select(AgentProfile).where(AgentProfile.tenant_id == tenant_id, AgentProfile.id == agent_id)
+            ).first()
+            metadata = agent.metadata_json if agent else {}
+            if isinstance(metadata, dict):
+                for key in ("owner_user_id", "created_by_user_id", "creator_user_id", "created_by", "owner_id"):
+                    value = metadata.get(key)
+                    if value:
+                        return str(value)
+        tenant_admin = self._human_handoff_tenant_admin_user_id(tenant_id)
+        if tenant_admin:
+            return tenant_admin
         return fallback_user_id
+
+    def _human_handoff_tenant_admin_user_id(self, tenant_id: str) -> str | None:
+        rows = self.db.exec(
+            select(User).where(User.tenant_id == tenant_id).where(User.username.in_(("admin", "admin_demo")))
+        ).all()
+        by_username = {user.username: user.id for user in rows if user.username in {"admin", "admin_demo"}}
+        return by_username.get("admin") or by_username.get("admin_demo")
 
     def _human_handoff_context_summary(self, chat_session: ChatSession) -> str:
         rows = self.db.exec(

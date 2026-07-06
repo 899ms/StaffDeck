@@ -5,7 +5,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import app.api.chat as chat_api
 from app.core.agent_loop import AgentLoop
-from app.db.models import AgentEvent, ChatSession, HumanHandoffRequest, Message, Skill, Tenant, User, utc_now
+from app.db.models import AgentEvent, AgentProfile, ChatSession, HumanHandoffRequest, Message, Skill, Tenant, User, utc_now
 from app.session.slot_policy import strip_router_generated_message_slots
 from app.session.session_schema import ChatTurnRequest, RouterDecision, StepAgentResult
 
@@ -129,12 +129,76 @@ def test_handoff_requires_structured_step_declaration():
     assert not loop._step_declares_human_handoff({"allowed_actions": ["answer_user", "continue_flow"]})
 
 
+def test_handoff_assignee_uses_agent_owner_metadata_before_admin():
+    engine = _test_engine()
+    with Session(engine) as db:
+        _admin, user, other = _seed_handoff_users(db)
+        db.add(
+            AgentProfile(
+                id="agent_owned",
+                tenant_id="tenant_demo",
+                name="owned",
+                metadata_json={"owner_user_id": other.id},
+            )
+        )
+        db.commit()
+
+        loop = AgentLoop.__new__(AgentLoop)
+        loop.db = db
+
+        assert loop._human_handoff_assignee_user_id("tenant_demo", "agent_owned", user.id) == other.id
+
+
+def test_handoff_assignee_falls_back_to_tenant_admin_before_requester():
+    engine = _test_engine()
+    with Session(engine) as db:
+        admin, user, _other = _seed_handoff_users(db)
+        db.add(
+            AgentProfile(
+                id="agent_no_owner",
+                tenant_id="tenant_demo",
+                name="no owner",
+                metadata_json={},
+            )
+        )
+        db.commit()
+
+        loop = AgentLoop.__new__(AgentLoop)
+        loop.db = db
+
+        assert loop._human_handoff_assignee_user_id("tenant_demo", "agent_no_owner", user.id) == admin.id
+        assert loop._human_handoff_assignee_user_id("tenant_demo", None, user.id) == admin.id
+
+
+def test_handoff_assignee_uses_requester_when_no_owner_or_admin_exists():
+    engine = _test_engine()
+    with Session(engine) as db:
+        db.add(Tenant(id="tenant_demo", name="Demo"))
+        user = User(id="user_demo", tenant_id="tenant_demo", username="user_demo", password_hash="x")
+        db.add(user)
+        db.add(
+            AgentProfile(
+                id="agent_no_admin",
+                tenant_id="tenant_demo",
+                name="no admin",
+                metadata_json={},
+            )
+        )
+        db.commit()
+
+        loop = AgentLoop.__new__(AgentLoop)
+        loop.db = db
+
+        assert loop._human_handoff_assignee_user_id("tenant_demo", "agent_no_admin", user.id) == user.id
+
+
 def test_handoff_finalize_creates_pending_request_for_declared_step():
     loop = AgentLoop.__new__(AgentLoop)
     db = FakeDb(
         exec_results=[
             [],  # no existing pending handoff
-            [],  # no agent owner metadata, fall back to requester
+            [],  # no agent owner metadata
+            [],  # no tenant admin in FakeDb, fall back to requester
             [
                 Message(
                     id="msg_user",
