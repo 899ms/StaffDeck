@@ -5,8 +5,7 @@ End-to-end MVP for an enterprise Skill Agent Loop service.
 ## Projects
 
 - `backend`: FastAPI service with skill runtime, model config, tool execution, chat API, and trace APIs.
-- `frontend-enterprise`: React/Vite enterprise console for skills, models, tools, and persona configuration.
-- `frontend-chat`: React/Vite user chat client.
+- `frontend-enterprise`: React/Vite StaffDeck app for the enterprise console and chat client.
 - `docs`: API and schema notes.
 
 ## Tutorial
@@ -17,7 +16,7 @@ End-to-end MVP for an enterprise Skill Agent Loop service.
 ## Quick Start
 
 Use the root dev scripts to run the app on one local port. `scripts/dev_up.sh`
-builds both frontends, serves `/chat`, `/enterprise`, and `/api` from one
+builds the StaffDeck frontend, serves `/chat`, `/enterprise`, and `/api` from one
 FastAPI process, writes real process IDs under `.dev/`, and writes logs under
 `.dev/logs/`.
 
@@ -53,7 +52,7 @@ PUBLIC_APP_ORIGIN="http://<public-host>:<app-port>" \
 scripts/dev_up.sh
 ```
 
-To use the legacy three-port development layout for frontend debugging:
+To use the split development layout for frontend debugging:
 
 ```bash
 SINGLE_PORT=0 scripts/dev_up.sh
@@ -74,7 +73,7 @@ cd backend
 .venv/bin/uvicorn single_port_app:app --host 127.0.0.1 --port 5173
 ```
 
-For low-level frontend debugging, use the legacy split mode explicitly:
+For low-level frontend debugging, use split mode explicitly:
 
 ```bash
 SINGLE_PORT=0 scripts/dev_up.sh
@@ -84,8 +83,5 @@ Or start each piece yourself:
 
 ```bash
 cd frontend-enterprise
-VITE_API_BASE_URL=http://127.0.0.1:8000 npm run dev
-
-cd frontend-chat
 VITE_API_BASE_URL=http://127.0.0.1:8000 npm run dev
 ```

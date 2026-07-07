@@ -1,5 +1,5 @@
 export enum EnterpriseRoute {
-  Chat = '/enterprise/chat',
+  Chat = '/chat',
   Platform = '/enterprise/platform',
   Agents = '/enterprise/agents',
   Dashboard = '/enterprise/dashboard',

@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_DIR="$ROOT_DIR/backend"
 ENTERPRISE_DIR="$ROOT_DIR/frontend-enterprise"
-CHAT_DIR="$ROOT_DIR/frontend-chat"
 RUN_DIR="$ROOT_DIR/.dev"
 LOG_DIR="$RUN_DIR/logs"
 
@@ -15,8 +14,6 @@ BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 ENTERPRISE_HOST="${ENTERPRISE_HOST:-127.0.0.1}"
 ENTERPRISE_PORT="${ENTERPRISE_PORT:-5173}"
-CHAT_HOST="${CHAT_HOST:-127.0.0.1}"
-CHAT_PORT="${CHAT_PORT:-5174}"
 FORCE_PORTS="${FORCE_PORTS:-0}"
 DETACH="${DETACH:-0}"
 AUTO_RESTART="${AUTO_RESTART:-$DETACH}"
@@ -39,16 +36,13 @@ if [[ "$SINGLE_PORT" == "1" ]]; then
     DEFAULT_CORS_ORIGINS="$DEFAULT_CORS_ORIGINS,$PUBLIC_APP_ORIGIN"
   fi
 else
-  DEFAULT_CORS_ORIGINS="http://localhost:$ENTERPRISE_PORT,http://localhost:$CHAT_PORT,http://127.0.0.1:$ENTERPRISE_PORT,http://127.0.0.1:$CHAT_PORT"
+  DEFAULT_CORS_ORIGINS="http://localhost:$ENTERPRISE_PORT,http://127.0.0.1:$ENTERPRISE_PORT"
   if [[ -n "${PUBLIC_ENTERPRISE_ORIGIN:-}" ]]; then
     DEFAULT_CORS_ORIGINS="$DEFAULT_CORS_ORIGINS,$PUBLIC_ENTERPRISE_ORIGIN"
   fi
-  if [[ -n "${PUBLIC_CHAT_ORIGIN:-}" ]]; then
-    DEFAULT_CORS_ORIGINS="$DEFAULT_CORS_ORIGINS,$PUBLIC_CHAT_ORIGIN"
-  fi
 fi
 CORS_ORIGINS="${CORS_ORIGINS:-$DEFAULT_CORS_ORIGINS}"
-export SINGLE_PORT APP_HOST APP_PORT BACKEND_HOST BACKEND_PORT ENTERPRISE_HOST ENTERPRISE_PORT CHAT_HOST CHAT_PORT
+export SINGLE_PORT APP_HOST APP_PORT BACKEND_HOST BACKEND_PORT ENTERPRISE_HOST ENTERPRISE_PORT
 export API_BASE_URL VITE_API_BASE_URL="$API_BASE_URL" CORS_ORIGINS TOOL_BASE_URL
 
 mkdir -p "$RUN_DIR" "$LOG_DIR"
@@ -163,9 +157,8 @@ wait_url() {
 }
 
 build_frontends() {
-  echo "Building frontend bundles for single-port app..."
+  echo "Building frontend bundle for single-port app..."
   npm --prefix "$ENTERPRISE_DIR" run build
-  npm --prefix "$CHAT_DIR" run build
 }
 
 cleanup() {
@@ -268,14 +261,13 @@ fi
 
 ensure_port_free "$BACKEND_PORT"
 ensure_port_free "$ENTERPRISE_PORT"
-ensure_port_free "$CHAT_PORT"
 
 if [[ "$DETACH" == "1" && "$AUTO_RESTART" == "1" ]]; then
   supervisor_log="$LOG_DIR/supervisor.log"
   supervisor_err_file="$LOG_DIR/supervisor.err.log"
   : > "$supervisor_log"
   : > "$supervisor_err_file"
-  for name in backend enterprise chat; do
+  for name in backend enterprise; do
     : > "$LOG_DIR/$name.log"
     : > "$LOG_DIR/$name.err.log"
   done
@@ -304,17 +296,15 @@ print(process.pid)
 
   backend_url_host="$(url_host "$BACKEND_HOST")"
   enterprise_url_host="$(url_host "$ENTERPRISE_HOST")"
-  chat_url_host="$(url_host "$CHAT_HOST")"
 
   wait_url "backend" "http://$backend_url_host:$BACKEND_PORT/api/health" "$LOG_DIR/backend.log"
   wait_url "enterprise" "http://$enterprise_url_host:$ENTERPRISE_PORT/enterprise/dashboard" "$LOG_DIR/enterprise.log"
-  wait_url "chat" "http://$chat_url_host:$CHAT_PORT/chat" "$LOG_DIR/chat.log"
 
   echo "Started stable supervisor:"
   echo "  supervisor $supervisor_pid"
   echo "  backend    http://$backend_url_host:$BACKEND_PORT/docs"
   echo "  enterprise http://$enterprise_url_host:$ENTERPRISE_PORT/enterprise/dashboard"
-  echo "  chat       http://$chat_url_host:$CHAT_PORT/chat"
+  echo "  chat       http://$enterprise_url_host:$ENTERPRISE_PORT/chat/"
   echo
   echo "Frontend API base:"
   echo "  $API_BASE_URL"
@@ -326,7 +316,6 @@ print(process.pid)
   echo "  $LOG_DIR/supervisor.log"
   echo "  $LOG_DIR/backend.log"
   echo "  $LOG_DIR/enterprise.log"
-  echo "  $LOG_DIR/chat.log"
   echo
   echo "Detached with auto-restart. Use scripts/dev_down.sh to stop."
   exit 0
@@ -334,20 +323,17 @@ fi
 
 backend_pid="$(start_service "backend" "$BACKEND_DIR" "export CORS_ORIGINS='$CORS_ORIGINS'; exec .venv/bin/uvicorn app.main:app --host '$BACKEND_HOST' --port '$BACKEND_PORT'")"
 enterprise_pid="$(start_service "enterprise" "$ENTERPRISE_DIR" "export VITE_API_BASE_URL='$API_BASE_URL'; exec ./node_modules/.bin/vite --host '$ENTERPRISE_HOST' --port '$ENTERPRISE_PORT' --strictPort")"
-chat_pid="$(start_service "chat" "$CHAT_DIR" "export VITE_API_BASE_URL='$API_BASE_URL'; exec ./node_modules/.bin/vite --host '$CHAT_HOST' --port '$CHAT_PORT' --strictPort")"
 
 backend_url_host="$(url_host "$BACKEND_HOST")"
 enterprise_url_host="$(url_host "$ENTERPRISE_HOST")"
-chat_url_host="$(url_host "$CHAT_HOST")"
 
 wait_url "backend" "http://$backend_url_host:$BACKEND_PORT/api/health" "$LOG_DIR/backend.log"
 wait_url "enterprise" "http://$enterprise_url_host:$ENTERPRISE_PORT/enterprise/dashboard" "$LOG_DIR/enterprise.log"
-wait_url "chat" "http://$chat_url_host:$CHAT_PORT/chat" "$LOG_DIR/chat.log"
 
 echo "Started:"
 echo "  backend    http://$backend_url_host:$BACKEND_PORT/docs ($backend_pid)"
 echo "  enterprise http://$enterprise_url_host:$ENTERPRISE_PORT/enterprise/dashboard ($enterprise_pid)"
-echo "  chat       http://$chat_url_host:$CHAT_PORT/chat ($chat_pid)"
+echo "  chat       http://$enterprise_url_host:$ENTERPRISE_PORT/chat/"
 echo
 echo "Frontend API base:"
 echo "  $API_BASE_URL"
@@ -358,7 +344,6 @@ echo
 echo "Logs:"
 echo "  $LOG_DIR/backend.log"
 echo "  $LOG_DIR/enterprise.log"
-echo "  $LOG_DIR/chat.log"
 
 if [[ "$DETACH" == "1" ]]; then
   echo
@@ -370,7 +355,7 @@ trap cleanup INT TERM EXIT
 echo
 echo "Supervisor running. Press Ctrl-C to stop all services."
 while true; do
-  for pid in "$backend_pid" "$enterprise_pid" "$chat_pid"; do
+  for pid in "$backend_pid" "$enterprise_pid"; do
     if ! kill -0 "$pid" 2>/dev/null; then
       echo "Service process $pid exited; stopping remaining services." >&2
       exit 1

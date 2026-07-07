@@ -8,7 +8,6 @@ SINGLE_PORT="${SINGLE_PORT:-1}"
 APP_PORT="${APP_PORT:-5173}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 ENTERPRISE_PORT="${ENTERPRISE_PORT:-5173}"
-CHAT_PORT="${CHAT_PORT:-5174}"
 
 label_present() {
   local label="$1"
@@ -54,7 +53,7 @@ if [[ "$SINGLE_PORT" == "1" ]]; then
     print_service "$name"
   done
 else
-  for name in supervisor backend enterprise chat; do
+  for name in supervisor backend enterprise; do
     print_service "$name"
   done
 fi
@@ -66,7 +65,6 @@ if [[ "$SINGLE_PORT" == "1" ]]; then
 else
   print_port "$BACKEND_PORT"
   print_port "$ENTERPRISE_PORT"
-  print_port "$CHAT_PORT"
 fi
 echo
 
@@ -80,5 +78,5 @@ else
   curl -fsS "http://127.0.0.1:$BACKEND_PORT/api/health" || true
   echo
   curl -fsSI "http://127.0.0.1:$ENTERPRISE_PORT/enterprise/dashboard" >/dev/null && echo "enterprise ok" || echo "enterprise unavailable"
-  curl -fsSI "http://127.0.0.1:$CHAT_PORT/chat" >/dev/null && echo "chat ok" || echo "chat unavailable"
+  curl -fsSI "http://127.0.0.1:$ENTERPRISE_PORT/chat/" >/dev/null && echo "chat ok" || echo "chat unavailable"
 fi

@@ -8,7 +8,6 @@ from app.main import app
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 ENTERPRISE_DIST = ROOT_DIR / "frontend-enterprise" / "dist"
-CHAT_DIST = ROOT_DIR / "frontend-chat" / "dist"
 SPA_INDEX_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
     "Pragma": "no-cache",
@@ -24,7 +23,11 @@ app.mount(
     StaticFiles(directory=ENTERPRISE_DIST / "assets", check_dir=False),
     name="enterprise-assets",
 )
-app.mount("/chat/assets", StaticFiles(directory=CHAT_DIST / "assets", check_dir=False), name="chat-assets")
+app.mount(
+    "/chat/assets",
+    StaticFiles(directory=ENTERPRISE_DIST / "assets", check_dir=False),
+    name="chat-assets",
+)
 
 
 @app.get("/", include_in_schema=False)
@@ -42,4 +45,4 @@ def enterprise_app(path: str = "") -> FileResponse:
 @app.get("/chat", include_in_schema=False)
 @app.get("/chat/{path:path}", include_in_schema=False)
 def chat_app(path: str = "") -> FileResponse:
-    return spa_index_response(CHAT_DIST / "index.html")
+    return spa_index_response(ENTERPRISE_DIST / "index.html")

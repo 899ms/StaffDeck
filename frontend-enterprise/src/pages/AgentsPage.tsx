@@ -111,7 +111,7 @@ export default function AgentsPage({
   }
 
   function startEmployeeChat(row: AgentProfileRead) {
-    navigate(`/enterprise/chat/draft/${row.id}`);
+    navigate(`/chat/draft/${row.id}`);
   }
 
   async function updateStatus(row: AgentProfileRead, status: 'active' | 'archived') {

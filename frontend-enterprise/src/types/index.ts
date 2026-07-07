@@ -412,7 +412,7 @@ export type ChatTurnResponse = {
 };
 
 // ---------------------------------------------------------------------------
-// Chat conversation types (migrated from frontend-chat)
+// Chat conversation types
 // ---------------------------------------------------------------------------
 
 export type ChatSession = {

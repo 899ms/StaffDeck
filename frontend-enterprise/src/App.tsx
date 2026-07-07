@@ -725,15 +725,20 @@ function AuthedApp({
   onLogout: () => void;
 }) {
   const location = useLocation();
+  if (location.pathname.startsWith("/enterprise/chat")) {
+    return (
+      <Navigate
+        to={`${location.pathname.replace(/^\/enterprise\/chat/, EnterpriseRoute.Chat)}${location.search}${location.hash}`}
+        replace
+      />
+    );
+  }
   if (location.pathname.startsWith(EnterpriseRoute.Chat)) {
     return (
       <Routes>
-        <Route path="/enterprise/chat" element={<ChatPage />} />
-        <Route
-          path="/enterprise/chat/draft/:draftAgentId"
-          element={<ChatPage />}
-        />
-        <Route path="/enterprise/chat/:sessionId" element={<ChatPage />} />
+        <Route path="/chat" element={<ChatPage />} />
+        <Route path="/chat/draft/:draftAgentId" element={<ChatPage />} />
+        <Route path="/chat/:sessionId" element={<ChatPage />} />
       </Routes>
     );
   }

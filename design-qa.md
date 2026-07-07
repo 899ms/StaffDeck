@@ -26,7 +26,6 @@ Browser QA summary:
 - Dark-mode checks verified enterprise dashboard/agents and chat surfaces all invert their main content areas, not only the sidebars.
 
 Automated checks:
-- `npm --prefix frontend-chat run build` -> passed
 - `npm --prefix frontend-enterprise run build` -> passed
 - `node /private/tmp/codex-playwright/sd1-qa.mjs` -> 23 total, 0 failures
 

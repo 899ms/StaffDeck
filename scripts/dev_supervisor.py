@@ -29,8 +29,6 @@ BACKEND_HOST = env_value("BACKEND_HOST", "127.0.0.1")
 BACKEND_PORT = env_value("BACKEND_PORT", "8000")
 ENTERPRISE_HOST = env_value("ENTERPRISE_HOST", "127.0.0.1")
 ENTERPRISE_PORT = env_value("ENTERPRISE_PORT", "5173")
-CHAT_HOST = env_value("CHAT_HOST", "127.0.0.1")
-CHAT_PORT = env_value("CHAT_PORT", "5174")
 
 api_host = "127.0.0.1" if BACKEND_HOST == "0.0.0.0" else BACKEND_HOST
 API_BASE_URL = env_value("VITE_API_BASE_URL", env_value("API_BASE_URL", "" if SINGLE_PORT else f"http://{api_host}:{BACKEND_PORT}"))
@@ -47,9 +45,7 @@ else:
     default_cors_origins = ",".join(
         [
             f"http://localhost:{ENTERPRISE_PORT}",
-            f"http://localhost:{CHAT_PORT}",
             f"http://127.0.0.1:{ENTERPRISE_PORT}",
-            f"http://127.0.0.1:{CHAT_PORT}",
         ]
     )
 CORS_ORIGINS = env_value("CORS_ORIGINS", default_cors_origins)
@@ -249,20 +245,6 @@ def build_services() -> list[Service]:
             ],
             env={"VITE_API_BASE_URL": API_BASE_URL},
             health_url=f"http://{url_host(ENTERPRISE_HOST)}:{ENTERPRISE_PORT}/enterprise/dashboard",
-        ),
-        Service(
-            name="chat",
-            cwd=ROOT_DIR / "frontend-chat",
-            command=[
-                "./node_modules/.bin/vite",
-                "--host",
-                CHAT_HOST,
-                "--port",
-                CHAT_PORT,
-                "--strictPort",
-            ],
-            env={"VITE_API_BASE_URL": API_BASE_URL},
-            health_url=f"http://{url_host(CHAT_HOST)}:{CHAT_PORT}/chat",
         ),
     ]
 
