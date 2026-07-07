@@ -300,7 +300,8 @@ export function useChatSession() {
   const currentSession = sessionId ? sessions.find((item) => item.id === sessionId) || null : null;
   const availableAgents = visibleChatEmployees(agents, auth?.user);
   const defaultAgent = availableAgents.find((agent) => agent.id === selectedAgentId) || availableAgents[0] || null;
-  const activeDraftAgentId = draftAgentId || (!sessionId ? (defaultAgent?.id || '') : '');
+  const showEmployeeGallery = !sessionId && !draftAgentId;
+  const activeDraftAgentId = draftAgentId || '';
   const activeConversationId = sessionId || (activeDraftAgentId ? draftConversationKey(activeDraftAgentId) : '');
   const isDraftConversation = Boolean(activeDraftAgentId && !sessionId);
   const draftAgent = activeDraftAgentId
@@ -2423,6 +2424,13 @@ export function useChatSession() {
     navigate(chatSessionPath(id));
   }, [navigate]);
 
+  const openDraftForAgent = useCallback((agentId: string) => {
+    if (!agentId) return;
+    setSelectedAgentId(agentId);
+    window.localStorage.setItem(SELECTED_AGENT_STORAGE_KEY, agentId);
+    navigate(`${CHAT_BASE_PATH}/draft/${encodeURIComponent(agentId)}`);
+  }, [navigate]);
+
   const openGallery = useCallback(() => {
     navigate('/workspace/gallery');
   }, [navigate]);
@@ -2446,6 +2454,7 @@ export function useChatSession() {
     displayedAgent,
     displayedProfile,
     currentSession,
+    showEmployeeGallery,
     emptyProfileTags,
     emptyRoleSummary,
     emptyStats,
@@ -2501,6 +2510,7 @@ export function useChatSession() {
     sidebarCollapsed,
     toggleSidebar,
     openSession,
+    openDraftForAgent,
     openGallery,
     openRename,
     requestDelete,

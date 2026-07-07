@@ -1,5 +1,14 @@
+import type { ComponentType, SVGProps } from 'react';
+
 import CodeBlock from '@/components/CodeBlock';
-import StaffdeckIcon, { type StaffdeckIconName } from '@/components/StaffdeckIcon';
+import StaffdeckIcon from '@/components/StaffdeckIcon';
+import IconCotAdvance from '@/assets/staffdeck/cot-icons/advance.svg?react';
+import IconCotExecute from '@/assets/staffdeck/cot-icons/execute.svg?react';
+import IconCotGenerated from '@/assets/staffdeck/cot-icons/generated.svg?react';
+import IconCotJudge from '@/assets/staffdeck/cot-icons/judge.svg?react';
+import IconCotLoading from '@/assets/staffdeck/cot-icons/loading.svg?react';
+import IconCotSelect from '@/assets/staffdeck/cot-icons/select.svg?react';
+import IconCotTool from '@/assets/staffdeck/cot-icons/tool.svg?react';
 import { cn } from '@/lib/utils';
 
 import {
@@ -21,20 +30,21 @@ import {
 import { traceLineIconName, traceSummaryIconName } from '../chatHelpers';
 import type { CotTraceIconName, TraceLine } from '../chatTypes';
 
-const COT_ICON_MAP: Record<CotTraceIconName, StaffdeckIconName> = {
-  advance: 'branch',
-  execute: 'spark',
-  generated: 'code',
-  judge: 'filter',
-  loading: 'refresh',
-  select: 'check',
-  tool: 'tool',
+const COT_ICON_MAP: Record<CotTraceIconName, ComponentType<SVGProps<SVGSVGElement>>> = {
+  advance: IconCotAdvance,
+  execute: IconCotExecute,
+  generated: IconCotGenerated,
+  judge: IconCotJudge,
+  loading: IconCotLoading,
+  select: IconCotSelect,
+  tool: IconCotTool,
 };
 
 function CotTraceIcon({ name }: { name: CotTraceIconName }) {
+  const Icon = COT_ICON_MAP[name];
   return (
     <span className={CHAT_TRACE_ICON_CLASS} aria-hidden="true">
-      <StaffdeckIcon name={COT_ICON_MAP[name]} size={14} />
+      <Icon />
     </span>
   );
 }

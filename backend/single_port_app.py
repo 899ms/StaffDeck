@@ -19,6 +19,11 @@ def spa_index_response(index_path: Path) -> FileResponse:
     return FileResponse(index_path, headers=SPA_INDEX_HEADERS)
 
 app.mount(
+    "/assets",
+    StaticFiles(directory=ENTERPRISE_DIST / "assets", check_dir=False),
+    name="assets",
+)
+app.mount(
     "/enterprise/assets",
     StaticFiles(directory=ENTERPRISE_DIST / "assets", check_dir=False),
     name="enterprise-assets",

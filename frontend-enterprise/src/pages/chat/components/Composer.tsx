@@ -285,16 +285,27 @@ export default function Composer({ chat }: { chat: UseChatSession }) {
                 </DropdownMenuContent>
               </DropdownMenu>
               {composerIntent === 'scheduled_task' && (
-                <button
-                  type="button"
-                  className={CHAT_COMPOSER_INTENT_CHIP_CLASS}
-                  onClick={() => setComposerIntent(null)}
-                  aria-label="移除定时任务"
-                  title="移除定时任务"
-                >
-                  <StaffdeckIcon name="clock" size={14} />
+                <div className={CHAT_COMPOSER_INTENT_CHIP_CLASS}>
+                  <button
+                    type="button"
+                    className="group/intent-close relative inline-grid size-[16px] shrink-0 place-items-center rounded-full text-[#858b9c] transition-colors hover:bg-white hover:text-[#18181a]"
+                    onClick={() => setComposerIntent(null)}
+                    aria-label="移除定时任务"
+                    title="移除定时任务"
+                  >
+                    <StaffdeckIcon
+                      name="clock"
+                      size={14}
+                      className="transition-opacity group-hover/intent-close:opacity-0"
+                    />
+                    <StaffdeckIcon
+                      name="close"
+                      size={14}
+                      className="absolute transition-opacity opacity-0 group-hover/intent-close:opacity-100"
+                    />
+                  </button>
                   <span>定时任务</span>
-                </button>
+                </div>
               )}
               <div className={CHAT_COMPOSER_HINT_CLASS}>Enter 发送 / Shift+Enter 换行</div>
             </div>

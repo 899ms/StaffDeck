@@ -726,6 +726,31 @@ function AuthedApp({
   onLogout: () => void;
 }) {
   const location = useLocation();
+  if (location.pathname === "/") {
+    return <Navigate to={EnterpriseRoute.Gallery} replace />;
+  }
+  if (location.pathname === "/chat" || location.pathname === "/chat/") {
+    return <Navigate to={EnterpriseRoute.Gallery} replace />;
+  }
+  if (location.pathname.startsWith("/chat/draft/")) {
+    const nextPath = location.pathname.replace(/^\/chat/, EnterpriseRoute.Chat);
+    return <Navigate to={`${nextPath}${location.search}`} replace />;
+  }
+  if (location.pathname.startsWith("/chat/session_")) {
+    const nextPath = location.pathname.replace(/^\/chat/, EnterpriseRoute.Chat);
+    return <Navigate to={`${nextPath}${location.search}`} replace />;
+  }
+  if (location.pathname === "/enterprise/chat" || location.pathname === "/enterprise/chat/") {
+    return <Navigate to={EnterpriseRoute.Gallery} replace />;
+  }
+  if (location.pathname.startsWith("/enterprise/chat/draft/")) {
+    const nextPath = location.pathname.replace(/^\/enterprise\/chat/, EnterpriseRoute.Chat);
+    return <Navigate to={`${nextPath}${location.search}`} replace />;
+  }
+  if (location.pathname.startsWith("/enterprise/chat/session_")) {
+    const nextPath = location.pathname.replace(/^\/enterprise\/chat/, EnterpriseRoute.Chat);
+    return <Navigate to={`${nextPath}${location.search}`} replace />;
+  }
   if (location.pathname.startsWith(EnterpriseRoute.Workspace)) {
     return (
       <Routes>

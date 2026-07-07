@@ -100,12 +100,13 @@ export const CHAT_TRACE_SUMMARY_CLASS =
   'inline-flex cursor-pointer items-center gap-[7px] border-0 bg-transparent p-0 text-[13px] font-semibold leading-[1.5] text-[#464c5e] transition-colors hover:text-[#18181a]';
 export const CHAT_TRACE_SUMMARY_RUNNING_CLASS = 'text-[#18181a]';
 export const CHAT_TRACE_SUMMARY_FAILED_CLASS = 'text-[#d20b0b]';
-export const CHAT_TRACE_ICON_CLASS = 'inline-grid size-[16px] shrink-0 place-items-center text-[#858b9c]';
+export const CHAT_TRACE_ICON_CLASS =
+  'inline-flex size-[18px] shrink-0 items-center justify-center text-[#858b9c] [&>svg]:block [&>svg]:size-[14px]';
 export const CHAT_TRACE_CHEVRON_CLASS = 'transition-transform duration-150';
 export const CHAT_TRACE_CHEVRON_EXPANDED_CLASS = 'rotate-90';
 export const CHAT_TRACE_DETAILS_CLASS =
   'mt-[8px] grid gap-[8px] border-l-[1.5px] border-[#eef0f4] pl-[14px]';
-export const CHAT_TRACE_LINE_CLASS = 'grid grid-cols-[16px_minmax(0,1fr)] items-start gap-[8px]';
+export const CHAT_TRACE_LINE_CLASS = 'grid grid-cols-[18px_minmax(0,1fr)] items-start gap-[8px]';
 export const CHAT_TRACE_LINE_CONTENT_CLASS = 'grid min-w-0 gap-[4px]';
 export const CHAT_TRACE_LINE_TEXT_CLASS = 'text-[13px] leading-[1.5] text-[#464c5e] wrap-anywhere';
 export const CHAT_TRACE_LINE_TEXT_FAILED_CLASS = 'text-[#d20b0b]';
@@ -195,7 +196,7 @@ export const CHAT_COMPOSER_ACTIONS_ROW_CLASS = 'flex shrink-0 items-center gap-[
 export const CHAT_COMPOSER_PLUS_BTN_CLASS =
   'inline-grid size-[32px] place-items-center rounded-[9px] border border-[#e3e7f1] bg-white p-0 text-[#464c5e] transition-colors hover:border-[#c9d2e4] hover:text-[#18181a] disabled:cursor-not-allowed disabled:opacity-45';
 export const CHAT_COMPOSER_INTENT_CHIP_CLASS =
-  'inline-flex items-center gap-[5px] rounded-full border border-[#e3e7f1] bg-[#f4f5f7] px-[10px] py-[4px] text-[12px] font-medium text-[#464c5e] transition-colors hover:border-[#c9d2e4]';
+  'inline-flex items-center gap-[5px] rounded-full border border-[#e3e7f1] bg-[#f4f5f7] py-[4px] pl-[6px] pr-[10px] text-[12px] font-medium text-[#464c5e] transition-colors hover:border-[#c9d2e4]';
 export const CHAT_COMPOSER_HINT_CLASS = 'truncate text-[11px] text-[#b3b8c4] max-[560px]:hidden';
 export const CHAT_COMPOSER_MODEL_BTN_CLASS =
   'inline-flex h-[32px] max-w-[200px] items-center gap-[5px] rounded-[9px] border border-[#e3e7f1] bg-white px-[12px] text-[12px] font-normal text-[#757f9c] shadow-none transition-colors hover:border-[#c9d2e4] hover:text-[#18181a] disabled:cursor-not-allowed disabled:opacity-45 aria-expanded:border-[#c9d2e4] aria-expanded:text-[#18181a] [&>span:first-child]:min-w-0 [&>span:first-child]:truncate';
