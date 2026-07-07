@@ -41,6 +41,8 @@ export default function ChatPage() {
         isSessionUnread={(session) => sessionHasUnreadReply(session, chat.sessionReadTimes, chat.sessionId)}
         onOpenSession={chat.openSession}
         onOpenGallery={chat.openGallery}
+        handoffCount={chat.handoffs.length}
+        onOpenHandoffs={chat.openHandoffInbox}
         onRenameSession={chat.openRename}
         onDeleteSession={chat.requestDelete}
         onOpenAdmin={chat.openAdmin}

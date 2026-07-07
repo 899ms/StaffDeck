@@ -198,7 +198,12 @@ def test_turn_trace_cancel_event_closes_running_status_for_refresh() -> None:
 
     assert traces[0]["completed_at"] == (started_at + timedelta(milliseconds=300)).isoformat()
     assert all(line["state"] != "running" for line in traces[0]["lines"])
-    assert any(line["id"] == "generation_stopped" and line["text"] == "已停止生成" for line in traces[0]["lines"])
+    assert any(
+        line["id"] == "generation_stopped"
+        and line["text"] == "用户已停止生成"
+        and line["state"] == "completed"
+        for line in traces[0]["lines"]
+    )
 
 
 def test_cancel_endpoint_persists_terminal_trace_for_client_turn_id() -> None:
@@ -274,7 +279,12 @@ def test_cancel_endpoint_persists_terminal_trace_for_client_turn_id() -> None:
     traces = _build_turn_traces(messages, events, {})
     assert traces[0]["completed_at"] == cancel_events[0].created_at.isoformat()
     assert all(line["state"] != "running" for line in traces[0]["lines"])
-    assert any(line["id"] == "generation_stopped" and line["text"] == "已停止生成" for line in traces[0]["lines"])
+    assert any(
+        line["id"] == "generation_stopped"
+        and line["text"] == "用户已停止生成"
+        and line["state"] == "completed"
+        for line in traces[0]["lines"]
+    )
 
 
 def test_cancel_endpoint_persists_cancel_even_before_user_event_is_visible() -> None:

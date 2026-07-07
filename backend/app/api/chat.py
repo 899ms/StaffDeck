@@ -2014,13 +2014,7 @@ def _event_trace_line(
                 "state": "running",
             }
         if phase == "responding":
-            return {
-                "id": "decision_responding",
-                "kind": "decision",
-                "text": text or "生成回复",
-                "detail": None,
-                "state": "running",
-            }
+            return None
         if phase and phase != "received":
             return {
                 "id": f"decision_status_{phase}",
@@ -2034,9 +2028,9 @@ def _event_trace_line(
         return {
             "id": "generation_stopped",
             "kind": "decision",
-            "text": "已停止生成",
+            "text": "用户已停止生成",
             "detail": None,
-            "state": "cancelled",
+            "state": "completed",
         }
     if event.event_type == "general_skill_selected":
         skill_name = str(payload.get("skill_name") or payload.get("skill_slug") or "").strip()

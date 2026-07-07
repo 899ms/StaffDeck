@@ -34,8 +34,8 @@ export const MODEL_CONFIG_STORAGE_PREFIX = 'skill_agent_selected_model_config';
 export const SESSION_READ_STORAGE_PREFIX = 'skill_agent_session_read_at';
 export const SELECTED_AGENT_STORAGE_KEY = 'skill_agent_selected_agent';
 export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'skill_agent_sidebar_collapsed';
-export const RUNNING_EVENT_RECOVERY_WINDOW_MS = 5 * 60 * 1000;
-export const CHAT_STREAM_IDLE_TIMEOUT_MS = 90 * 1000;
+export const RUNNING_EVENT_RECOVERY_WINDOW_MS = 600 * 1000;
+export const CHAT_STREAM_IDLE_TIMEOUT_MS = 600 * 1000;
 export const CHAT_TRACE_RECOVERY_WINDOW_MS = 10 * 60 * 1000;
 export const STREAM_TERMINAL_EVENTS = new Set(['complete', 'done', 'stream_end', 'stream_cancelled', 'error']);
 export const HIDDEN_GENERAL_SKILL_TRACE_PHASES = new Set(['replying']);
@@ -401,13 +401,97 @@ export function parseMessageTime(value?: string): number {
   return Number.isFinite(time) ? time : 0;
 }
 
+function appendTurnAlias(aliases: string[], value: unknown): void {
+  if (typeof value !== 'string') return;
+  const normalized = value.trim();
+  if (normalized && !aliases.includes(normalized)) aliases.push(normalized);
+}
+
+function metadataString(messageItem: ChatMessage, key: string): string | undefined {
+  const value = messageItem.metadata?.[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+export function messageTurnAliases(messageItem: ChatMessage): string[] {
+  const aliases: string[] = [];
+  appendTurnAlias(aliases, messageItem.turnId);
+  appendTurnAlias(aliases, messageItem.turn_id);
+  appendTurnAlias(aliases, metadataString(messageItem, 'turn_id'));
+  appendTurnAlias(aliases, metadataString(messageItem, 'user_message_id'));
+  appendTurnAlias(aliases, metadataString(messageItem, 'client_turn_id'));
+  appendTurnAlias(aliases, messageItem.serverMessageId);
+  if (messageItem.role === 'user') appendTurnAlias(aliases, messageItem.id);
+  return aliases;
+}
+
+function preferredTurnAlias(messageItem: ChatMessage, aliases: string[]): string | undefined {
+  if (messageItem.role === 'user' && !messageItem.id.startsWith('local_')) return messageItem.id;
+  return aliases[0];
+}
+
+export function buildTurnAliasMap(messages: ChatMessage[]): Map<string, string> {
+  const parent = new Map<string, string>();
+
+  const find = (value: string): string => {
+    const current = parent.get(value);
+    if (!current) {
+      parent.set(value, value);
+      return value;
+    }
+    if (current === value) return value;
+    const root = find(current);
+    parent.set(value, root);
+    return root;
+  };
+
+  const union = (canonical: string, alias: string) => {
+    const canonicalRoot = find(canonical);
+    const aliasRoot = find(alias);
+    if (canonicalRoot !== aliasRoot) {
+      parent.set(aliasRoot, canonicalRoot);
+    }
+  };
+
+  messages.forEach((messageItem) => {
+    const aliases = messageTurnAliases(messageItem);
+    const canonical = preferredTurnAlias(messageItem, aliases);
+    if (!canonical) return;
+    aliases.forEach((alias) => union(canonical, alias));
+  });
+
+  const result = new Map<string, string>();
+  parent.forEach((_value, key) => {
+    result.set(key, find(key));
+  });
+  return result;
+}
+
+export function canonicalTurnIdForValue(turnId: string | null | undefined, aliasMap: Map<string, string>): string | undefined {
+  const normalized = typeof turnId === 'string' ? turnId.trim() : '';
+  if (!normalized) return undefined;
+  return aliasMap.get(normalized) || normalized;
+}
+
+export function canonicalMessageTurnId(messageItem: ChatMessage, aliasMap: Map<string, string>): string | undefined {
+  const aliases = messageTurnAliases(messageItem);
+  for (const alias of aliases) {
+    const canonical = aliasMap.get(alias);
+    if (canonical) return canonical;
+  }
+  return effectiveMessageTurnId(messageItem);
+}
+
 function latestUserMessageForTurn(slot: SessionSlot, turnId?: string | null): ChatMessage | undefined {
-  const scoped = [...slot.serverMessages, ...slot.realtimeMessages].filter(
-    (messageItem) => messageItem.role === 'user' && (!turnId || messageItem.turnId === turnId),
-  );
+  const messages = [...slot.serverMessages, ...slot.realtimeMessages];
+  const aliasMap = buildTurnAliasMap(messages);
+  const canonicalTurnId = canonicalTurnIdForValue(turnId, aliasMap);
+  const scoped = messages.filter((messageItem) => (
+    messageItem.role === 'user'
+    && (!canonicalTurnId || canonicalMessageTurnId(messageItem, aliasMap) === canonicalTurnId)
+  ));
   const candidates = scoped.length
     ? scoped
-    : [...slot.serverMessages, ...slot.realtimeMessages].filter((messageItem) => messageItem.role === 'user');
+    : messages.filter((messageItem) => messageItem.role === 'user');
   return candidates.sort((left, right) => parseMessageTime(right.created_at) - parseMessageTime(left.created_at))[0];
 }
 
@@ -417,35 +501,68 @@ function timestampAfterMessage(messageItem?: ChatMessage): string {
 }
 
 function hasServerMessageForTurn(messageItem: ChatMessage, serverMessages: ChatMessage[]): boolean {
-  if (!messageItem.turnId) return false;
+  const messages = [...serverMessages, messageItem];
+  const aliasMap = buildTurnAliasMap(messages);
+  const messageTurnId = canonicalMessageTurnId(messageItem, aliasMap);
+  if (!messageTurnId) return false;
   return serverMessages.some(
-    (serverMessage) => serverMessage.turnId === messageItem.turnId && serverMessage.role === messageItem.role,
+    (serverMessage) => (
+      canonicalMessageTurnId(serverMessage, aliasMap) === messageTurnId
+      && serverMessage.role === messageItem.role
+    ),
   );
 }
 
 export function sameRoleTurn(left: ChatMessage, right: ChatMessage): boolean {
-  const leftTurnId = effectiveMessageTurnId(left);
-  const rightTurnId = effectiveMessageTurnId(right);
+  const aliasMap = buildTurnAliasMap([left, right]);
+  const leftTurnId = canonicalMessageTurnId(left, aliasMap);
+  const rightTurnId = canonicalMessageTurnId(right, aliasMap);
   return Boolean(leftTurnId && rightTurnId && leftTurnId === rightTurnId && left.role === right.role);
 }
 
 export function hasAssistantMessageForTurn(slot: SessionSlot, turnId: string): boolean {
   if (!turnId) return false;
   const messages = [...slot.serverMessages, ...slot.realtimeMessages];
+  const aliasMap = buildTurnAliasMap(messages);
+  const canonicalTurnId = canonicalTurnIdForValue(turnId, aliasMap);
   return messages.some((messageItem) => (
     messageItem.role === 'assistant'
     && !messageItem.isStreaming
-    && (
-      explicitMessageTurnId(messageItem) === turnId
-      || messageItem.id === turnId
-    )
+    && canonicalMessageTurnId(messageItem, aliasMap) === canonicalTurnId
     && Boolean(normalizeMessageText(messageItem.content))
   ));
 }
 
+export function hasAssistantCarrierForTurn(slot: SessionSlot, turnId: string): boolean {
+  if (!turnId) return false;
+  const messages = [...slot.serverMessages, ...slot.realtimeMessages];
+  const aliasMap = buildTurnAliasMap(messages);
+  const canonicalTurnId = canonicalTurnIdForValue(turnId, aliasMap);
+  return messages.some((messageItem) => (
+    messageItem.role === 'assistant'
+    && !messageItem.isStreaming
+    && canonicalMessageTurnId(messageItem, aliasMap) === canonicalTurnId
+    && (
+      Boolean(normalizeMessageText(messageItem.content))
+      || messageItem.isError
+      || messageItem.id.startsWith('__trace_')
+    )
+  ));
+}
+
+export function streamingMessageId(sessionId: string, turnId?: string | null): string {
+  const normalizedTurnId = typeof turnId === 'string' ? turnId.trim() : '';
+  return normalizedTurnId ? `__streaming_${sessionId}_${normalizedTurnId}` : `__streaming_${sessionId}`;
+}
+
+export function isStreamingMessageId(messageId: string, sessionId: string): boolean {
+  const prefix = `__streaming_${sessionId}`;
+  return messageId === prefix || messageId.startsWith(`${prefix}_`);
+}
+
 export function upsertStreamingTracePlaceholder(slot: SessionSlot, sessionId: string, turnId: string): boolean {
   if (!turnId) return false;
-  const streamId = `__streaming_${sessionId}`;
+  const streamId = streamingMessageId(sessionId, turnId);
   const streamingMessage: ChatMessage = {
     id: streamId,
     turnId,
@@ -475,7 +592,7 @@ export function upsertStreamingTracePlaceholder(slot: SessionSlot, sessionId: st
 export function upsertTraceStatusPlaceholder(slot: SessionSlot, sessionId: string, turnId: string): boolean {
   if (!turnId) return false;
   const traceId = `__trace_${sessionId}_${turnId}`;
-  const streamId = `__streaming_${sessionId}`;
+  const streamId = streamingMessageId(sessionId, turnId);
   const traceMessage: ChatMessage = {
     id: traceId,
     turnId,
@@ -484,6 +601,15 @@ export function upsertTraceStatusPlaceholder(slot: SessionSlot, sessionId: strin
     created_at: timestampAfterMessage(latestUserMessageForTurn(slot, turnId)),
     isStreaming: false,
   };
+  const existingAliasMap = buildTurnAliasMap([...slot.serverMessages, ...slot.realtimeMessages, traceMessage]);
+  const canonicalTraceTurnId = canonicalTurnIdForValue(turnId, existingAliasMap);
+  const existingAssistantIndex = slot.realtimeMessages.findIndex((item) => (
+    item.role === 'assistant'
+    && item.id !== traceId
+    && item.id !== streamId
+    && canonicalMessageTurnId(item, existingAliasMap) === canonicalTraceTurnId
+  ));
+  if (existingAssistantIndex >= 0) return false;
   const index = slot.realtimeMessages.findIndex((item) => item.id === traceId);
   if (index >= 0) {
     const current = slot.realtimeMessages[index];
@@ -492,7 +618,10 @@ export function upsertTraceStatusPlaceholder(slot: SessionSlot, sessionId: strin
     slot.realtimeMessages[index] = { ...current, ...traceMessage, created_at: current.created_at || traceMessage.created_at };
     return true;
   }
-  const streamingIndex = slot.realtimeMessages.findIndex((item) => item.id === streamId && item.turnId === turnId);
+  const streamingIndex = slot.realtimeMessages.findIndex((item) => (
+    item.id === streamId
+    && canonicalMessageTurnId(item, existingAliasMap) === canonicalTraceTurnId
+  ));
   if (streamingIndex >= 0) {
     const current = slot.realtimeMessages[streamingIndex];
     slot.realtimeMessages = slot.realtimeMessages.filter((item, itemIndex) => (
@@ -581,32 +710,11 @@ export function attachTurnIdsToServerMessages(
       .map((item) => [item.serverMessageId as string, item.turnId as string]),
   );
 
-  const normalized = serverMessages.map((messageItem) => {
+  return serverMessages.map((messageItem) => {
     const turnId = explicitMessageTurnId(messageItem) || realtimeTurnIdsByServerId.get(messageItem.id);
     if (turnId) return { ...messageItem, turnId };
     if (messageItem.role === 'user') return { ...messageItem, turnId: messageItem.id };
     return messageItem;
-  });
-
-  const pendingUserTurnIds: string[] = [];
-  const assignedAssistantTurnIds = new Set(
-    normalized
-      .filter((item) => item.role === 'assistant' && explicitMessageTurnId(item))
-      .map((item) => explicitMessageTurnId(item) as string),
-  );
-
-  return normalized.map((messageItem) => {
-    const turnId = explicitMessageTurnId(messageItem);
-    if (messageItem.role === 'user') {
-      const userTurnId = turnId || messageItem.id;
-      pendingUserTurnIds.push(userTurnId);
-      return turnId ? messageItem : { ...messageItem, turnId: userTurnId };
-    }
-    if (turnId || messageItem.role !== 'assistant') return messageItem;
-    const nextTurnId = pendingUserTurnIds.find((candidate) => !assignedAssistantTurnIds.has(candidate));
-    if (!nextTurnId) return messageItem;
-    assignedAssistantTurnIds.add(nextTurnId);
-    return { ...messageItem, turnId: nextTurnId };
   });
 }
 
@@ -617,13 +725,31 @@ function shouldKeepRealtimeMessage(
   activeTurnId?: string | null,
 ): boolean {
   if (messageItem.isStreaming) {
-    return !messageItem.turnId || !activeTurnId || messageItem.turnId === activeTurnId;
+    const aliasMap = buildTurnAliasMap([...serverMessages, messageItem]);
+    const messageTurnId = canonicalMessageTurnId(messageItem, aliasMap);
+    const activeCanonicalTurnId = canonicalTurnIdForValue(activeTurnId, aliasMap);
+    return !messageTurnId || !activeCanonicalTurnId || messageTurnId === activeCanonicalTurnId;
   }
   if (hasServerMessageForTurn(messageItem, serverMessages)) return false;
   if (messageItem.serverMessageId && serverMessages.some((serverMessage) => serverMessage.id === messageItem.serverMessageId)) {
     return false;
   }
-  if (messageItem.turnId && activeTurnId && messageItem.turnId === activeTurnId) return true;
+  if (
+    messageItem.role === 'assistant'
+    && (
+      Boolean(normalizeMessageText(messageItem.content))
+      || messageItem.isError
+      || messageItem.id.startsWith('__trace_')
+    )
+  ) {
+    return true;
+  }
+  if (activeTurnId) {
+    const aliasMap = buildTurnAliasMap([...serverMessages, messageItem]);
+    const messageTurnId = canonicalMessageTurnId(messageItem, aliasMap);
+    const activeCanonicalTurnId = canonicalTurnIdForValue(activeTurnId, aliasMap);
+    if (messageTurnId && activeCanonicalTurnId && messageTurnId === activeCanonicalTurnId) return true;
+  }
   if (!latestServerTime) return true;
   return parseMessageTime(messageItem.created_at) > latestServerTime;
 }
@@ -641,10 +767,11 @@ export function computeMergedMessages(slot: SessionSlot, activeTurnId?: string |
     ...slot.serverMessages.map((messageItem, index) => ({ messageItem, index, source: 'server' as const })),
     ...extras.map((messageItem, index) => ({ messageItem, index: slot.serverMessages.length + index, source: 'realtime' as const })),
   ];
+  const aliasMap = buildTurnAliasMap(combined.map((entry) => entry.messageItem));
   const turnStarts = new Map<string, number>();
   combined.forEach(({ messageItem }) => {
     if (messageItem.role !== 'user') return;
-    const turnId = effectiveMessageTurnId(messageItem);
+    const turnId = canonicalMessageTurnId(messageItem, aliasMap);
     if (!turnId) return;
     const createdAt = parseMessageTime(messageItem.created_at);
     const previous = turnStarts.get(turnId);
@@ -653,7 +780,7 @@ export function computeMergedMessages(slot: SessionSlot, activeTurnId?: string |
     }
   });
   combined.forEach(({ messageItem }) => {
-    const turnId = effectiveMessageTurnId(messageItem);
+    const turnId = canonicalMessageTurnId(messageItem, aliasMap);
     if (!turnId || turnStarts.has(turnId)) return;
     turnStarts.set(turnId, parseMessageTime(messageItem.created_at));
   });
@@ -666,8 +793,8 @@ export function computeMergedMessages(slot: SessionSlot, activeTurnId?: string |
 
   const sorted = combined
     .sort((left, right) => {
-      const leftTurnId = effectiveMessageTurnId(left.messageItem);
-      const rightTurnId = effectiveMessageTurnId(right.messageItem);
+      const leftTurnId = canonicalMessageTurnId(left.messageItem, aliasMap);
+      const rightTurnId = canonicalMessageTurnId(right.messageItem, aliasMap);
       const leftTurnStart = leftTurnId ? turnStarts.get(leftTurnId) : undefined;
       const rightTurnStart = rightTurnId ? turnStarts.get(rightTurnId) : undefined;
       const leftSortTime = leftTurnStart ?? parseMessageTime(left.messageItem.created_at);
@@ -694,7 +821,7 @@ export function computeMergedMessages(slot: SessionSlot, activeTurnId?: string |
   };
   sorted.forEach((entry) => {
     if (entry.messageItem.role !== 'assistant') return;
-    const turnId = effectiveMessageTurnId(entry.messageItem);
+    const turnId = canonicalMessageTurnId(entry.messageItem, aliasMap);
     if (!turnId) return;
     const previous = selectedAssistantByTurn.get(turnId);
     if (!previous || assistantRank(entry) >= assistantRank(previous)) {
@@ -705,7 +832,7 @@ export function computeMergedMessages(slot: SessionSlot, activeTurnId?: string |
   return sorted
     .filter((entry) => {
       if (entry.messageItem.role !== 'assistant') return true;
-      const turnId = effectiveMessageTurnId(entry.messageItem);
+      const turnId = canonicalMessageTurnId(entry.messageItem, aliasMap);
       if (!turnId) return true;
       return selectedAssistantByTurn.get(turnId)?.messageItem === entry.messageItem;
     })
@@ -749,9 +876,9 @@ function isBareInitialRoutingLine(line: RecoverableTraceProgress): boolean {
 function hasRecoverableTraceProgress(lines: RecoverableTraceProgress[]): boolean {
   return lines.some((line) => {
     if (!line) return false;
+    if (line.state && line.state !== 'running') return false;
     if (isBareInitialRoutingLine(line)) return false;
     if (line.detail || line.code || line.output) return true;
-    if (line.state === 'completed' || line.state === 'failed') return true;
     if (line.kind && line.kind !== 'decision') return true;
     const text = String(line.text || '').trim();
     if (!text) return false;
@@ -783,10 +910,11 @@ export function hasRecoverableEventProgress(events: ChatSessionEventRead[]): boo
 
 export function isRecoverableRunningTrace(row: { completed_at?: string | null; lines: RecoverableTraceProgress[]; started_at: string }): boolean {
   if (row.completed_at) return false;
-  if (!hasRecoverableTraceProgress(row.lines || [])) return false;
   const startedAt = parseMessageTime(row.started_at);
   if (startedAt <= 0) return false;
-  return Date.now() - startedAt <= CHAT_TRACE_RECOVERY_WINDOW_MS;
+  if (Date.now() - startedAt > CHAT_TRACE_RECOVERY_WINDOW_MS) return false;
+  const lines = row.lines || [];
+  return hasRecoverableTraceProgress(lines);
 }
 
 const KNOWLEDGE_TRACE_PHASES = new Set([

@@ -52,6 +52,9 @@ import {
   SELECTED_AGENT_STORAGE_KEY,
   STREAM_TERMINAL_EVENTS,
   attachTurnIdsToServerMessages,
+  buildTurnAliasMap,
+  canonicalMessageTurnId,
+  canonicalTurnIdForValue,
   clipboardContainsComposerImage,
   computeMergedMessages,
   draftConversationKey,
@@ -61,6 +64,7 @@ import {
   extractPastedComposerFiles,
   generalSkillTraceDetail,
   generalSkillTraceOutput,
+  hasAssistantCarrierForTurn,
   hasAssistantMessageForTurn,
   hasRecoverableEventProgress,
   hasServerMessageForTurn,
@@ -69,6 +73,7 @@ import {
   isMissingChatSessionError,
   isRecoverableRunningTrace,
   isScheduledSession,
+  isStreamingMessageId,
   isTerminalSessionEvent,
   knowledgeResultTraceDetail,
   knowledgeTraceDetail,
@@ -77,6 +82,7 @@ import {
   loadSessionReadTimes,
   mergeTraceLine,
   modelStorageKey,
+  normalizeMessageText,
   normalizeSessionEventForStream,
   normalizeTraceSkill,
   normalizeTraceTool,
@@ -90,6 +96,7 @@ import {
   shouldKeepRealtimeMessage,
   stepResultTraceLine,
   streamSkillLabel,
+  streamingMessageId,
   timestampAfterMessage,
   toolTraceDetail,
   toRequestAttachment,
@@ -109,6 +116,7 @@ import {
 } from './chatTypes';
 
 const CHAT_BASE_PATH = '/enterprise/chat';
+const STREAM_TEXT_EVENTS = new Set(['stream_replace', 'stream_delta', 'token']);
 // Shared with the management shell (App.tsx `ENTERPRISE_SIDEBAR_STORAGE_KEY`) so
 // the collapse state is preserved when switching between 管理端 and 对话端.
 // Stored as '1' (expanded) / '0' (collapsed); unset defaults to expanded.
@@ -145,7 +153,7 @@ export function useChatSession() {
   const [renameSession, setRenameSession] = useState<ChatSession | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
   const [pendingDelete, setPendingDelete] = useState<ChatSession | null>(null);
-  const [, setStoreTick] = useState(0);
+  const [storeTick, setStoreTick] = useState(0);
   const [streamTick, setStreamTick] = useState(0);
   const [traceTick, setTraceTick] = useState(0);
   const [feedbackTick, setFeedbackTick] = useState(0);
@@ -178,6 +186,8 @@ export function useChatSession() {
   const isChatProgrammaticScrollRef = useRef(false);
   const isChatStickyToBottomRef = useRef(true);
   const lastActiveConversationIdRef = useRef<string | null>(null);
+  const lastDisplayedMessageCountRef = useRef(0);
+  const terminalTurnSyncRef = useRef(new Map<string, { startedAt: number; timer: number | null }>());
   const storeRef = useRef(new Map<string, SessionSlot>());
   const streamRef = useRef(new Map<string, StreamSlot>());
   const turnTraceRef = useRef(new Map<string, TurnTrace>());
@@ -287,12 +297,12 @@ export function useChatSession() {
     });
   }, [userId]);
 
-  const activeDraftAgentId = draftAgentId || '';
-  const activeConversationId = sessionId || (activeDraftAgentId ? draftConversationKey(activeDraftAgentId) : '');
-  const isDraftConversation = Boolean(activeDraftAgentId && !sessionId);
   const currentSession = sessionId ? sessions.find((item) => item.id === sessionId) || null : null;
   const availableAgents = visibleChatEmployees(agents, auth?.user);
   const defaultAgent = availableAgents.find((agent) => agent.id === selectedAgentId) || availableAgents[0] || null;
+  const activeDraftAgentId = draftAgentId || (!sessionId ? (defaultAgent?.id || '') : '');
+  const activeConversationId = sessionId || (activeDraftAgentId ? draftConversationKey(activeDraftAgentId) : '');
+  const isDraftConversation = Boolean(activeDraftAgentId && !sessionId);
   const draftAgent = activeDraftAgentId
     ? agents.find((agent) => agent.id === activeDraftAgentId) || null
     : null;
@@ -516,6 +526,7 @@ export function useChatSession() {
 
   const clearStreamSlot = useCallback((id: string, removeStreamingMessage = false) => {
     const stream = getStreamSlot(id);
+    const clearingTurnId = stream.turnId || stream.cancelledTurnId || undefined;
     if (stream.timer) {
       window.clearTimeout(stream.timer);
       stream.timer = null;
@@ -527,8 +538,14 @@ export function useChatSession() {
     stream.abortController = null;
     if (removeStreamingMessage) {
       const slot = getSlot(id);
-      const streamId = `__streaming_${id}`;
-      const nextRealtime = slot.realtimeMessages.filter((item) => item.id !== streamId);
+      const aliasMap = buildTurnAliasMap([...slot.serverMessages, ...slot.realtimeMessages]);
+      const canonicalClearingTurnId = canonicalTurnIdForValue(clearingTurnId, aliasMap);
+      const nextRealtime = slot.realtimeMessages.filter((item) => {
+        if (!isStreamingMessageId(item.id, id)) return true;
+        if (!clearingTurnId) return false;
+        const itemTurnId = canonicalMessageTurnId(item, aliasMap);
+        return itemTurnId !== canonicalClearingTurnId;
+      });
       if (nextRealtime.length !== slot.realtimeMessages.length) {
         slot.realtimeMessages = nextRealtime;
         notifyStore();
@@ -610,11 +627,12 @@ export function useChatSession() {
   const displayedMessages = useMemo(() => {
     if (!activeConversationId) return [];
     void feedbackTick;
+    void storeTick;
     void streamTick;
     void traceTick;
     return computeMergedMessages(getSlot(activeConversationId), getStreamSlot(activeConversationId).turnId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeConversationId, feedbackTick, getSlot, getStreamSlot, streamTick]);
+  }, [activeConversationId, feedbackTick, getSlot, getStreamSlot, storeTick, streamTick, traceTick]);
 
   const currentStream = useMemo(() => {
     void streamTick;
@@ -731,33 +749,23 @@ export function useChatSession() {
         slot.serverMessages = attachTurnIdsToServerMessages(rows, slot.realtimeMessages);
         const stream = getStreamSlot(id);
         if (stream.loading) {
-          const latestUserTime = Math.max(
-            0,
-            ...slot.serverMessages
-              .filter((messageItem) => messageItem.role === 'user')
-              .map((messageItem) => parseMessageTime(messageItem.created_at)),
-          );
-          const hasCompletedAssistant = slot.serverMessages.some((messageItem) => (
-            messageItem.role === 'assistant'
-            && (
-              (stream.turnId && messageItem.turnId === stream.turnId)
-              || parseMessageTime(messageItem.created_at) > latestUserTime
-            )
-          ));
+          const hasCompletedAssistant = stream.turnId ? hasAssistantMessageForTurn(slot, stream.turnId) : false;
           if (hasCompletedAssistant) {
             clearStreamSlot(id, true);
           }
         }
         pruneRealtime(id);
         notifyStore();
+        return rows;
       })
       .catch((error) => {
         if (isMissingChatSessionError(error)) {
           forgetMissingSession(id);
           loadSessions();
-          return;
+          return [];
         }
         notifyRequestError('messages', error, '消息加载失败');
+        return [];
       });
   }, [clearStreamSlot, forgetMissingSession, getSlot, getStreamSlot, loadSessions, notifyRequestError, notifyStore, pruneRealtime, tenantId]);
 
@@ -773,8 +781,9 @@ export function useChatSession() {
         let streamChanged = false;
         rows.forEach((row) => {
           const hasFinalAssistant = hasAssistantMessageForTurn(slot, row.turn_id);
+          const hasAssistantCarrier = hasAssistantCarrierForTurn(slot, row.turn_id);
           const recoverableRunningTrace = !locallyCancelled && isRecoverableRunningTrace(row) && !hasFinalAssistant;
-          const staleOpenTrace = !row.completed_at && row.lines.length > 0 && !recoverableRunningTrace && !hasFinalAssistant;
+          const staleOpenTrace = !row.completed_at && row.lines.length > 0 && !recoverableRunningTrace && !hasAssistantCarrier;
           const traceLines = row.lines.map((line) => ({
             id: line.id,
             kind: line.kind,
@@ -799,7 +808,7 @@ export function useChatSession() {
           });
           if (recoverableRunningTrace) {
             recoveredRunningTurnId = row.turn_id;
-          } else if ((row.completed_at || staleOpenTrace) && row.lines.length > 0 && !hasFinalAssistant) {
+          } else if ((row.completed_at || staleOpenTrace) && row.lines.length > 0 && !hasAssistantCarrier) {
             storeChanged = upsertTraceStatusPlaceholder(slot, id, row.turn_id) || storeChanged;
             if (staleOpenTrace) {
               setExpandedTraceIds((expanded) => (expanded.includes(row.turn_id) ? expanded : [...expanded, row.turn_id]));
@@ -840,6 +849,58 @@ export function useChatSession() {
         notifyRequestError('trace', error, '轨迹加载失败');
       });
   }, [forgetMissingSession, getSlot, getStreamSlot, loadSessions, notifyRequestError, notifyStore, notifyStream, notifyTrace, tenantId]);
+
+  const stopTerminalTurnSync = useCallback((sessionIdToStop: string, turnIdToStop: string) => {
+    const key = `${sessionIdToStop}:${turnIdToStop}`;
+    const existing = terminalTurnSyncRef.current.get(key);
+    if (existing?.timer) {
+      window.clearTimeout(existing.timer);
+    }
+    terminalTurnSyncRef.current.delete(key);
+  }, []);
+
+  const syncTurnUntilAssistant = useCallback((targetSessionId: string, targetTurnId: string) => {
+    if (!targetSessionId || !targetTurnId || isDraftConversationKey(targetSessionId)) return;
+    const key = `${targetSessionId}:${targetTurnId}`;
+    const existing = terminalTurnSyncRef.current.get(key);
+    const startedAt = existing?.startedAt || Date.now();
+    if (existing?.timer) {
+      window.clearTimeout(existing.timer);
+    }
+    const run = () => {
+      Promise.all([
+        loadMessages(targetSessionId),
+        loadTraces(targetSessionId),
+        loadSessions(),
+      ]).finally(() => {
+        const slot = getSlot(targetSessionId);
+        if (hasAssistantMessageForTurn(slot, targetTurnId)) {
+          stopTerminalTurnSync(targetSessionId, targetTurnId);
+          const stream = getStreamSlot(targetSessionId);
+          if (stream.turnId === targetTurnId || stream.cancelledTurnId === targetTurnId) {
+            clearStreamSlot(targetSessionId, true);
+          }
+          return;
+        }
+        if (Date.now() - startedAt >= CHAT_STREAM_IDLE_TIMEOUT_MS) {
+          stopTerminalTurnSync(targetSessionId, targetTurnId);
+          return;
+        }
+        const timer = window.setTimeout(run, 900);
+        terminalTurnSyncRef.current.set(key, { startedAt, timer });
+      });
+    };
+    terminalTurnSyncRef.current.set(key, { startedAt, timer: null });
+    run();
+  }, [
+    getSlot,
+    getStreamSlot,
+    clearStreamSlot,
+    loadMessages,
+    loadSessions,
+    loadTraces,
+    stopTerminalTurnSync,
+  ]);
 
   const loadHandoffs = useCallback(() => {
     if (!auth) return Promise.resolve();
@@ -883,6 +944,11 @@ export function useChatSession() {
       });
   }, [getSlot, handoffReplies, loadMessages, loadSessions, loadTraces, redirectToLogin, tenantId]);
 
+  const openHandoffInbox = useCallback(() => {
+    setShowHandoffInbox(true);
+    void loadHandoffs();
+  }, [loadHandoffs]);
+
   const appendRealtime = useCallback((id: string, messageItem: ChatMessage) => {
     const slot = getSlot(id);
     const existingIndex = messageItem.role === 'assistant'
@@ -918,28 +984,43 @@ export function useChatSession() {
   const updateStreaming = useCallback((id: string, text: string, turnId?: string, allowEmpty = false) => {
     const slot = getSlot(id);
     const stream = getStreamSlot(id);
-    const streamId = `__streaming_${id}`;
-    const index = slot.realtimeMessages.findIndex((item) => item.id === streamId);
-    if (!text && index < 0 && !allowEmpty) return;
-    const previousMessage = index >= 0 ? slot.realtimeMessages[index] : undefined;
     const activeTurnId = turnId || stream.turnId || undefined;
-    const previousCreatedAt = previousMessage && previousMessage.turnId === activeTurnId
-      ? previousMessage.created_at
-      : undefined;
-    const streamingMessage: ChatMessage = {
+    const streamId = streamingMessageId(id, activeTurnId);
+    const draftStreamingMessage: ChatMessage = {
       id: streamId,
       turnId: activeTurnId,
       role: 'assistant',
       content: text,
-      created_at: previousCreatedAt || timestampAfterMessage(latestUserMessageForTurn(slot, activeTurnId)),
+      created_at: timestampAfterMessage(latestUserMessageForTurn(slot, activeTurnId)),
       isStreaming: true,
+    };
+    const aliasMap = buildTurnAliasMap([...slot.serverMessages, ...slot.realtimeMessages, draftStreamingMessage]);
+    const activeCanonicalTurnId = canonicalTurnIdForValue(activeTurnId, aliasMap);
+    const index = slot.realtimeMessages.findIndex((item) => (
+      item.id === streamId
+      || (
+        isStreamingMessageId(item.id, id)
+        && activeCanonicalTurnId
+        && canonicalMessageTurnId(item, aliasMap) === activeCanonicalTurnId
+      )
+    ));
+    if (!text && index < 0 && !allowEmpty) return;
+    const previousMessage = index >= 0 ? slot.realtimeMessages[index] : undefined;
+    const previousCanonicalTurnId = previousMessage ? canonicalMessageTurnId(previousMessage, aliasMap) : undefined;
+    const previousCreatedAt = previousMessage && previousCanonicalTurnId === activeCanonicalTurnId
+      ? previousMessage.created_at
+      : undefined;
+    const streamingMessage: ChatMessage = {
+      ...draftStreamingMessage,
+      created_at: previousCreatedAt || draftStreamingMessage.created_at,
     };
     if (activeTurnId) {
       slot.realtimeMessages = slot.realtimeMessages.filter((item) => (
         item.id === streamId
         || !(
           item.role === 'assistant'
-          && effectiveMessageTurnId(item) === activeTurnId
+          && activeCanonicalTurnId
+          && canonicalMessageTurnId(item, aliasMap) === activeCanonicalTurnId
           && !hasServerMessageForTurn(item, slot.serverMessages)
         )
       ));
@@ -976,20 +1057,31 @@ export function useChatSession() {
       stream.timer = null;
     }
     if (stream.accumulated) {
-      updateStreaming(id, stream.accumulated);
+      updateStreaming(id, stream.accumulated, stream.turnId || undefined);
     }
   }, [getStreamSlot, updateStreaming]);
 
   const finalizeStreaming = useCallback((id: string) => {
     flushStreaming(id);
     const slot = getSlot(id);
-    const streamId = `__streaming_${id}`;
-    const index = slot.realtimeMessages.findIndex((item) => item.id === streamId);
+    const stream = getStreamSlot(id);
+    const activeTurnId = stream.turnId || undefined;
+    const streamId = streamingMessageId(id, activeTurnId);
+    let index = slot.realtimeMessages.findIndex((item) => item.id === streamId);
+    if (index < 0 && activeTurnId) {
+      index = slot.realtimeMessages.findIndex((item) => (
+        isStreamingMessageId(item.id, id)
+        && effectiveMessageTurnId(item) === activeTurnId
+      ));
+    }
     if (index >= 0) {
       const streamMessage = slot.realtimeMessages[index];
       const streamTurnId = effectiveMessageTurnId(streamMessage);
+      const streamMessageId = streamMessage.id;
       if (streamTurnId && hasServerMessageForTurn(streamMessage, slot.serverMessages)) {
-        slot.realtimeMessages = slot.realtimeMessages.filter((item) => item.id !== streamId);
+        slot.realtimeMessages = slot.realtimeMessages.filter((item) => item.id !== streamMessageId);
+      } else if (!normalizeMessageText(streamMessage.content)) {
+        slot.realtimeMessages = slot.realtimeMessages.filter((item) => item.id !== streamMessageId);
       } else {
         const finalMessage: ChatMessage = {
           ...streamMessage,
@@ -1000,7 +1092,7 @@ export function useChatSession() {
           itemIndex === index
           || !(streamTurnId && item.role === 'assistant' && effectiveMessageTurnId(item) === streamTurnId)
         ));
-        const nextIndex = nextMessages.findIndex((item) => item.id === streamId);
+        const nextIndex = nextMessages.findIndex((item) => item.id === streamMessageId);
         if (nextIndex >= 0) {
           nextMessages[nextIndex] = finalMessage;
         } else {
@@ -1009,7 +1101,6 @@ export function useChatSession() {
         slot.realtimeMessages = nextMessages;
       }
     }
-    const stream = getStreamSlot(id);
     stream.accumulated = '';
     stream.turnId = null;
     notifyStore();
@@ -1075,23 +1166,32 @@ export function useChatSession() {
   useLayoutEffect(() => {
     const conversationChanged = activeConversationId !== lastActiveConversationIdRef.current;
     lastActiveConversationIdRef.current = activeConversationId;
+    const messageCountChanged = displayedMessages.length !== lastDisplayedMessageCountRef.current;
+    lastDisplayedMessageCountRef.current = displayedMessages.length;
     if (conversationChanged) {
       isChatStickyToBottomRef.current = true;
-      scrollChatToBottom({ preserveShortContentTop: true, force: true });
+      scrollChatToBottom({ preserveShortContentTop: !currentTraceRunning, force: true });
       return;
     }
-    scrollChatToBottom();
-  }, [activeConversationId, displayedMessages.length, scrollChatToBottom, traceTick]);
+    if (messageCountChanged && isChatStickyToBottomRef.current) {
+      scrollChatToBottom();
+    }
+  }, [activeConversationId, currentTraceRunning, displayedMessages.length, scrollChatToBottom]);
 
   useEffect(() => {
     if (!currentTraceRunning) return;
+    if (!isChatStickyToBottomRef.current) return;
     scrollChatToBottom();
-  }, [currentTraceRunning, currentStream.phase, scrollChatToBottom, streamTick, traceTick]);
+  }, [currentTraceRunning, scrollChatToBottom, streamTick, traceTick]);
 
   useEffect(() => () => {
     streamRef.current.forEach((slot) => {
       if (slot.timer) window.clearTimeout(slot.timer);
     });
+    terminalTurnSyncRef.current.forEach((slot) => {
+      if (slot.timer) window.clearTimeout(slot.timer);
+    });
+    terminalTurnSyncRef.current.clear();
   }, []);
 
   const openRename = useCallback((session: ChatSession) => {
@@ -1153,6 +1253,13 @@ export function useChatSession() {
     );
     const controller = stream.abortController;
     locallyCancelledSessionIdsRef.current.add(activeConversationId);
+    const releaseLocalCancellation = () => {
+      locallyCancelledSessionIdsRef.current.delete(activeConversationId);
+      if (isDraftConversationKey(activeConversationId)) return;
+      void loadMessages(activeConversationId);
+      void loadTraces(activeConversationId);
+      void loadSessions();
+    };
     const cancelRequest = cancelledTurnId && !isDraftConversationKey(activeConversationId)
       ? api.postKeepalive(`/api/chat/sessions/${activeConversationId}/cancel`, {
           tenant_id: tenantId,
@@ -1160,8 +1267,13 @@ export function useChatSession() {
         }).catch(() => undefined)
       : Promise.resolve();
     if (cancelledTurnId) {
-      upsertTraceLine(cancelledTurnId, { id: 'generation_stopped', kind: 'decision', text: '已停止生成', state: 'failed' });
-      finishTrace(cancelledTurnId, true);
+      upsertTraceLine(cancelledTurnId, {
+        id: 'generation_stopped',
+        kind: 'decision',
+        text: '用户已停止生成',
+        state: 'completed',
+      });
+      finishTrace(cancelledTurnId);
     }
     clearStreamSlot(activeConversationId, false);
     if (cancelledTurnId) {
@@ -1181,7 +1293,24 @@ export function useChatSession() {
       });
       void Promise.race([cancelRequest, cancelDeadline]).then(abortAfterCancel, abortAfterCancel);
     }
-  }, [activeConversationId, clearStreamSlot, finishTrace, getSlot, getStreamSlot, notifyStore, notifyStream, runningTurn, tenantId, upsertTraceLine]);
+    void cancelRequest.finally(() => {
+      window.setTimeout(releaseLocalCancellation, 180);
+    });
+  }, [
+    activeConversationId,
+    clearStreamSlot,
+    finishTrace,
+    getSlot,
+    getStreamSlot,
+    loadMessages,
+    loadSessions,
+    loadTraces,
+    notifyStore,
+    notifyStream,
+    runningTurn,
+    tenantId,
+    upsertTraceLine,
+  ]);
 
   const rateMessage = useCallback(async (item: ChatMessage, rating: 'up' | 'down') => {
     if (!sessionId) return;
@@ -1256,9 +1385,18 @@ export function useChatSession() {
     }
   }, [sessionId]);
 
-  const handleStreamEvent = useCallback((item: StreamEvent, baseSessionId: string, turnId: string) => {
+  const handleStreamEvent = useCallback((
+    item: StreamEvent,
+    baseSessionId: string,
+    turnId: string,
+    options?: { preserveExistingStreamTurn?: boolean },
+  ) => {
     const eventSessionId = String(item.data.sessionId || baseSessionId);
     const traceTurnId = explicitStreamTurnId(item.data, turnId);
+    const eventStream = getStreamSlot(eventSessionId);
+    const ownsStreamTurn = Boolean(eventStream.turnId)
+      && (eventStream.turnId === traceTurnId || eventStream.turnId === turnId);
+    const shouldTouchStream = !options?.preserveExistingStreamTurn || ownsStreamTurn;
     if (item.event === 'session_created') return;
     if (item.event === 'session_title_summarized') {
       applySessionTitleSummary(eventSessionId, item.data.title);
@@ -1272,11 +1410,12 @@ export function useChatSession() {
       return;
     }
     if (traceTurnId && !STREAM_TERMINAL_EVENTS.has(item.event)) {
-      const eventStream = getStreamSlot(eventSessionId);
-      if (eventStream.turnId !== traceTurnId) {
+      if (shouldTouchStream && eventStream.turnId !== traceTurnId) {
         eventStream.turnId = traceTurnId;
       }
-      ensureStreamingTraceMessage(eventSessionId, traceTurnId);
+      if (shouldTouchStream) {
+        ensureStreamingTraceMessage(eventSessionId, traceTurnId);
+      }
     }
     if (item.event === 'router_decision') {
       upsertTraceLine(traceTurnId, routerDecisionTraceLine(item.data));
@@ -1405,8 +1544,7 @@ export function useChatSession() {
       return;
     }
     if (item.event === 'status') {
-      const eventStream = getStreamSlot(eventSessionId);
-      if (traceTurnId && eventStream.turnId !== traceTurnId) {
+      if (shouldTouchStream && traceTurnId && eventStream.turnId !== traceTurnId) {
         eventStream.turnId = traceTurnId;
       }
       const phase = typeof item.data.phase === 'string' ? item.data.phase : 'thinking';
@@ -1414,7 +1552,9 @@ export function useChatSession() {
         notifyStream();
         return;
       }
-      eventStream.phase = publicStreamPhase(item.data);
+      if (shouldTouchStream) {
+        eventStream.phase = publicStreamPhase(item.data);
+      }
       if (phase === 'tool' && typeof item.data.tool_name === 'string') {
         const toolCallId = typeof item.data.tool_call_id === 'string' ? item.data.tool_call_id : item.data.tool_name;
         upsertTraceLine(traceTurnId, { id: `tool_${toolCallId}`, kind: 'tool', text: `正在调用 ${item.data.tool_name}`, state: 'running' });
@@ -1448,14 +1588,19 @@ export function useChatSession() {
           state: 'completed',
         });
       } else if (phase !== 'received') {
-        upsertTraceLine(traceTurnId, { id: `decision_status_${phase}`, kind: 'decision', text: eventStream.phase, state: 'running' });
+        upsertTraceLine(traceTurnId, {
+          id: `decision_status_${phase}`,
+          kind: 'decision',
+          text: shouldTouchStream ? eventStream.phase : publicStreamPhase(item.data),
+          state: 'running',
+        });
       }
       notifyStream();
       return;
     }
     if (item.event === 'stream_replace') {
+      if (!shouldTouchStream) return;
       const next = typeof item.data.content === 'string' ? item.data.content : '';
-      const eventStream = getStreamSlot(eventSessionId);
       if (eventStream.timer) {
         window.clearTimeout(eventStream.timer);
         eventStream.timer = null;
@@ -1466,11 +1611,20 @@ export function useChatSession() {
       return;
     }
     if (item.event === 'stream_delta' || item.event === 'token') {
+      if (!shouldTouchStream) return;
       const piece = typeof item.data.content === 'string' ? item.data.content : '';
       if (!piece) return;
-      const eventStream = getStreamSlot(eventSessionId);
-      const wasEmpty = !eventStream.accumulated;
-      eventStream.accumulated += piece;
+      const previous = eventStream.accumulated;
+      let next = previous + piece;
+      if (previous) {
+        if (piece === previous) return;
+        if (piece.startsWith(previous)) {
+          next = piece;
+        }
+      }
+      if (next === previous) return;
+      const wasEmpty = !previous;
+      eventStream.accumulated = next;
       if (wasEmpty) {
         updateStreaming(eventSessionId, eventStream.accumulated, eventStream.turnId || traceTurnId);
         notifyStream();
@@ -1486,21 +1640,49 @@ export function useChatSession() {
     }
     if (item.event === 'stream_end') {
       finishTrace(traceTurnId);
-      upsertTraceLine(traceTurnId, { id: 'thinking', kind: 'thinking', text: '执行记录', state: 'completed' });
+      if (!shouldTouchStream) {
+        syncTurnUntilAssistant(eventSessionId, traceTurnId);
+        notifyTrace();
+        return;
+      }
+      const hadStreamContent = Boolean(normalizeMessageText(eventStream.accumulated));
       finalizeStreaming(eventSessionId);
-      const eventStream = getStreamSlot(eventSessionId);
+      if (!hadStreamContent && !hasAssistantMessageForTurn(getSlot(eventSessionId), traceTurnId)) {
+        upsertTraceStatusPlaceholder(getSlot(eventSessionId), eventSessionId, traceTurnId);
+        notifyStore();
+      }
       eventStream.loading = false;
       eventStream.phase = '';
       eventStream.abortController = null;
       notifyStream();
+      loadSessions();
+      window.setTimeout(() => {
+        loadMessages(eventSessionId);
+        loadTraces(eventSessionId);
+        syncTurnUntilAssistant(eventSessionId, traceTurnId);
+      }, 250);
       return;
     }
     if (item.event === 'stream_cancelled') {
-      const cancelledStreamTurnId = getStreamSlot(eventSessionId).turnId || traceTurnId;
-      finishTrace(traceTurnId, true);
+      const cancelledStreamTurnId = eventStream.turnId || traceTurnId;
+      finishTrace(traceTurnId);
+      if (!shouldTouchStream) {
+        window.setTimeout(() => {
+          loadMessages(eventSessionId);
+          loadTraces(eventSessionId);
+          syncTurnUntilAssistant(eventSessionId, traceTurnId);
+        }, 120);
+        notifyStream();
+        return;
+      }
       clearStreamSlot(eventSessionId, false);
       upsertTraceStatusPlaceholder(getSlot(eventSessionId), eventSessionId, traceTurnId);
       notifyStore();
+      window.setTimeout(() => {
+        loadMessages(eventSessionId);
+        loadTraces(eventSessionId);
+        syncTurnUntilAssistant(eventSessionId, traceTurnId);
+      }, 120);
       setRunningTurn((current) => (
         current?.sessionId === eventSessionId && (current.turnId === traceTurnId || current.turnId === cancelledStreamTurnId)
           ? null
@@ -1510,6 +1692,11 @@ export function useChatSession() {
       return;
     }
     if (item.event === 'complete' || item.event === 'done') {
+      if (!shouldTouchStream) {
+        finishTrace(traceTurnId);
+        notifyStream();
+        return;
+      }
       const result = item.data as unknown as ChatTurnResponse;
       const userIntent = typeof result.router_decision?.user_intent === 'string' ? result.router_decision.user_intent : '';
       const decisionReason = typeof result.router_decision?.reason === 'string' ? result.router_decision.reason : '';
@@ -1523,10 +1710,13 @@ export function useChatSession() {
         });
       }
       finishTrace(traceTurnId);
-      upsertTraceLine(traceTurnId, { id: 'thinking', kind: 'thinking', text: '执行记录', state: 'completed' });
+      const hadStreamContent = Boolean(normalizeMessageText(eventStream.accumulated));
       finalizeStreaming(eventSessionId);
+      if (!hadStreamContent && !hasAssistantMessageForTurn(getSlot(eventSessionId), traceTurnId)) {
+        upsertTraceStatusPlaceholder(getSlot(eventSessionId), eventSessionId, traceTurnId);
+        notifyStore();
+      }
       setLastTurn(result);
-      const eventStream = getStreamSlot(eventSessionId);
       eventStream.loading = false;
       eventStream.phase = '';
       eventStream.abortController = null;
@@ -1535,10 +1725,15 @@ export function useChatSession() {
       window.setTimeout(() => {
         loadMessages(eventSessionId);
         loadTraces(eventSessionId);
+        syncTurnUntilAssistant(eventSessionId, traceTurnId);
       }, 250);
     }
     if (item.event === 'error') {
-      const eventStream = getStreamSlot(eventSessionId);
+      if (!shouldTouchStream) {
+        finishTrace(traceTurnId, true);
+        notifyStream();
+        return;
+      }
       eventStream.loading = false;
       eventStream.phase = '';
       eventStream.abortController = null;
@@ -1567,7 +1762,9 @@ export function useChatSession() {
     loadTraces,
     notifyStore,
     notifyStream,
+    notifyTrace,
     ensureStreamingTraceMessage,
+    syncTurnUntilAssistant,
     updateStreaming,
     upsertTraceLine,
   ]);
@@ -1631,7 +1828,7 @@ export function useChatSession() {
       clearStreamSlot(id, false);
       return false;
     }
-    if (hasAssistantMessageForTurn(slot, turnId)) {
+    if (hasAssistantCarrierForTurn(slot, turnId)) {
       clearStreamSlot(id, false);
       return false;
     }
@@ -1642,7 +1839,7 @@ export function useChatSession() {
       if (event.event === 'stream_replace') {
         text = payloadText;
       } else if (event.event === 'stream_delta' || event.event === 'token') {
-        text += payloadText;
+        text = text && payloadText.startsWith(text) ? payloadText : text + payloadText;
       }
     });
 
@@ -1695,12 +1892,6 @@ export function useChatSession() {
           return timestamp > 0 && (timestamp >= latestLoadedMessageTime || now - timestamp <= RUNNING_EVENT_RECOVERY_WINDOW_MS);
         });
         if (!unseenEvents.length) return;
-        const sessionRow = sessions.find((item) => item.id === id);
-        const hasTerminalEvent = unseenEvents.some((event) => isTerminalSessionEvent(event, isTerminalEvent));
-        if (!stream.loading && Boolean(sessionRow?.summary) && hasTerminalEvent) {
-          unseenEvents.forEach((event) => scheduledEventIdsRef.current.add(event.id));
-          return;
-        }
         const unseenEventsByTurn = new Map<string, ChatSessionEventRead[]>();
         unseenEvents.forEach((event) => {
           const eventTurnId = eventTraceTurnId(event);
@@ -1713,14 +1904,33 @@ export function useChatSession() {
           scheduledEventIdsRef.current.add(event.id);
           const eventTurnId = eventTraceTurnId(event);
           if (!eventTurnId) return;
-          if (!stream.turnId) {
-            stream.turnId = eventTurnId;
+          const terminalEvent = isTerminalSessionEvent(event, isTerminalEvent);
+          const hasFinalAssistant = hasAssistantMessageForTurn(slot, eventTurnId);
+          if (event.event === 'assistant_message_created') {
+            if (!hasFinalAssistant) {
+              void loadMessages(id);
+              void loadTraces(id);
+              syncTurnUntilAssistant(id, eventTurnId);
+            }
+            return;
+          }
+          if (terminalEvent && !hasFinalAssistant) {
+            syncTurnUntilAssistant(id, eventTurnId);
           }
           const streamEvent = normalizeSessionEventForStream(event);
-          if (!stream.loading && !isTerminalSessionEvent(event, isTerminalEvent)) {
-            const turnEvents = unseenEventsByTurn.get(eventTurnId) || [event];
-            if (!hasRecoverableEventProgress(turnEvents)) {
-              handleStreamEvent(streamEvent, id, eventTurnId);
+          const liveSseOwnsTurn = Boolean(stream.abortController && stream.turnId === eventTurnId);
+          if (liveSseOwnsTurn && STREAM_TEXT_EVENTS.has(streamEvent.event)) {
+            return;
+          }
+          const turnEvents = unseenEventsByTurn.get(eventTurnId) || [event];
+          const hasTurnProgress = hasRecoverableEventProgress(turnEvents);
+          if (hasAssistantCarrierForTurn(slot, eventTurnId) && !liveSseOwnsTurn) return;
+          if (!stream.turnId && !terminalEvent && hasTurnProgress) {
+            stream.turnId = eventTurnId;
+          }
+          if (!stream.loading && !terminalEvent) {
+            if (!hasTurnProgress) {
+              handleStreamEvent(streamEvent, id, eventTurnId, { preserveExistingStreamTurn: true });
               return;
             }
             stream.loading = true;
@@ -1728,7 +1938,7 @@ export function useChatSession() {
             updateStreaming(id, stream.accumulated || '', eventTurnId, true);
             notifyStream();
           }
-          handleStreamEvent(streamEvent, id, eventTurnId);
+          handleStreamEvent(streamEvent, id, eventTurnId, { preserveExistingStreamTurn: true });
         });
       })
       .catch((error) => {
@@ -1743,9 +1953,11 @@ export function useChatSession() {
     handleStreamEvent,
     hydrateRunningSessionFromEvents,
     isTerminalEvent,
+    loadMessages,
+    loadTraces,
     notifyStream,
     redirectToLogin,
-    sessions,
+    syncTurnUntilAssistant,
     tenantId,
     updateStreaming,
   ]);
@@ -1988,10 +2200,10 @@ export function useChatSession() {
       const previousId = liveConversationId;
       const draftSlot = storeRef.current.get(previousId);
       if (draftSlot) {
-        const previousStreamMessageId = `__streaming_${previousId}`;
-        const nextStreamMessageId = `__streaming_${nextSessionId}`;
         draftSlot.realtimeMessages = draftSlot.realtimeMessages.map((item) => (
-          item.id === previousStreamMessageId ? { ...item, id: nextStreamMessageId } : item
+          isStreamingMessageId(item.id, previousId)
+            ? { ...item, id: streamingMessageId(nextSessionId, effectiveMessageTurnId(item)) }
+            : item
         ));
         storeRef.current.set(nextSessionId, draftSlot);
         storeRef.current.delete(previousId);
@@ -2101,7 +2313,6 @@ export function useChatSession() {
         const activeTurnId = activeStream.turnId || turnId;
         if (activeStream.accumulated) {
           finishTrace(activeTurnId);
-          upsertTraceLine(activeTurnId, { id: 'thinking', kind: 'thinking', text: '执行记录', state: 'completed' });
           finalizeStreaming(liveConversationId);
           activeStream.loading = false;
           activeStream.phase = '';
@@ -2310,6 +2521,7 @@ export function useChatSession() {
     handoffsLoading,
     showHandoffInbox,
     setShowHandoffInbox,
+    openHandoffInbox,
     handoffReplies,
     setHandoffReplies,
     submitHandoffReply,

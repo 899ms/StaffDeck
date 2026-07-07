@@ -113,6 +113,8 @@ export type AppSidebarChatProps = {
   isSessionUnread: (session: ChatSession) => boolean;
   onOpenSession: (id: string) => void;
   onOpenGallery: () => void;
+  handoffCount?: number;
+  onOpenHandoffs?: () => void;
   onRenameSession: (session: ChatSession) => void;
   onDeleteSession: (session: ChatSession) => void;
   onOpenAdmin: () => void;
@@ -729,6 +731,62 @@ function ChatSessionFilter({
   );
 }
 
+function ChatHandoffButton({
+  count = 0,
+  onOpen,
+  collapsed = false,
+}: {
+  count?: number;
+  onOpen?: () => void;
+  collapsed?: boolean;
+}) {
+  if (!onOpen) return null;
+  const badge = count > 99 ? '99+' : String(count);
+
+  if (collapsed) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={onOpen}
+            aria-label="待回答"
+            className="relative flex h-[32px] w-full items-center justify-center rounded-[8px] text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          >
+            <IconChatBubble className="size-[16px]!" />
+            {count > 0 && (
+              <span className="absolute -right-[3px] -top-[4px] inline-flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-[#f5483b] px-[4px] text-[9px] leading-none text-white ring-[2px] ring-sidebar">
+                {badge}
+              </span>
+            )}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="right" align="center">
+          待回答{count > 0 ? ` ${badge}` : ''}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex items-center justify-between gap-[12px] rounded-[8px] px-[20px] py-[10px] text-left text-[14px] text-[#858b9c] transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+    >
+      <span className="flex min-w-0 items-center gap-[12px]">
+        <IconChatBubble className="size-[16px]! shrink-0" />
+        <span className="truncate">待回答</span>
+      </span>
+      {count > 0 && (
+        <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-white px-[6px] text-[11px] leading-none text-[#f5483b] shadow-[0_0_0_0.5px_rgba(245,72,59,0.18)] dark:bg-sidebar-accent">
+          {badge}
+        </span>
+      )}
+    </button>
+  );
+}
+
 function ChatSessionRow({
   session,
   agent,
@@ -871,11 +929,13 @@ function CollapsedChatSidebar({
   isSessionUnread,
   onOpenSession,
   onOpenGallery,
+  handoffCount = 0,
+  onOpenHandoffs,
   onOpenAdmin,
   onToggle,
 }: Pick<
   AppSidebarChatProps,
-  'sessions' | 'sessionsLoading' | 'agents' | 'activeSessionId' | 'sessionFilter' | 'onSessionFilterChange' | 'sessionFilterOptions' | 'isSessionUnread' | 'onOpenSession' | 'onOpenGallery' | 'onOpenAdmin'
+  'sessions' | 'sessionsLoading' | 'agents' | 'activeSessionId' | 'sessionFilter' | 'onSessionFilterChange' | 'sessionFilterOptions' | 'isSessionUnread' | 'onOpenSession' | 'onOpenGallery' | 'handoffCount' | 'onOpenHandoffs' | 'onOpenAdmin'
 > & { onToggle: () => void }) {
   return (
     <div className="flex h-full w-(--sidebar-width-icon) shrink-0 flex-col items-center gap-[32px] px-[20px] py-[10px]">
@@ -916,6 +976,8 @@ function CollapsedChatSidebar({
             数字员工广场
           </TooltipContent>
         </Tooltip>
+
+        <ChatHandoffButton count={handoffCount} onOpen={onOpenHandoffs} collapsed />
 
         <div className="h-px w-full bg-sidebar-border" />
 
@@ -1003,6 +1065,8 @@ function ChatSidebarVariant({
   isSessionUnread,
   onOpenSession,
   onOpenGallery,
+  handoffCount = 0,
+  onOpenHandoffs,
   onRenameSession,
   onDeleteSession,
   onOpenAdmin,
@@ -1025,6 +1089,8 @@ function ChatSidebarVariant({
           isSessionUnread={isSessionUnread}
           onOpenSession={onOpenSession}
           onOpenGallery={onOpenGallery}
+          handoffCount={handoffCount}
+          onOpenHandoffs={onOpenHandoffs}
           onOpenAdmin={onOpenAdmin}
           onToggle={toggleSidebar}
         />
@@ -1060,6 +1126,7 @@ function ChatSidebarVariant({
               <IconGlobe className="size-[16px]! shrink-0" />
               <span className="truncate">数字员工广场</span>
             </button>
+            <ChatHandoffButton count={handoffCount} onOpen={onOpenHandoffs} />
             <div className="h-px w-full bg-sidebar-border" />
             <ChatSessionFilter
               sessionFilter={sessionFilter}
