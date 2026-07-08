@@ -9,13 +9,15 @@ from app.api.chat import _active_skill_context_for_assistant_message, _active_sk
 from app.api.skills import (
     _extract_uploaded_skill_file,
     _skill_stats,
+    draft_skill,
     distill_skill,
     list_skill_versions,
     list_skills,
+    publish_skill,
     rollback_skill_version,
     skill_read,
 )
-from app.agents.branching import ensure_open_gallery_binding
+from app.agents.branching import ensure_open_gallery_binding, visible_published_skills
 from app.db.models import AgentEvent, AgentProfile, Message, Skill, SkillFeedback, SkillVersion, Tenant
 from app.db.models import ModelConfig
 from app.skills.skill_distiller import SkillDistiller
@@ -441,6 +443,36 @@ def test_skill_versions_are_snapshotted_with_version_stats() -> None:
 
     assert versions[0].version == "1.5.0"
     assert versions[0].call_count == 1
+
+
+def test_skill_can_return_to_draft_without_leaving_runtime_list() -> None:
+    with _test_session() as db:
+        db.add(Tenant(id="tenant_demo", name="Demo"))
+        db.add(AgentProfile(id="agent_overall", tenant_id="tenant_demo", name="开放广场", is_overall=True))
+        content = _skill_card()
+        row = Skill(
+            tenant_id="tenant_demo",
+            skill_id=content.skill_id,
+            version=content.version,
+            name=content.name,
+            content_json=content.model_dump(),
+            status="published",
+        )
+        db.add(row)
+        db.commit()
+        ensure_open_gallery_binding(db, "tenant_demo", "skill", row.id, "active")
+        db.commit()
+
+        drafted = draft_skill(content.skill_id, tenant_id="tenant_demo", db=db)
+
+        assert drafted.status == "draft"
+        assert [item.skill_id for item in list_skills("tenant_demo", db)] == [content.skill_id]
+        assert visible_published_skills(db, "tenant_demo") == []
+
+        published = publish_skill(content.skill_id, tenant_id="tenant_demo", db=db)
+
+        assert published.status == "published"
+        assert [item.skill_id for item in visible_published_skills(db, "tenant_demo")] == [content.skill_id]
 
 
 def test_legacy_unversioned_stats_are_archived_to_oldest_version() -> None:

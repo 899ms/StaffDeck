@@ -291,6 +291,12 @@ export default function SkillsPage({
             <IconHistory />
             版本管理
           </DropdownMenuItem>
+          {isOverallAgent && row.status !== 'draft' && (
+            <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => void markDraft(row)}>
+              <IconEdit />
+              转为草稿
+            </DropdownMenuItem>
+          )}
           {row.status === 'published' ? (
             <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => void archive(row)}>
               <Ban />
@@ -459,6 +465,16 @@ export default function SkillsPage({
       await load();
     } catch (error) {
       notify.error(error instanceof Error ? error.message : '停用失败');
+    }
+  }
+
+  async function markDraft(row: SkillRead) {
+    try {
+      await api.post(`/api/enterprise/skills/${row.skill_id}/draft?tenant_id=${TENANT_ID}${agentQuery()}`);
+      notify.success('已转为草稿');
+      await load();
+    } catch (error) {
+      notify.error(error instanceof Error ? error.message : '转为草稿失败');
     }
   }
 

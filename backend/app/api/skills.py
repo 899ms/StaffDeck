@@ -374,6 +374,29 @@ def archive_skill(
     return skill_read(row, stats, _recent_skill_stats(db, tenant_id, stats))
 
 
+@router.post("/{skill_id}/draft", response_model=SkillRead)
+def draft_skill(
+    skill_id: str,
+    tenant_id: str = Query(...),
+    agent_id: str | None = None,
+    db: Session = Depends(get_session),
+) -> SkillRead:
+    row = _get_skill(db, tenant_id, skill_id)
+    agent = get_agent(db, tenant_id, agent_id)
+    if agent and not agent.is_overall:
+        raise HTTPException(status_code=403, detail="Only overall SOPs can be moved to draft")
+    row.status = "draft"
+    row.updated_at = utc_now()
+    db.add(row)
+    db.flush()
+    ensure_open_gallery_binding(db, tenant_id, "skill", row.id, "inactive")
+    db.commit()
+    db.refresh(row)
+    _upsert_skill_version(db, row)
+    stats = _skill_stats(db, tenant_id)
+    return skill_read(row, stats, _recent_skill_stats(db, tenant_id, stats))
+
+
 @router.delete("/{skill_id}")
 def delete_skill(
     skill_id: str,
