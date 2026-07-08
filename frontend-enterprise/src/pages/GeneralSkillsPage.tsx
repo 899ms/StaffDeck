@@ -20,6 +20,7 @@ import type { EnterpriseAuthUser } from '../auth';
 import AppHeader from '@/components/AppHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { DataTable, type DataTableColumn } from '@/components/DataTable';
+import { ModelConfigDropdown } from '@/components/ModelConfigDropdown';
 import { Paginator } from '@/components/Paginator';
 import {
   Dialog,
@@ -68,9 +69,10 @@ import { resourceCreatorNameOrAdmin, visibleEmployeeAgents } from '../employee';
 import { useClientPagination } from '../hooks/useClientPagination';
 import { StatusBadge } from './scheduled-tasks/StatusBadge';
 import type { BadgeTone } from './scheduled-tasks/shared';
-import type { AgentProfileRead, GeneralSkillRead, GeneralSkillRunResponse } from '../types';
+import type { AgentProfileRead, GeneralSkillRead, GeneralSkillRunResponse, ModelConfigRead } from '../types';
 
 const GENERAL_SKILL_PAGE_SIZE = 10;
+const GENERAL_SKILL_RUN_MODEL_STORAGE_KEY = 'general-skill-run-model';
 
 const STATUS_BADGE: Record<GeneralSkillRead['status'], { tone: BadgeTone; text: string }> = {
   draft: { tone: 'blue', text: '草稿' },
@@ -1141,6 +1143,10 @@ function GeneralSkillEditorPage({ mode, currentUser, onLogout }: { mode: 'new' |
   const [query, setQuery] = useState('');
   const [runResult, setRunResult] = useState<GeneralSkillRunResponse | null>(null);
   const [liveResult, setLiveResult] = useState<Partial<GeneralSkillRunResponse> | null>(null);
+  const [modelConfigs, setModelConfigs] = useState<ModelConfigRead[]>([]);
+  const [selectedRunModelId, setSelectedRunModelId] = useState(
+    () => window.localStorage.getItem(`${GENERAL_SKILL_RUN_MODEL_STORAGE_KEY}:${TENANT_ID}`) || '',
+  );
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -1221,6 +1227,24 @@ function GeneralSkillEditorPage({ mode, currentUser, onLogout }: { mode: 'new' |
       })
       .catch(() => setIsOverallAgent(true));
   }, [agentId]);
+
+  useEffect(() => {
+    api
+      .get<ModelConfigRead[]>(`/api/enterprise/model-configs?tenant_id=${TENANT_ID}`)
+      .then((items) => {
+        const enabled = items.filter((item) => item.enabled);
+        setModelConfigs(enabled);
+        setSelectedRunModelId((current) => {
+          if (current && enabled.some((item) => item.id === current)) return current;
+          const fallback = enabled.find((item) => item.is_default)?.id || enabled[0]?.id || '';
+          if (fallback) {
+            window.localStorage.setItem(`${GENERAL_SKILL_RUN_MODEL_STORAGE_KEY}:${TENANT_ID}`, fallback);
+          }
+          return fallback;
+        });
+      })
+      .catch(() => setModelConfigs([]));
+  }, []);
 
   useEffect(() => {
     const onScopeChange = (event: Event) => {
@@ -1706,6 +1730,7 @@ function GeneralSkillEditorPage({ mode, currentUser, onLogout }: { mode: 'new' |
           tenant_id: TENANT_ID,
           user_id: 'enterprise_demo',
           query,
+          model_config_id: selectedRunModelId || undefined,
           max_attempts: 10,
         },
         (item) => {
@@ -1987,10 +2012,20 @@ function GeneralSkillEditorPage({ mode, currentUser, onLogout }: { mode: 'new' |
             className="xl:col-start-2 xl:row-start-1"
             title="运行测试"
             extra={(
-              <UIButton disabled={loading || !selectedSkill?.slug} className={PRIMARY_BUTTON_CLASS} onClick={() => void runSkill()}>
-                <ExperimentOutlined />
-                运行
-              </UIButton>
+              <div className="flex flex-wrap items-center justify-end gap-[8px]">
+                <ModelConfigDropdown
+                  models={modelConfigs}
+                  value={selectedRunModelId}
+                  onChange={(modelId) => {
+                    setSelectedRunModelId(modelId);
+                    window.localStorage.setItem(`${GENERAL_SKILL_RUN_MODEL_STORAGE_KEY}:${TENANT_ID}`, modelId);
+                  }}
+                />
+                <UIButton disabled={loading || !selectedSkill?.slug} className={PRIMARY_BUTTON_CLASS} onClick={() => void runSkill()}>
+                  <ExperimentOutlined />
+                  运行
+                </UIButton>
+              </div>
             )}
           >
             <div className="flex flex-col gap-[12px]">

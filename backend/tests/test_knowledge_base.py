@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from app.api.knowledge import search_knowledge
 from app.api.knowledge_bases import knowledge_base_read
 from app.db.models import (
     KnowledgeBase,
@@ -14,11 +15,12 @@ from app.db.models import (
     KnowledgeChunk,
     KnowledgeDiscoverySuggestion,
     KnowledgeDocument,
+    ModelConfig,
     Skill,
     Tenant,
     Tool,
 )
-from app.knowledge.schema import KnowledgeSearchRequest
+from app.knowledge.schema import KnowledgeSearchRequest, KnowledgeSearchResponse
 from app.knowledge.service import IngestPayload, KnowledgeService
 from app.skills.skill_schema import SkillCard
 
@@ -207,6 +209,52 @@ def test_knowledge_search_preserves_fallback_bucket_rank_order() -> None:
         )
 
         assert [bucket.id for bucket in response.selected_buckets][:2] == ["kbucket_frontend", "kbucket_citation"]
+
+
+def test_knowledge_search_api_uses_selected_model_config(monkeypatch) -> None:
+    captured: dict[str, str | None] = {}
+
+    def fake_search(self, request, model_config=None):  # noqa: ANN001
+        captured["model_id"] = model_config.id if model_config else None
+        return KnowledgeSearchResponse(route_trace=[{"phase": "ok"}])
+
+    monkeypatch.setattr(KnowledgeService, "search", fake_search)
+
+    with _test_session() as db:
+        db.add(Tenant(id="tenant_demo", name="Demo"))
+        db.add(
+            ModelConfig(
+                id="model_default",
+                tenant_id="tenant_demo",
+                name="Default model",
+                api_key_encrypted="",
+                model="default",
+                is_default=True,
+                enabled=True,
+            )
+        )
+        db.add(
+            ModelConfig(
+                id="model_selected",
+                tenant_id="tenant_demo",
+                name="Selected model",
+                api_key_encrypted="",
+                model="selected",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+        search_knowledge(
+            KnowledgeSearchRequest(
+                tenant_id="tenant_demo",
+                query="测试检索",
+                model_config_id="model_selected",
+            ),
+            db,
+        )
+
+        assert captured["model_id"] == "model_selected"
 
 
 def test_knowledge_base_read_keeps_archived_rows_visible_despite_active_versions() -> None:

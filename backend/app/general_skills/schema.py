@@ -72,6 +72,7 @@ class GeneralSkillRunRequest(BaseModel):
     user_id: str = ""
     query: str
     session_id: Optional[str] = None
+    model_config_id: Optional[str] = None
     max_attempts: int = Field(default=10, ge=1, le=10)
 
 

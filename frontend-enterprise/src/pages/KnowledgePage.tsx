@@ -25,6 +25,7 @@ import type { EnterpriseAuthUser } from '../auth';
 import AppHeader from '@/components/AppHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { DataTable, type DataTableColumn } from '@/components/DataTable';
+import { ModelConfigDropdown } from '@/components/ModelConfigDropdown';
 import { Paginator } from '@/components/Paginator';
 import { ResourceImportDialog } from '@/components/ResourceImportDialog';
 import { StatCard } from '@/components/StatCard';
@@ -71,10 +72,12 @@ import type {
   KnowledgeIngestJobRead,
   KnowledgeSearchResponse,
   AgentProfileRead,
+  ModelConfigRead,
 } from '../types';
 
 const ENTERPRISE_AGENT_STORAGE_KEY = 'ultrarag_enterprise_agent_scope';
 const KNOWLEDGE_PAGE_SIZE = 10;
+const KNOWLEDGE_SEARCH_MODEL_STORAGE_KEY = 'knowledge-search-model';
 
 type KnowledgeBaseVersionRead = {
   id: string;
@@ -155,6 +158,10 @@ export default function KnowledgeManagePage({ currentUser, onLogout }: Knowledge
   const [searchQuery, setSearchQuery] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchResult, setSearchResult] = useState<KnowledgeSearchResponse | null>(null);
+  const [modelConfigs, setModelConfigs] = useState<ModelConfigRead[]>([]);
+  const [selectedSearchModelId, setSelectedSearchModelId] = useState(
+    () => window.localStorage.getItem(`${KNOWLEDGE_SEARCH_MODEL_STORAGE_KEY}:${TENANT_ID}`) || '',
+  );
   const [okfConcepts, setOkfConcepts] = useState<KnowledgeConceptRead[]>([]);
   const [okfLoading, setOkfLoading] = useState(false);
   const [okfImportOpen, setOkfImportOpen] = useState(false);
@@ -229,6 +236,24 @@ export default function KnowledgeManagePage({ currentUser, onLogout }: Knowledge
   useEffect(() => {
     void refresh();
   }, [agentId, effectiveAgentId]);
+
+  useEffect(() => {
+    api
+      .get<ModelConfigRead[]>(`/api/enterprise/model-configs?tenant_id=${TENANT_ID}`)
+      .then((items) => {
+        const enabled = items.filter((item) => item.enabled);
+        setModelConfigs(enabled);
+        setSelectedSearchModelId((current) => {
+          if (current && enabled.some((item) => item.id === current)) return current;
+          const fallback = enabled.find((item) => item.is_default)?.id || enabled[0]?.id || '';
+          if (fallback) {
+            window.localStorage.setItem(`${KNOWLEDGE_SEARCH_MODEL_STORAGE_KEY}:${TENANT_ID}`, fallback);
+          }
+          return fallback;
+        });
+      })
+      .catch(() => setModelConfigs([]));
+  }, []);
 
   useEffect(() => {
     if (searchParams.get('add') !== 'plaza') return;
@@ -369,6 +394,7 @@ export default function KnowledgeManagePage({ currentUser, onLogout }: Knowledge
               ? [selectedDocument.knowledge_base_id]
               : undefined,
         query,
+        model_config_id: selectedSearchModelId || undefined,
         mode: 'debug',
         max_depth: 3,
         need_evidence_pack: true,
@@ -1046,31 +1072,42 @@ export default function KnowledgeManagePage({ currentUser, onLogout }: Knowledge
 
         <KCard title="渐进检索调试">
           <div className="flex w-full flex-col gap-[14px]">
-            <label className={cn(SEARCH_COMBO_CLASS, 'w-full max-w-[480px]')}>
-              <input
-                className={SEARCH_COMBO_INPUT_CLASS}
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    void runKnowledgeSearch();
-                  }
+            <div className="flex flex-wrap items-center gap-[10px]">
+              <label className={cn(SEARCH_COMBO_CLASS, 'min-w-[280px] flex-1 max-w-[560px]')}>
+                <input
+                  className={SEARCH_COMBO_INPUT_CLASS}
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      void runKnowledgeSearch();
+                    }
+                  }}
+                  placeholder="输入知识问题"
+                />
+                <button
+                  type="button"
+                  className={SEARCH_COMBO_BUTTON_CLASS}
+                  disabled={searchLoading}
+                  onClick={() => void runKnowledgeSearch()}
+                >
+                  {searchLoading ? '检索中…' : '检索'}
+                </button>
+              </label>
+              <ModelConfigDropdown
+                models={modelConfigs}
+                value={selectedSearchModelId}
+                onChange={(modelId) => {
+                  setSelectedSearchModelId(modelId);
+                  window.localStorage.setItem(`${KNOWLEDGE_SEARCH_MODEL_STORAGE_KEY}:${TENANT_ID}`, modelId);
                 }}
-                placeholder="输入知识问题"
+                buttonClassName="h-[34px]"
               />
-              <button
-                type="button"
-                className={SEARCH_COMBO_BUTTON_CLASS}
-                disabled={searchLoading}
-                onClick={() => void runKnowledgeSearch()}
-              >
-                {searchLoading ? '检索中…' : '检索'}
-              </button>
-            </label>
-          <KnowledgeSearchDebug result={searchResult} loading={searchLoading} />
-        </div>
-      </KCard>
+            </div>
+            <KnowledgeSearchDebug result={searchResult} loading={searchLoading} />
+          </div>
+        </KCard>
       </div>
 
       <ResourceImportDialog

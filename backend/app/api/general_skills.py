@@ -471,7 +471,7 @@ def run_general_skill(
     skill = _get_general_skill(db, request.tenant_id, slug)
     if skill.status != "published":
         raise HTTPException(status_code=400, detail="General skill is not published")
-    model_config = _get_default_model(db, request.tenant_id)
+    model_config = _get_request_model(db, request.tenant_id, request.model_config_id)
     return GeneralSkillRunner().run(skill, request.query, model_config, request.user_id, request.max_attempts)
 
 
@@ -484,7 +484,7 @@ def run_general_skill_stream(
     skill = _get_general_skill(db, request.tenant_id, slug)
     if skill.status != "published":
         raise HTTPException(status_code=400, detail="General skill is not published")
-    model_config = _get_default_model(db, request.tenant_id)
+    model_config = _get_request_model(db, request.tenant_id, request.model_config_id)
     skill_snapshot = _general_skill_snapshot(skill)
     model_snapshot = _model_config_snapshot(model_config)
 
@@ -598,6 +598,15 @@ def _get_default_model(db: Session, tenant_id: str) -> ModelConfig:
     ).first()
     if not model_config:
         raise HTTPException(status_code=400, detail="No default model config")
+    return model_config
+
+
+def _get_request_model(db: Session, tenant_id: str, model_config_id: str | None = None) -> ModelConfig:
+    if not model_config_id:
+        return _get_default_model(db, tenant_id)
+    model_config = db.get(ModelConfig, model_config_id)
+    if not model_config or model_config.tenant_id != tenant_id or not model_config.enabled:
+        raise HTTPException(status_code=404, detail="Model config not found")
     return model_config
 
 

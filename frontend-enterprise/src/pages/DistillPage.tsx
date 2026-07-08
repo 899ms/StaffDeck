@@ -41,10 +41,6 @@ import {
   DialogContent,
   DialogFooter,
   DialogTitle,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
   Input,
   Popover,
   PopoverContent,
@@ -64,8 +60,9 @@ import { Button as UIButton } from '@/components/ui/button';
 import { notify } from '@/components/ui/app-toast';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import AppHeader from '@/components/AppHeader';
+import { ModelConfigDropdown } from '@/components/ModelConfigDropdown';
 import { cn } from '@/lib/utils';
-import { MENU_CONTENT_CLASS, MENU_ITEM_CLASS, SELECT_TRIGGER_CLASS } from '@/lib/enterprise-ui';
+import { SELECT_TRIGGER_CLASS } from '@/lib/enterprise-ui';
 import type { EnterpriseAuthUser } from '../auth';
 import {
   ACTION_EMPTY_CLASS,
@@ -766,7 +763,6 @@ export default function DistillPage({ active = true, searchParamsOverride, curre
   const allPaths = useMemo(() => (draft ? allTargetPaths(draft) : DEFAULT_TARGET_PATHS), [draft]);
   const uploadingFile = attachments.some((item) => item.status === 'uploading');
   const readyAttachments = attachments.filter((item) => item.status === 'ready' && item.text?.trim());
-  const selectedRewriteModel = modelConfigs.find((item) => item.id === selectedRewriteModelId) || null;
   const allSelected = draft ? selectedPaths.length > 0 && allPaths.every((path) => selectedPaths.includes(path)) : false;
   const toolDescriptions = useMemo(() => buildToolDescriptionMap(tools, messages), [messages, tools]);
   const toolStatuses = useMemo(() => buildToolStatusMap(tools, messages), [messages, tools]);
@@ -2300,44 +2296,15 @@ export default function DistillPage({ active = true, searchParamsOverride, curre
                       停止
                     </UIButton>
                   )}
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <UIButton
-                        variant="outline"
-                        className={REWRITE_MODEL_BUTTON_CLASS}
-                        disabled={loading || modelConfigs.length === 0}
-                      >
-                        <span>{selectedRewriteModel?.name || selectedRewriteModel?.model || '默认模型'}</span>
-                        <DownOutlined />
-                      </UIButton>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className={MENU_CONTENT_CLASS}>
-                      {modelConfigs.length === 0 ? (
-                        <DropdownMenuItem disabled className={MENU_ITEM_CLASS}>
-                          暂无可用模型
-                        </DropdownMenuItem>
-                      ) : (
-                        modelConfigs.map((model) => (
-                          <DropdownMenuItem
-                            key={model.id}
-                            className={MENU_ITEM_CLASS}
-                            onSelect={() => {
-                              setSelectedRewriteModelId(String(model.id));
-                              window.localStorage.setItem(`${DISTILL_REWRITE_MODEL_STORAGE_KEY}:${TENANT_ID}`, String(model.id));
-                            }}
-                          >
-                            <span className="flex min-w-0 flex-1 flex-col">
-                              <strong className="text-[13px] text-foreground">{model.name || model.model}</strong>
-                              <em className="text-[11px] not-italic text-[#858b9c]">
-                                {model.is_default ? `${model.model} · 默认` : model.model}
-                              </em>
-                            </span>
-                            {selectedRewriteModelId === model.id && <CheckOutlined />}
-                          </DropdownMenuItem>
-                        ))
-                      )}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  <ModelConfigDropdown
+                    models={modelConfigs}
+                    value={selectedRewriteModelId}
+                    onChange={(modelId) => {
+                      setSelectedRewriteModelId(modelId);
+                      window.localStorage.setItem(`${DISTILL_REWRITE_MODEL_STORAGE_KEY}:${TENANT_ID}`, modelId);
+                    }}
+                    buttonClassName={REWRITE_MODEL_BUTTON_CLASS}
+                  />
                   <UIButton
                     disabled={loading || uploadingFile || (!input.trim() && readyAttachments.length === 0)}
                     className={PRIMARY_BUTTON_CLASS}

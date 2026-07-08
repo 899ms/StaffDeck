@@ -499,7 +499,10 @@ def test_import_clawhub_skill_rejects_plain_html_page(monkeypatch) -> None:
 
 
 def test_general_skill_archive_publish_and_delete_api(monkeypatch) -> None:
+    captured_model_ids: list[str] = []
+
     def fake_run(self, skill, query, model_config, user_id="enterprise_demo", max_attempts=5, event_sink=None):  # noqa: ANN001
+        captured_model_ids.append(model_config.id)
         return {
             "skill_slug": skill.slug,
             "execution_trace": [],
@@ -514,6 +517,17 @@ def test_general_skill_archive_publish_and_delete_api(monkeypatch) -> None:
 
     with _test_session() as db:
         _seed_minimal_tenant(db)
+        db.add(
+            ModelConfig(
+                id="model_selected",
+                tenant_id="tenant_demo",
+                name="Selected model",
+                api_key_encrypted=encrypt_secret("selected-key"),
+                model="selected",
+                enabled=True,
+            )
+        )
+        db.commit()
         imported = import_general_skill(
             GeneralSkillImportRequest(
                 tenant_id="tenant_demo",
@@ -546,6 +560,19 @@ def test_general_skill_archive_publish_and_delete_api(monkeypatch) -> None:
             db,
         )
         assert result["reply"] == "北京天气 ok"
+
+        selected_result = run_general_skill(
+            imported.slug,
+            GeneralSkillRunRequest(
+                tenant_id="tenant_demo",
+                user_id="user_demo",
+                query="上海天气",
+                model_config_id="model_selected",
+            ),
+            db,
+        )
+        assert selected_result["reply"] == "上海天气 ok"
+        assert captured_model_ids[-1] == "model_selected"
 
         deleted = delete_general_skill(imported.slug, "tenant_demo", db)
         assert deleted == {"status": "deleted", "slug": "weather-zh"}

@@ -189,6 +189,7 @@ class KnowledgeSearchRequest(BaseModel):
     tenant_id: str
     agent_id: Optional[str] = None
     query: str
+    model_config_id: Optional[str] = None
     mode: Literal["chat", "skill_discovery", "debug"] = "chat"
     knowledge_base_ids: list[str] = Field(default_factory=list)
     knowledge_base_version_ids: list[str] = Field(default_factory=list)

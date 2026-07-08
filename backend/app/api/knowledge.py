@@ -452,13 +452,7 @@ def search_knowledge(
     db: Session = Depends(get_session),
 ) -> KnowledgeSearchResponse:
     ensure_tenant(db, request.tenant_id)
-    model_config = db.exec(
-        select(ModelConfig).where(
-            ModelConfig.tenant_id == request.tenant_id,
-            ModelConfig.is_default == True,  # noqa: E712
-            ModelConfig.enabled == True,  # noqa: E712
-        )
-    ).first()
+    model_config = _get_request_model(db, request.tenant_id, request.model_config_id)
     if request.agent_id:
         request.knowledge_base_version_ids = visible_knowledge_base_version_ids(
             db,
@@ -466,6 +460,25 @@ def search_knowledge(
             request.agent_id,
         )
     return KnowledgeService(db).search(request, model_config)
+
+
+def _get_default_model(db: Session, tenant_id: str) -> ModelConfig | None:
+    return db.exec(
+        select(ModelConfig).where(
+            ModelConfig.tenant_id == tenant_id,
+            ModelConfig.is_default == True,  # noqa: E712
+            ModelConfig.enabled == True,  # noqa: E712
+        )
+    ).first()
+
+
+def _get_request_model(db: Session, tenant_id: str, model_config_id: str | None = None) -> ModelConfig | None:
+    if not model_config_id:
+        return _get_default_model(db, tenant_id)
+    model_config = db.get(ModelConfig, model_config_id)
+    if not model_config or model_config.tenant_id != tenant_id or not model_config.enabled:
+        raise HTTPException(status_code=404, detail="Model config not found")
+    return model_config
 
 
 @router.get("/discoveries", response_model=list[KnowledgeDiscoveryRead])
