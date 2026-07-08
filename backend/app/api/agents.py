@@ -16,6 +16,7 @@ from app.agents.schema import (
     AgentSkillRollbackRequest,
 )
 from app.agents.branching import (
+    agent_private_metadata,
     branch_versions,
     copy_overall_scope_to_agent,
     ensure_agent_skill_branch,
@@ -640,7 +641,10 @@ def _upsert_imported_resource_binding(
     source_binding: AgentResourceBinding | None,
 ) -> None:
     status = source_binding.status if source_binding else "active"
-    metadata = dict(source_binding.metadata_json or {}) if source_binding else {}
+    metadata = agent_private_metadata(
+        target_agent.id,
+        dict(source_binding.metadata_json or {}) if source_binding else {},
+    )
     existing = db.exec(
         select(AgentResourceBinding).where(
             AgentResourceBinding.tenant_id == tenant_id,

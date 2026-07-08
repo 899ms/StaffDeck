@@ -2,7 +2,7 @@ import { ExperimentOutlined, ToolOutlined } from '../icons';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { FlaskConical } from 'lucide-react';
+import { Copy, FlaskConical, Users } from 'lucide-react';
 
 import { api, TENANT_ID } from '../api/client';
 import type { EnterpriseAuthUser } from '../auth';
@@ -10,6 +10,7 @@ import AppHeader from '@/components/AppHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { DataTable, type DataTableColumn } from '@/components/DataTable';
 import { Paginator } from '@/components/Paginator';
+import { ResourceImportDialog } from '@/components/ResourceImportDialog';
 import { StatCard } from '@/components/StatCard';
 import {
   DropdownMenu,
@@ -48,7 +49,7 @@ import IconRefresh from '../assets/icons/refresh.svg?react';
 import IconSearch from '../assets/icons/search.svg?react';
 import IconTool from '../assets/icons/plaza-tool.svg?react';
 import IconTrash from '../assets/icons/trash.svg?react';
-import { resourceCreatorNameOrAdmin } from '../employee';
+import { resourceCreatorNameOrAdmin, visibleEmployeeAgents } from '../employee';
 import { useClientPagination } from '../hooks/useClientPagination';
 import { StatusBadge } from './scheduled-tasks/StatusBadge';
 import type { AgentProfileRead, ToolRead } from '../types';
@@ -88,6 +89,13 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
   const [bucketFilter, setBucketFilter] = useState('__all__');
   const [searchText, setSearchText] = useState('');
   const [loading, setLoading] = useState(false);
+  const [agents, setAgents] = useState<AgentProfileRead[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importMode, setImportMode] = useState<'plaza' | 'employee'>('plaza');
+  const [importSourceAgentId, setImportSourceAgentId] = useState('');
+  const [importSourceTools, setImportSourceTools] = useState<ToolRead[]>([]);
+  const [importSelectedToolIds, setImportSelectedToolIds] = useState<string[]>([]);
+  const [importLoading, setImportLoading] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ToolRead | null>(null);
   const [deleting, setDeleting] = useState(false);
   const navigate = useNavigate();
@@ -115,6 +123,7 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
     const loadAgentScope = async () => {
       try {
         const agents = await api.get<AgentProfileRead[]>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`);
+        setAgents(agents);
         const selectedAgent = agents.find((agent) => agent.id === agentId) || agents.find((agent) => agent.is_overall) || null;
         setIsOverallAgent(Boolean(selectedAgent?.is_overall));
         setAgentScopeLoaded(true);
@@ -138,13 +147,15 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
   useEffect(() => {
     if (searchParams.get('add') !== 'plaza') return;
     if (!agentScopeLoaded) return;
+    const resourceId = searchParams.get('resourceId') || undefined;
     if (isOverallAgent) {
       notify.warning('请先选择一个数字员工，再从广场复制工具');
     } else {
-      handleCreateAction('plaza');
+      void openImportTools('plaza', resourceId);
     }
     const next = new URLSearchParams(searchParams);
     next.delete('add');
+    next.delete('resourceId');
     setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentScopeLoaded, isOverallAgent, searchParams, setSearchParams]);
@@ -209,11 +220,99 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
       return;
     }
     if (key === 'plaza') {
-      notify.warning('请先选择一个数字员工，再从广场复制工具');
+      if (isOverallAgent) {
+        notify.warning('请先选择一个数字员工，再从广场复制工具');
+        return;
+      }
+      void openImportTools('plaza');
       return;
     }
     if (key === 'employee') {
-      notify.info('从数字员工复制工具会在后续版本接入。');
+      if (isOverallAgent) {
+        notify.warning('请先选择一个数字员工，再从数字员工复制工具');
+        return;
+      }
+      void openImportTools('employee');
+    }
+  }
+
+  async function openImportTools(mode: 'plaza' | 'employee' = 'plaza', selectedResourceId?: string) {
+    try {
+      const agentRows = agents.length
+        ? agents
+        : await api.get<AgentProfileRead[]>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`);
+      setAgents(agentRows);
+      setImportMode(mode);
+      const candidates = mode === 'plaza'
+        ? agentRows.filter((item) => item.id !== agentId && item.is_overall)
+        : visibleEmployeeAgents(agentRows, currentUser, { activeOnly: true, excludeAgentId: agentId });
+      const firstSource = candidates[0]?.id || '';
+      setImportSourceAgentId(firstSource);
+      setImportSelectedToolIds([]);
+      setImportOpen(true);
+      if (firstSource) {
+        const sourceRows = await loadImportSourceTools(firstSource);
+        if (selectedResourceId && sourceRows.some((item) => item.id === selectedResourceId)) {
+          setImportSelectedToolIds([selectedResourceId]);
+        }
+      } else {
+        setImportSourceTools([]);
+      }
+    } catch (error) {
+      notify.error(error instanceof Error ? error.message : '加载员工失败');
+    }
+  }
+
+  async function loadImportSourceTools(sourceAgentId: string): Promise<ToolRead[]> {
+    setImportSourceTools([]);
+    setImportSelectedToolIds([]);
+    if (!sourceAgentId) return [];
+    try {
+      const sourceRows = await api.get<ToolRead[]>(
+        `/api/enterprise/tools?tenant_id=${TENANT_ID}&agent_id=${encodeURIComponent(sourceAgentId)}`,
+      );
+      const enabledRows = sourceRows.filter((item) => item.enabled);
+      setImportSourceTools(enabledRows);
+      return enabledRows;
+    } catch (error) {
+      notify.error(error instanceof Error ? error.message : '加载来源工具失败');
+      return [];
+    }
+  }
+
+  async function submitImportTools() {
+    if (!agentId) {
+      notify.warning('请先选择一个数字员工');
+      return;
+    }
+    if (!importSourceAgentId) {
+      notify.warning(importMode === 'plaza' ? '请选择工具广场' : '请选择复制来源员工');
+      return;
+    }
+    if (importSelectedToolIds.length === 0) {
+      notify.warning('请选择要复制的工具');
+      return;
+    }
+    setImportLoading(true);
+    try {
+      const result = await api.post<{ imported: Array<Record<string, unknown>>; missing: Array<Record<string, unknown>> }>(
+        `/api/enterprise/agents/${agentId}/resources/import`,
+        {
+          tenant_id: TENANT_ID,
+          source_agent_id: importSourceAgentId,
+          resource_type: 'tool',
+          resource_ids: importSelectedToolIds,
+        },
+      );
+      const importedCount = result.imported?.length || 0;
+      const missingCount = result.missing?.length || 0;
+      notify.success(`已复制 ${importedCount} 个工具${missingCount ? `，${missingCount} 个未复制` : ''}`);
+      setImportOpen(false);
+      await load();
+    } catch (error) {
+      notify.error(error instanceof Error ? error.message : '复制工具失败');
+    } finally {
+      setImportLoading(false);
     }
   }
 
@@ -457,6 +556,42 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
           )}
         </div>
       </div>
+
+      <ResourceImportDialog
+        open={importOpen}
+        loading={importLoading}
+        icon={<IconTool className="size-[14px] shrink-0" />}
+        title={importMode === 'plaza' ? '从广场复制工具' : '从数字员工复制工具'}
+        sourcePlaceholder={importMode === 'plaza' ? '选择工具广场' : '选择复制来源'}
+        sources={agents
+          .filter((item) => item.id !== agentId && (importMode === 'plaza' ? item.is_overall : !item.is_overall))
+          .map((item) => ({ value: item.id, label: item.is_overall ? '工具广场' : item.name }))}
+        sourceId={importSourceAgentId}
+        itemsLabel="选择工具"
+        items={importSourceTools.map((item) => ({
+          id: item.id,
+          label: (
+            <>
+              {item.display_name || item.name}
+              <span className="text-[#858b9c]"> · {item.name}</span>
+            </>
+          ),
+        }))}
+        selectedIds={importSelectedToolIds}
+        emptyText="没有可复制的工具"
+        note={
+          importMode === 'plaza'
+            ? '从广场复制可用工具；复制后会成为当前员工的本地工具绑定。'
+            : '从数字员工复制可用工具；不可见内容不会出现在列表。'
+        }
+        onSourceChange={(value) => {
+          setImportSourceAgentId(value);
+          void loadImportSourceTools(value);
+        }}
+        onSelectedChange={setImportSelectedToolIds}
+        onClose={() => setImportOpen(false)}
+        onSubmit={() => void submitImportTools()}
+      />
 
       <ConfirmDialog
         open={Boolean(deleteTarget)}

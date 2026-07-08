@@ -306,8 +306,80 @@ def test_copy_overall_scope_to_agent_inherits_open_gallery_tools_only() -> None:
         ).all()
 
         assert {binding.resource_id for binding in bindings} == {open_tool.id}
+        assert bindings[0].metadata_json["scope"] == "agent_private"
+        assert bindings[0].metadata_json["owner_agent_id"] == target.id
         visible_tools = list_tools(tenant_id="tenant_demo", bucket=None, agent_id=target.id, db=db)
         assert [tool.id for tool in visible_tools] == [open_tool.id]
+
+
+def test_import_open_gallery_tool_creates_private_agent_binding() -> None:
+    with _test_session() as db:
+        db.add(Tenant(id="tenant_demo", name="Demo"))
+        overall = AgentProfile(id="agent_overall", tenant_id="tenant_demo", name="开放广场", is_overall=True)
+        target = AgentProfile(id="agent_target", tenant_id="tenant_demo", name="研发员工", is_overall=False)
+        tool = Tool(
+            id="tool_open_lookup",
+            tenant_id="tenant_demo",
+            name="product.lookup",
+            display_name="商品查询",
+            method="POST",
+            url="/api/mock/product/lookup",
+            enabled=True,
+        )
+        db.add(overall)
+        db.add(target)
+        db.add(tool)
+        db.flush()
+        ensure_open_gallery_binding(db, "tenant_demo", "tool", tool.id, "active")
+        db.commit()
+
+        result = import_agent_resources(
+            target.id,
+            AgentResourceImportRequest(
+                tenant_id="tenant_demo",
+                source_agent_id=overall.id,
+                resource_type="tool",
+                resource_ids=[tool.id],
+            ),
+            db,
+        )
+
+        assert result["missing"] == []
+        assert result["imported"] == [
+            {
+                "resource_type": "tool",
+                "resource_id": tool.id,
+                "display_id": tool.name,
+                "name": tool.name,
+            }
+        ]
+        binding = db.exec(
+            select(AgentResourceBinding).where(
+                AgentResourceBinding.tenant_id == "tenant_demo",
+                AgentResourceBinding.agent_id == target.id,
+                AgentResourceBinding.resource_type == "tool",
+                AgentResourceBinding.resource_id == tool.id,
+            )
+        ).one()
+        assert binding.metadata_json["scope"] == "agent_private"
+        assert binding.metadata_json["visibility"] == "agent_private"
+        assert binding.metadata_json["owner_agent_id"] == target.id
+
+        hidden = db.exec(
+            select(AgentResourceBinding).where(
+                AgentResourceBinding.tenant_id == "tenant_demo",
+                AgentResourceBinding.agent_id == overall.id,
+                AgentResourceBinding.resource_type == "tool",
+                AgentResourceBinding.resource_id == tool.id,
+            )
+        ).one()
+        hidden.status = "deleted"
+        db.add(hidden)
+        db.commit()
+
+        assert list_tools(tenant_id="tenant_demo", bucket=None, agent_id=overall.id, db=db) == []
+        visible_tools = list_tools(tenant_id="tenant_demo", bucket=None, agent_id=target.id, db=db)
+        assert [row.id for row in visible_tools] == [tool.id]
 
 
 def test_non_overall_agent_cannot_delete_global_resources() -> None:

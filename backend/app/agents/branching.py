@@ -852,6 +852,7 @@ def copy_open_gallery_tools_to_agent(db: Session, tenant_id: str, agent: AgentPr
             "tool",
             tool.id,
             "active" if tool.enabled else "inactive",
+            metadata_json=agent_private_metadata(agent.id),
         )
 
 
