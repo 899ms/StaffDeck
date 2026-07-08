@@ -98,7 +98,7 @@ export default function ChatDialogs({ chat }: { chat: UseChatSession }) {
                     <Textarea
                       rows={3}
                       value={handoffReplies[handoff.id] || ''}
-                      placeholder="以当前数字员工的口吻回复。提交后，原会话会继续推进技能流程。"
+                      placeholder="以当前数字员工的口吻回复。提交后，原会话会继续推进 SOP 流程。"
                       onChange={(event) => setHandoffReplies((prev) => ({
                         ...prev,
                         [handoff.id]: event.target.value,

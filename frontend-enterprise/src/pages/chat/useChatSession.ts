@@ -1614,7 +1614,7 @@ export function useChatSession() {
       upsertTraceLine(traceTurnId, {
         id: `general_skill_${skillSlug || skillName || 'selected'}`,
         kind: 'skill',
-        text: `选择技能 ${skillName || skillSlug || ''}`.trim(),
+        text: `选择通用技能 ${skillName || skillSlug || ''}`.trim(),
         detail: skillSlug || undefined,
         state: 'running',
       });
@@ -1626,7 +1626,7 @@ export function useChatSession() {
         notifyStream();
         return;
       }
-      const text = typeof item.data.message === 'string' ? item.data.message : '执行技能';
+      const text = typeof item.data.message === 'string' ? item.data.message : '执行通用技能';
       const code = typeof item.data.code === 'string' ? item.data.code : '';
       const runtime = typeof item.data.runtime === 'string' ? item.data.runtime : '';
       const attempt = typeof item.data.attempt === 'number' || typeof item.data.attempt === 'string'
@@ -1902,7 +1902,7 @@ export function useChatSession() {
         upsertTraceLine(traceTurnId, {
           id: 'decision_router',
           kind: 'decision',
-          text: userIntent ? `判断意图 ${userIntent}` : '完成技能判断',
+          text: userIntent ? `判断意图 ${userIntent}` : '完成SOP判断',
           detail: decisionReason || undefined,
           state: 'completed',
         });

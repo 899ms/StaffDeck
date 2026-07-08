@@ -397,6 +397,7 @@ export function traceLineIconName(line: TraceLine): CotTraceIconName {
   const text = `${primaryText} ${line.detail || ''}`;
   if (/判断意图|意图识别|识别意图|router|routing/i.test(primaryText)) return 'judge';
   if (/重新分析|重新生成|重新校验|重新尝试|重新规划|反思|重试|修复|repair|retry|review/i.test(primaryText)) return 'loading';
+  if (/通用技能/.test(text)) return 'advance';
   if (line.kind === 'tool' || /工具|调用/.test(primaryText)) return 'tool';
   if (line.kind === 'code' || line.code || line.output || /生成代码|代码生成|已生成|执行代码|运行代码|Bash|Python|脚本/i.test(primaryText)) return 'generated';
   if (line.kind === 'skill' || /推进|下一步|下一节点|继续|流转|路由|步骤|技能|SOP/i.test(text)) return 'advance';
@@ -996,20 +997,20 @@ export function normalizeTraceSkill(value: unknown): TraceSkill | null {
 }
 
 export function streamSkillLabel(data: Record<string, unknown>, skill: TraceSkill): string {
-  if (skill.state === 'suspended') return '挂起技能';
+  if (skill.state === 'suspended') return '挂起SOP';
   const decision = typeof data.runtimeDecision === 'string' ? data.runtimeDecision : '';
   const fromSkillId = typeof data.fromSkillId === 'string' ? data.fromSkillId : '';
   const toSkillId = typeof data.toSkillId === 'string' ? data.toSkillId : '';
-  if (decision === 'start_skill') return '选择技能';
-  if (decision === 'suspend_current_and_start_new_skill') return '切换技能';
+  if (decision === 'start_skill') return '选择SOP';
+  if (decision === 'suspend_current_and_start_new_skill') return '切换SOP';
   if (
     (decision === 'answer_related_question_then_resume' || decision === 'answer_chitchat_then_resume')
     && fromSkillId
     && toSkillId
     && fromSkillId !== toSkillId
-  ) return '切换技能';
-  if (decision === 'exit_current_skill') return '恢复技能';
-  return '推进技能';
+  ) return '切换SOP';
+  if (decision === 'exit_current_skill') return '恢复SOP';
+  return '推进SOP';
 }
 
 export function normalizeTraceTool(value: unknown): TraceTool | null {
@@ -1051,7 +1052,7 @@ export function reflectionTraceDetail(data: Record<string, unknown>): string | u
   const parts = [
     typeof data.reason === 'string' ? data.reason : '',
     typeof data.target_tool_name === 'string' ? `工具 ${data.target_tool_name}` : '',
-    typeof data.target_skill_id === 'string' ? `技能 ${data.target_skill_id}` : '',
+    typeof data.target_skill_id === 'string' ? `SOP ${data.target_skill_id}` : '',
     typeof data.target_step_id === 'string' ? `步骤 ${data.target_step_id}` : '',
   ].filter(Boolean);
   return parts.length > 0 ? parts.join(' · ') : undefined;
@@ -1063,7 +1064,7 @@ export function routerDecisionTraceLine(data: Record<string, unknown>): TraceLin
   const skillId = typeof data.target_skill_id === 'string' ? data.target_skill_id.trim() : '';
   const stepId = typeof data.target_step_id === 'string' ? data.target_step_id.trim() : '';
   const reason = typeof data.reason === 'string' ? data.reason.trim() : '';
-  const detail = [reason, skillId ? `目标技能 ${skillId}` : '', stepId ? `目标节点 ${stepId}` : '']
+  const detail = [reason, skillId ? `目标SOP ${skillId}` : '', stepId ? `目标节点 ${stepId}` : '']
     .filter(Boolean)
     .join(' · ');
   return {

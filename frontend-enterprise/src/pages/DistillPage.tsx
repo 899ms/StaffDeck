@@ -819,7 +819,7 @@ export default function DistillPage({ active = true, searchParamsOverride, curre
     const payload = parseInitialSkillPrompt(text);
     setLoading(true);
     setSourceAutoScroll(true);
-    setStreamStatus('正在生成技能草稿');
+    setStreamStatus('正在生成 SOP 草稿');
     let streamBuffer = '';
     let latestPreview = createStreamingDraftSeed(payload);
     let latestPreviewSignature = JSON.stringify(latestPreview);
@@ -878,7 +878,7 @@ export default function DistillPage({ active = true, searchParamsOverride, curre
             const draftSkill = item.data.draft_skill as SkillCard;
             const nextWarnings = Array.isArray(item.data.warnings) ? item.data.warnings.map(String) : [];
             const nextToolSuggestions = normalizeToolSuggestions(item.data.tool_suggestions);
-            appendThinkingDetail(assistantId, `已生成技能草稿：${draftSkill.name}`);
+            appendThinkingDetail(assistantId, `已生成 SOP 草稿：${draftSkill.name}`);
             clearAnimationTimers();
             setDraft(draftSkill);
             setHighlightedPaths([]);
@@ -892,7 +892,7 @@ export default function DistillPage({ active = true, searchParamsOverride, curre
                 thinking: 'done',
                 warnings: nextWarnings,
                 toolSuggestions: nextToolSuggestions,
-                operations: [{ kind: 'skill_change', label: `生成技能草稿：${draftSkill.name}`, skillId: draftSkill.skill_id }],
+                operations: [{ kind: 'skill_change', label: `生成 SOP 草稿：${draftSkill.name}`, skillId: draftSkill.skill_id }],
               },
             );
             setStreamStatus('生成完成');
@@ -1193,7 +1193,7 @@ export default function DistillPage({ active = true, searchParamsOverride, curre
     setUpdatingPaths([]);
     setTextDiffs([]);
     setSelectedPaths(DEFAULT_TARGET_PATHS);
-    appendThinkingDetail(job.assistantId, `已生成技能草稿：${draftSkill.name}`);
+    appendThinkingDetail(job.assistantId, `已生成 SOP 草稿：${draftSkill.name}`);
     updateMessage(
       job.assistantId,
       `已生成「${draftSkill.name}」草稿。你可以在右侧选择一个或多个区域继续改写。`,
@@ -1201,7 +1201,7 @@ export default function DistillPage({ active = true, searchParamsOverride, curre
         thinking: 'done',
         warnings: nextWarnings,
         toolSuggestions: nextToolSuggestions,
-        operations: [{ kind: 'skill_change', label: `生成技能草稿：${draftSkill.name}`, skillId: draftSkill.skill_id }],
+        operations: [{ kind: 'skill_change', label: `生成 SOP 草稿：${draftSkill.name}`, skillId: draftSkill.skill_id }],
       },
     );
     setStreamStatus('生成完成');
@@ -1481,7 +1481,7 @@ export default function DistillPage({ active = true, searchParamsOverride, curre
       (item) => toolSuggestionResolution(item) === 'new_candidate' && item.status === 'accepted',
     );
     if (acceptedSuggestions.length === 0) {
-      notify.info('所有工具建议已拒绝，技能草稿未变更');
+      notify.info('所有工具建议已拒绝，SOP 草稿未变更');
       return;
     }
     try {
@@ -2360,7 +2360,7 @@ export default function DistillPage({ active = true, searchParamsOverride, curre
           {!draft ? (
             <div className={SOURCE_EMPTY_STATE_CLASS}>
               <FileTextOutlined className="text-[28px] text-[#c0c6d4]" />
-              <p className={SOURCE_EMPTY_TEXT_CLASS}>暂无技能草稿</p>
+              <p className={SOURCE_EMPTY_TEXT_CLASS}>暂无 SOP 草稿</p>
               <p className="text-[12px] leading-[18px] text-[#c0c6d4]">在左侧输入说明或上传文档后开始生成</p>
             </div>
           ) : viewMode === 'source' ? (
@@ -2430,7 +2430,7 @@ export default function DistillPage({ active = true, searchParamsOverride, curre
       <KDialog
         open={saveReviewOpen}
         onOpenChange={(open) => !open && closeSaveReview()}
-        title="保存技能版本"
+        title="保存SOP版本"
         width={820}
         footer={
           <div className="flex flex-wrap justify-end gap-[8px]">
@@ -2441,7 +2441,7 @@ export default function DistillPage({ active = true, searchParamsOverride, curre
       >
         <div className={SAVE_REVIEW_FORM_CLASS}>
           <label className={SAVE_REVIEW_FORM_LABEL_CLASS}>
-            <span>技能名称</span>
+            <span>SOP名称</span>
             <Input value={saveName} onChange={(event) => setSaveName(event.target.value)} />
           </label>
           <label className={SAVE_REVIEW_FORM_LABEL_CLASS}>
@@ -2546,7 +2546,7 @@ export default function DistillPage({ active = true, searchParamsOverride, curre
           destructive={false}
           description={
             <div>
-              <p className="m-0 mb-[8px]">重新编辑会回到这条消息发送前的技能草稿，并截断之后的推理记录。</p>
+              <p className="m-0 mb-[8px]">重新编辑会回到这条消息发送前的 SOP 草稿，并截断之后的推理记录。</p>
               <div className="rollback-operation-list flex flex-wrap gap-[6px]">
                 {rerunConfirm.rollbackOperations.map((operation, operationIndex) => (
                   <DistillTag key={`${operation.kind}_${operationIndex}`}>{operation.label}</DistillTag>

@@ -2703,7 +2703,7 @@ def _event_trace_line(
                 continue
             name = str(entry.get("name") or skill_id).strip()
             state = str(entry.get("state") or "active").strip()
-            label = "挂起技能" if state == "suspended" else "等待技能" if state == "pending" else "执行技能"
+            label = "挂起SOP" if state == "suspended" else "等待SOP" if state == "pending" else "执行SOP"
             step_id = str(entry.get("stepId") or "").strip()
             lines.append(
                 {
@@ -2723,7 +2723,7 @@ def _event_trace_line(
         return {
             "id": "decision_router",
             "kind": "decision",
-            "text": f"判断意图 {intent}" if intent else "完成技能判断",
+            "text": f"判断意图 {intent}" if intent else "完成SOP判断",
             "detail": reason or None,
             "state": "completed",
         }
@@ -2782,13 +2782,13 @@ def _event_trace_line(
             and from_skill_id != to_skill_id
         )
         label = {
-            "skill_started": "选择技能",
-            "skill_suspended": "切换技能",
-            "skill_resumed": "恢复技能",
-            "skill_step_changed": "推进技能",
+            "skill_started": "选择SOP",
+            "skill_suspended": "切换SOP",
+            "skill_resumed": "恢复SOP",
+            "skill_step_changed": "推进SOP",
         }[event.event_type]
         if is_interrupt_switch:
-            label = "切换技能"
+            label = "切换SOP"
         detail_parts = []
         if from_skill_id and from_skill_id != to_skill_id:
             detail_parts.append(f"from {skill_names.get(from_skill_id, from_skill_id)}")
@@ -2815,7 +2815,7 @@ def _event_trace_line(
                 {
                     "id": f"skill_{event.id}_suspended_{index}",
                     "kind": "skill",
-                    "text": f"挂起技能 {skill_names.get(suspended_skill_id, suspended_skill_id)}",
+                    "text": f"挂起SOP {skill_names.get(suspended_skill_id, suspended_skill_id)}",
                     "detail": f"当前步骤 {suspended_step_id}" if suspended_step_id else None,
                     "state": "completed",
                 }
@@ -2826,7 +2826,7 @@ def _event_trace_line(
                 {
                     "id": f"skill_{event.id}_suspended_from",
                     "kind": "skill",
-                    "text": f"挂起技能 {skill_names.get(from_skill_id, from_skill_id)}",
+                    "text": f"挂起SOP {skill_names.get(from_skill_id, from_skill_id)}",
                     "detail": f"当前步骤 {from_step_id}" if from_step_id else None,
                     "state": "completed",
                 }
@@ -2837,7 +2837,7 @@ def _event_trace_line(
         return {
             "id": f"skill_{event.id}",
             "kind": "skill",
-            "text": f"完成技能 {skill_names.get(skill_id, skill_id)}" if skill_id else "完成技能",
+            "text": f"完成SOP {skill_names.get(skill_id, skill_id)}" if skill_id else "完成SOP",
             "detail": str(payload.get("reason") or "") or None,
             "state": "completed",
         }
@@ -2956,7 +2956,7 @@ def _event_trace_line(
         return {
             "id": f"decision_{event.id}",
             "kind": "decision",
-            "text": f"重试{ '工具' if mode == 'tool' else '技能' } {target}".strip(),
+            "text": f"重试{ '工具' if mode == 'tool' else 'SOP' } {target}".strip(),
             "detail": str(payload.get("reason") or "") or None,
             "state": "completed",
         }
