@@ -13,6 +13,8 @@ export type StreamSlot = {
   turnId: string | null;
   cancelledTurnId: string | null;
   abortController: AbortController | null;
+  relayRecoveryStartedAt: number | null;
+  relayRecoveryTurnId: string | null;
 };
 
 export type TraceSkill = {
@@ -74,6 +76,8 @@ export function createStreamSlot(): StreamSlot {
     turnId: null,
     cancelledTurnId: null,
     abortController: null,
+    relayRecoveryStartedAt: null,
+    relayRecoveryTurnId: null,
   };
 }
 

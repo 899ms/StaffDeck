@@ -225,6 +225,13 @@ export function canManageEmployeeAgent(
   return isEnterpriseAdmin(user) || isEmployeeOwnedBy(agent, user);
 }
 
+export function isMyEmployeeAgent(
+  agent: AgentProfileRead,
+  user?: EnterpriseAuthUser | null,
+): boolean {
+  return !agent.is_overall && isEmployeeOwnedBy(agent, user);
+}
+
 export function visibleEmployeeAgents(
   rows: AgentProfileRead[],
   user?: EnterpriseAuthUser | null,

@@ -19,6 +19,7 @@ import {
   employeeDisplayName,
   employeeDisplayNameWithCreator,
   employeeProfile,
+  isMyEmployeeAgent,
   visibleEmployeeAgents,
 } from '../employee';
 import type { AgentProfileRead } from '../types';
@@ -72,7 +73,7 @@ export default function EmployeeGalleryPage({
     [agents, currentUser],
   );
   const myEmployees = useMemo(
-    () => availableAgents.filter((item) => canManageEmployeeAgent(item, currentUser)),
+    () => availableAgents.filter((item) => isMyEmployeeAgent(item, currentUser)),
     [availableAgents, currentUser],
   );
   const galleryEmployees = useMemo(() => {

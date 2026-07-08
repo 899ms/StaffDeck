@@ -137,6 +137,7 @@ select,
 }
 
 .sd1-trace-flow-text {
+  display: inline-block;
   color: transparent;
   background-color: var(--thinking-base);
   background-image: linear-gradient(
@@ -147,6 +148,7 @@ select,
     var(--thinking-base) 58%,
     var(--thinking-base) 100%
   );
+  background-position: 125% 0;
   background-repeat: no-repeat;
   background-size: 260% 100%;
   -webkit-background-clip: text;

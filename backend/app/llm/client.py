@@ -22,6 +22,28 @@ JSON_REPAIR_ATTEMPTS = 3
 EMPTY_RESPONSE_RETRIES = 2
 EMPTY_RESPONSE_MESSAGE = "Model returned an empty response"
 DEFAULT_MODEL_API_TIMEOUT_SECONDS = 600.0
+MULTIMODAL_UNSUPPORTED_MESSAGE = "该模型目前不支持多模态输入"
+_VISION_MODEL_PATTERNS = (
+    r"\bgpt-4o\b",
+    r"\bgpt-4\.1\b",
+    r"\bgpt-5\b",
+    r"\bo3\b",
+    r"\bo4\b",
+    r"\bclaude-(3|4)\b",
+    r"\bgemini\b",
+    r"\bglm-4v\b",
+    r"\bqwen[^,\s]*[-_./]vl\b",
+    r"\bqvq\b",
+    r"\bvl[-_./]max\b",
+    r"\bvision\b",
+    r"\bvisual\b",
+    r"\bomni\b",
+    r"\bllava\b",
+    r"\binternvl\b",
+    r"\bminicpm[-_./]?v\b",
+    r"\bkimi[-_./]?vl\b",
+    r"\bdoubao[^,\s]*vision\b",
+)
 
 
 class LLMClient:
@@ -46,6 +68,8 @@ class LLMClient:
         response_format: dict[str, str] | None = None,
     ) -> str:
         context_messages, serialized_payload = _project_context_messages(user_payload)
+        if _messages_include_images(context_messages) and not model_supports_images(self.model):
+            raise LLMError(MULTIMODAL_UNSUPPORTED_MESSAGE)
         serialized = json.dumps(serialized_payload, ensure_ascii=False)
         try:
             request: dict[str, Any] = {
@@ -78,6 +102,8 @@ class LLMClient:
 
     def generate_text_stream(self, system_prompt: str, user_payload: dict[str, Any]) -> Iterator[str]:
         context_messages, serialized_payload = _project_context_messages(user_payload)
+        if _messages_include_images(context_messages) and not model_supports_images(self.model):
+            raise LLMError(MULTIMODAL_UNSUPPORTED_MESSAGE)
         serialized = json.dumps(serialized_payload, ensure_ascii=False)
         try:
             stream = self.client.chat.completions.create(
@@ -304,7 +330,14 @@ def _empty_response(message: str) -> bool:
     return EMPTY_RESPONSE_MESSAGE.lower() in message.lower()
 
 
-def _project_context_messages(user_payload: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any]]:
+def model_supports_images(model_config_or_name: Any) -> bool:
+    model = str(getattr(model_config_or_name, "model", model_config_or_name) or "").lower()
+    provider = str(getattr(model_config_or_name, "provider", "") or "").lower()
+    text = f"{provider} {model}"
+    return any(re.search(pattern, text) for pattern in _VISION_MODEL_PATTERNS)
+
+
+def _project_context_messages(user_payload: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     payload = copy.deepcopy(user_payload)
     context = payload.get("conversation_context")
     if not isinstance(context, dict):
@@ -312,13 +345,54 @@ def _project_context_messages(user_payload: dict[str, Any]) -> tuple[list[dict[s
     messages = context.pop("messages", [])
     if not isinstance(messages, list):
         return [], payload
-    projected: list[dict[str, str]] = []
+    projected: list[dict[str, Any]] = []
     for message in messages:
         if not isinstance(message, dict):
             continue
         role = str(message.get("role") or "").strip()
         content = str(message.get("content") or "").strip()
-        if role not in {"system", "user", "assistant"} or not content:
+        images = _normalize_image_parts(message.get("images"))
+        if role not in {"system", "user", "assistant"} or (not content and not images):
             continue
-        projected.append({"role": role, "content": content})
+        if images and role == "user":
+            projected.append(
+                {
+                    "role": role,
+                    "content": [
+                        {"type": "text", "text": content or "（用户上传了图片附件）"},
+                        *images,
+                    ],
+                }
+            )
+        else:
+            projected.append({"role": role, "content": content})
     return projected, payload
+
+
+def _normalize_image_parts(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    parts: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "image_url" and isinstance(item.get("image_url"), dict):
+            url = str(item["image_url"].get("url") or "").strip()
+            if not url:
+                continue
+            image_url: dict[str, Any] = {"url": url}
+            detail = str(item["image_url"].get("detail") or "").strip()
+            if detail:
+                image_url["detail"] = detail
+            parts.append({"type": "image_url", "image_url": image_url})
+    return parts
+
+
+def _messages_include_images(messages: list[dict[str, Any]]) -> bool:
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        if any(isinstance(item, dict) and item.get("type") == "image_url" for item in content):
+            return True
+    return False

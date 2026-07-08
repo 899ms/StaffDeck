@@ -16,7 +16,12 @@ from app.agents.branching import model_for_agent, visible_knowledge_base_ids, vi
 from app.core.conversation_context import build_conversation_context
 from app.core.cancellation import clear_chat_turn_cancelled, is_chat_turn_cancelled
 from app.core.reflection_agent import ReflectionAgent, ReflectionDecision, action_needs_reflection
-from app.core.response_generator import FALLBACK_REPLY, ResponseGenerator
+from app.core.response_generator import (
+    FALLBACK_REPLY,
+    MODEL_FAILURE_SUGGESTION,
+    ResponseGenerator,
+    format_runtime_failure_reply,
+)
 from app.core.router import Router
 from app.core.skill_runtime import SkillRuntime
 from app.core.step_agent import StepAgent
@@ -42,11 +47,15 @@ from app.general_skills.schema import GeneralSkillRunResponse, GeneralSkillSelec
 from app.knowledge import KnowledgeService
 from app.knowledge.citations import knowledge_citations_from_results
 from app.knowledge.schema import KnowledgeSearchRequest, KnowledgeSearchResponse
-from app.llm import LLMError
+from app.llm import LLMError, MULTIMODAL_UNSUPPORTED_MESSAGE, model_supports_images
 from app.memory.jobs import enqueue_memory_capture
 from app.memory.service import MemoryService, memory_read
 from app.observability import EventLog
-from app.session.attachments import message_content_with_attachment_context
+from app.session.attachments import (
+    message_content_with_attachment_context,
+    message_images_from_metadata,
+    request_has_image_attachments,
+)
 from app.session.helpers import public_session
 from app.session.session_schema import (
     ChatTurnRequest,
@@ -420,7 +429,7 @@ class AgentLoop:
                 "error_occurred",
                 {"code": "LLM_ERROR", "message": str(exc)},
             )
-            reply = FALLBACK_REPLY
+            reply = format_runtime_failure_reply("模型调用失败", exc, "LLM_ERROR", MODEL_FAILURE_SUGGESTION)
         except Exception as exc:
             chat_session = chat_session or self._get_or_create_session(request)
             self.events.record(
@@ -429,7 +438,12 @@ class AgentLoop:
                 "error_occurred",
                 {"code": "AGENT_LOOP_ERROR", "message": str(exc)},
             )
-            reply = FALLBACK_REPLY
+            reply = format_runtime_failure_reply(
+                "Agent Loop 出错",
+                exc,
+                "AGENT_LOOP_ERROR",
+                "请查看执行记录或服务日志定位具体原因。",
+            )
 
         if not chat_session:
             chat_session = self._get_or_create_session(request)
@@ -1293,6 +1307,7 @@ class AgentLoop:
             model_config = self._get_request_model(request, chat_session.agent_id)
             if not model_config:
                 raise AgentLoopPreconditionError("missing_model_config", "没有默认模型配置。")
+            self._ensure_request_multimodal_supported(request, model_config)
             memory_model_config = model_config
             skills = self._list_published_skills(request.tenant_id, chat_session.agent_id)
             tools = self._tools_with_general_skills(
@@ -1813,14 +1828,25 @@ class AgentLoop:
             chat_session = chat_session or self._get_or_create_session(request)
             if mark_current_turn_cancelled():
                 return
+            reply = format_runtime_failure_reply(
+                "系统配置错误",
+                exc.message,
+                exc.code,
+                "请在管理端补齐配置后重试。",
+            )
             self.events.record(
                 request.tenant_id,
                 chat_session.id,
                 "error_occurred",
                 {"code": exc.code, "message": exc.message},
             )
-            yield self._stream_status(chat_session, "error", exc.message, {"code": exc.code}, user_message_id=user_message_id)
-            reply = FALLBACK_REPLY
+            yield self._stream_status(
+                chat_session,
+                "error",
+                reply,
+                {"code": exc.code, "message": exc.message},
+                user_message_id=user_message_id,
+            )
             for chunk in self.response_generator.chunk_text(reply):
                 yield self._stream_event(
                     "stream_delta",
@@ -1833,6 +1859,7 @@ class AgentLoop:
             chat_session = chat_session or self._get_or_create_session(request)
             if mark_current_turn_cancelled():
                 return
+            reply = format_runtime_failure_reply("模型调用失败", exc, "LLM_ERROR", MODEL_FAILURE_SUGGESTION)
             self.events.record(
                 request.tenant_id,
                 chat_session.id,
@@ -1842,11 +1869,10 @@ class AgentLoop:
             yield self._stream_status(
                 chat_session,
                 "error",
-                "模型调用失败",
-                {"code": "LLM_ERROR"},
+                reply,
+                {"code": "LLM_ERROR", "message": str(exc)},
                 user_message_id=user_message_id,
             )
-            reply = FALLBACK_REPLY
             for chunk in self.response_generator.chunk_text(reply):
                 yield self._stream_event(
                     "stream_delta",
@@ -1859,6 +1885,12 @@ class AgentLoop:
             chat_session = chat_session or self._get_or_create_session(request)
             if mark_current_turn_cancelled():
                 return
+            reply = format_runtime_failure_reply(
+                "Agent Loop 出错",
+                exc,
+                "AGENT_LOOP_ERROR",
+                "请查看执行记录或服务日志定位具体原因。",
+            )
             self.events.record(
                 request.tenant_id,
                 chat_session.id,
@@ -1868,11 +1900,10 @@ class AgentLoop:
             yield self._stream_status(
                 chat_session,
                 "error",
-                "Agent Loop 出错",
-                {"code": "AGENT_LOOP_ERROR"},
+                reply,
+                {"code": "AGENT_LOOP_ERROR", "message": str(exc)},
                 user_message_id=user_message_id,
             )
-            reply = FALLBACK_REPLY
             for chunk in self.response_generator.chunk_text(reply):
                 yield self._stream_event(
                     "stream_delta",
@@ -2007,6 +2038,7 @@ class AgentLoop:
         )
         if not model_config:
             raise AgentLoopPreconditionError("missing_model_config", "没有默认模型配置。")
+        self._ensure_request_multimodal_supported(request, model_config)
         self._drop_unavailable_skill_state(request.tenant_id, chat_session, skills)
         if not skills:
             router_decision = RouterDecision(
@@ -5506,7 +5538,11 @@ class AgentLoop:
             return True
         return target_skill_id in {skill.skill_id for skill in skills}
 
-    def _recent_messages(self, chat_session: ChatSession, limit: int = 8) -> list[dict[str, str]]:
+    def _ensure_request_multimodal_supported(self, request: ChatTurnRequest, model_config: ModelConfig) -> None:
+        if request_has_image_attachments(request.attachments) and not model_supports_images(model_config):
+            raise LLMError(MULTIMODAL_UNSUPPORTED_MESSAGE)
+
+    def _recent_messages(self, chat_session: ChatSession, limit: int = 8) -> list[dict[str, Any]]:
         if not hasattr(self, "db"):
             return []
         rows = list(
@@ -5518,13 +5554,7 @@ class AgentLoop:
             ).all()
         )
         rows.reverse()
-        return [
-            {
-                "role": row.role,
-                "content": message_content_with_attachment_context(row.content, row.metadata_json),
-            }
-            for row in rows
-        ]
+        return [self._message_context_entry(row) for row in rows]
 
     def _conversation_context(
         self, chat_session: ChatSession, max_messages: int | None = None
@@ -5540,15 +5570,17 @@ class AgentLoop:
         )
         if max_messages is not None and max_messages > 0:
             rows = rows[-max_messages:]
-        return build_conversation_context(
-            [
-                {
-                    "role": row.role,
-                    "content": message_content_with_attachment_context(row.content, row.metadata_json),
-                }
-                for row in rows
-            ]
-        )
+        return build_conversation_context([self._message_context_entry(row) for row in rows])
+
+    def _message_context_entry(self, row: Message) -> dict[str, Any]:
+        entry: dict[str, Any] = {
+            "role": row.role,
+            "content": message_content_with_attachment_context(row.content, row.metadata_json),
+        }
+        images = message_images_from_metadata(row.metadata_json)
+        if images and row.role == "user":
+            entry["images"] = images
+        return entry
 
     def _assistant_message_metadata(
         self,
@@ -5917,17 +5949,23 @@ class AgentLoop:
     def _finish_with_error(
         self, chat_session: ChatSession, code: str, message: str
     ) -> ChatTurnResponse:
+        reply = format_runtime_failure_reply(
+            "系统配置错误",
+            message,
+            code,
+            "请在管理端补齐配置后重试。",
+        )
         self.events.record(
             chat_session.tenant_id,
             chat_session.id,
             "error_occurred",
             {"code": code, "message": message},
         )
-        self._finalize_turn(chat_session, chat_session.tenant_id, FALLBACK_REPLY)
+        self._finalize_turn(chat_session, chat_session.tenant_id, reply)
         self.db.commit()
         self.db.refresh(chat_session)
         return ChatTurnResponse(
-            reply=FALLBACK_REPLY,
+            reply=reply,
             session_id=chat_session.id,
             session_state=public_session(chat_session),
         )

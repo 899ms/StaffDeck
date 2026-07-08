@@ -1,5 +1,5 @@
 from app.api.chat import _user_message_metadata
-from app.session.attachments import message_content_with_attachment_context, parse_chat_attachment
+from app.session.attachments import image_payloads_from_attachments, message_content_with_attachment_context, parse_chat_attachment
 from app.session.session_schema import ChatTurnRequest
 
 
@@ -30,6 +30,23 @@ def test_user_message_metadata_keeps_attachments() -> None:
 
     assert metadata["attachments"][0]["filename"] == "readme.md"
     assert metadata["attachments"][0]["kind"] == "text"
+
+
+def test_image_attachment_uses_supported_extension_and_builds_image_payload() -> None:
+    attachment = parse_chat_attachment("screen.PNG", "application/octet-stream", b"image-bytes")
+
+    assert attachment.kind == "image"
+    assert attachment.content_type == "image/png"
+    assert attachment.data_url is not None
+    assert image_payloads_from_attachments([attachment]) == [
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": attachment.data_url,
+                "detail": "auto",
+            },
+        }
+    ]
 
 
 def test_message_context_appends_attachment_text() -> None:

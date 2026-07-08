@@ -16,6 +16,15 @@ from app.session.session_schema import ChatAttachmentRead
 MAX_EXTRACTED_TEXT_CHARS = 24_000
 MAX_PREVIEW_CHARS = 600
 IMAGE_DATA_URL_LIMIT_BYTES = 4 * 1024 * 1024
+SUPPORTED_IMAGE_EXTENSIONS = {".gif", ".png", ".svg", ".jpg", ".jpeg", ".webp", ".bmp"}
+SUPPORTED_IMAGE_CONTENT_TYPES = {
+    "image/gif",
+    "image/png",
+    "image/svg+xml",
+    "image/jpeg",
+    "image/webp",
+    "image/bmp",
+}
 TEXT_EXTENSIONS = {
     ".txt",
     ".md",
@@ -37,7 +46,8 @@ def parse_chat_attachment(filename: str, content_type: str | None, data: bytes) 
     safe_name = _safe_filename(filename)
     detected_type = content_type or mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
     lower_name = safe_name.lower()
-    if detected_type.startswith("image/"):
+    if _is_supported_image_file(lower_name, detected_type):
+        detected_type = _image_content_type_for(lower_name, detected_type)
         return _image_attachment(safe_name, detected_type, data)
     if lower_name.endswith(".pdf") or detected_type == "application/pdf":
         return _pdf_attachment(safe_name, detected_type, data)
@@ -88,6 +98,38 @@ def message_content_with_attachment_context(content: str, metadata: dict[str, An
     if not lines:
         return content
     return "\n\n".join([content.strip() or "（用户仅上传了附件）", "\n".join(lines)])
+
+
+def image_payloads_from_attachments(attachments: Iterable[ChatAttachmentRead | dict[str, Any]]) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    normalized = [_coerce_attachment(item) for item in attachments]
+    for attachment in normalized:
+        if not attachment or not _attachment_is_supported_image(attachment) or not attachment.data_url:
+            continue
+        payloads.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": attachment.data_url,
+                    "detail": "auto",
+                },
+            }
+        )
+    return payloads
+
+
+def message_images_from_metadata(metadata: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(metadata, dict):
+        return []
+    attachments = metadata.get("attachments")
+    if not isinstance(attachments, list):
+        return []
+    return image_payloads_from_attachments(attachments)
+
+
+def request_has_image_attachments(attachments: Iterable[ChatAttachmentRead | dict[str, Any]]) -> bool:
+    normalized = [_coerce_attachment(item) for item in attachments]
+    return any(bool(item and _attachment_is_supported_image(item)) for item in normalized)
 
 
 def _text_attachment(filename: str, content_type: str, data: bytes) -> ChatAttachmentRead:
@@ -233,6 +275,37 @@ def _is_text_file(lower_name: str, content_type: str) -> bool:
             "application/yaml",
         }
     )
+
+
+def _is_supported_image_file(lower_name: str, content_type: str) -> bool:
+    extension = "." + lower_name.rsplit(".", 1)[-1] if "." in lower_name else ""
+    return content_type.lower() in SUPPORTED_IMAGE_CONTENT_TYPES or extension in SUPPORTED_IMAGE_EXTENSIONS
+
+
+def _attachment_is_supported_image(attachment: ChatAttachmentRead) -> bool:
+    return attachment.kind == "image" and _is_supported_image_file(attachment.filename.lower(), attachment.content_type)
+
+
+def _image_content_type_for(lower_name: str, content_type: str) -> str:
+    normalized = content_type.lower()
+    if normalized in SUPPORTED_IMAGE_CONTENT_TYPES:
+        return content_type
+    guessed = mimetypes.guess_type(lower_name)[0]
+    if guessed and guessed.lower() in SUPPORTED_IMAGE_CONTENT_TYPES:
+        return guessed
+    if lower_name.endswith((".jpg", ".jpeg")):
+        return "image/jpeg"
+    if lower_name.endswith(".png"):
+        return "image/png"
+    if lower_name.endswith(".gif"):
+        return "image/gif"
+    if lower_name.endswith(".svg"):
+        return "image/svg+xml"
+    if lower_name.endswith(".webp"):
+        return "image/webp"
+    if lower_name.endswith(".bmp"):
+        return "image/bmp"
+    return content_type
 
 
 def _coerce_attachment(value: ChatAttachmentRead | dict[str, Any]) -> ChatAttachmentRead | None:

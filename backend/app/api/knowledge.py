@@ -248,7 +248,9 @@ def list_jobs(
         statuses = [item.strip() for item in status.split(",") if item.strip()]
         if statuses:
             statement = statement.where(KnowledgeIngestJob.status.in_(statuses))
-    rows = db.exec(statement.order_by(KnowledgeIngestJob.updated_at.desc()).limit(limit)).all()
+    rows = db.exec(
+        statement.order_by(KnowledgeIngestJob.created_at.desc(), KnowledgeIngestJob.id.desc()).limit(limit)
+    ).all()
     return [job_read(row) for row in rows]
 
 
@@ -257,6 +259,15 @@ def get_job(job_id: str, tenant_id: str = Query(...), db: Session = Depends(get_
     ensure_tenant(db, tenant_id)
     job = db.get(KnowledgeIngestJob, job_id)
     if not job or job.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Knowledge ingest job not found")
+    return job_read(job)
+
+
+@router.post("/jobs/{job_id}/cancel", response_model=KnowledgeIngestJobRead)
+def cancel_job(job_id: str, tenant_id: str = Query(...), db: Session = Depends(get_session)) -> KnowledgeIngestJobRead:
+    ensure_tenant(db, tenant_id)
+    job = KnowledgeService(db).cancel_ingest_job(job_id, tenant_id)
+    if not job:
         raise HTTPException(status_code=404, detail="Knowledge ingest job not found")
     return job_read(job)
 

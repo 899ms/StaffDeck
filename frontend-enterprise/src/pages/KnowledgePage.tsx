@@ -1496,9 +1496,17 @@ export function KnowledgeAddPage() {
   const [checkedDiscoveryJobIds, setCheckedDiscoveryJobIds] = useState<string[]>([]);
   const [pendingDiscoveries, setPendingDiscoveries] = useState<KnowledgeDiscoveryRead[]>([]);
   const [discoveryModalOpen, setDiscoveryModalOpen] = useState(false);
-  const activeJobs = useMemo(
-    () => Object.values(jobs).filter((job) => ['queued', 'running'].includes(job.status)),
+  const [cancellingJobIds, setCancellingJobIds] = useState<string[]>([]);
+  const sortedJobs = useMemo(
+    () => Object.values(jobs).sort((left, right) => {
+      const diff = knowledgeJobSortTime(right) - knowledgeJobSortTime(left);
+      return diff || right.id.localeCompare(left.id);
+    }),
     [jobs],
+  );
+  const activeJobs = useMemo(
+    () => sortedJobs.filter((job) => ['queued', 'running', 'cancel_requested'].includes(job.status)),
+    [sortedJobs],
   );
   const visibleKnowledgeBases = useMemo(
     () => knowledgeBases.filter((item) => !isEmptyDefaultKnowledgeBase(item)),
@@ -1532,12 +1540,12 @@ export function KnowledgeAddPage() {
   }, [activeJobs]);
 
   useEffect(() => {
-    Object.values(jobs)
-      .filter((job) => job.status === 'completed' && !checkedDiscoveryJobIds.includes(job.id))
+    sortedJobs
+      .filter((job) => job.status === 'succeeded' && !checkedDiscoveryJobIds.includes(job.id))
       .forEach((job) => {
         void loadDiscoveriesForJob(job);
       });
-  }, [jobs, checkedDiscoveryJobIds, agentId]);
+  }, [sortedJobs, checkedDiscoveryJobIds, agentId]);
 
   async function refreshKnowledgeBases() {
     try {
@@ -1576,6 +1584,22 @@ export function KnowledgeAddPage() {
       notify.success('已创建知识库和入库任务');
     } catch (error) {
       notify.error(error instanceof Error ? error.message : '上传失败');
+    }
+  }
+
+  async function cancelJob(job: KnowledgeIngestJobRead) {
+    if (!['queued', 'running', 'cancel_requested'].includes(job.status)) return;
+    setCancellingJobIds((current) => (current.includes(job.id) ? current : [...current, job.id]));
+    try {
+      const next = await api.post<KnowledgeIngestJobRead>(
+        `/api/enterprise/knowledge/jobs/${job.id}/cancel?tenant_id=${TENANT_ID}`,
+      );
+      setJobs((prev) => ({ ...prev, [next.id]: next }));
+      notify.success(next.status === 'cancelled' ? '已取消入库任务' : '已发送取消请求');
+    } catch (error) {
+      notify.error(error instanceof Error ? error.message : '取消入库任务失败');
+    } finally {
+      setCancellingJobIds((current) => current.filter((id) => id !== job.id));
     }
   }
 
@@ -1677,12 +1701,17 @@ export function KnowledgeAddPage() {
         </KCard>
 
         <KCard title="入库任务">
-          {Object.values(jobs).length === 0 ? (
+          {sortedJobs.length === 0 ? (
             <EmptyState description="上传后这里会显示原始资料、知识图谱和引用来源入库进度" />
           ) : (
             <div className="knowledge-jobs">
-              {Object.values(jobs).map((job) => (
-                <KnowledgeJobCard job={job} key={job.id} />
+              {sortedJobs.map((job) => (
+                <KnowledgeJobCard
+                  job={job}
+                  key={job.id}
+                  cancelling={cancellingJobIds.includes(job.id)}
+                  onCancel={cancelJob}
+                />
               ))}
             </div>
           )}
@@ -1708,11 +1737,20 @@ export function KnowledgeAddPage() {
   );
 }
 
-function KnowledgeJobCard({ job }: { job: KnowledgeIngestJobRead }) {
+function KnowledgeJobCard({
+  job,
+  cancelling,
+  onCancel,
+}: {
+  job: KnowledgeIngestJobRead;
+  cancelling?: boolean;
+  onCancel?: (job: KnowledgeIngestJobRead) => void;
+}) {
   const steps = ingestSteps(job);
   const metadata = job.metadata || {};
   const stageLabel = stringFromMetadata(metadata.stage_label) || stageLabelFallback(job.stage);
   const stageDetail = stringFromMetadata(metadata.stage_detail);
+  const cancellable = ['queued', 'running', 'cancel_requested'].includes(job.status);
   return (
     <div className="knowledge-job">
       <div className="knowledge-job-head">
@@ -1720,7 +1758,22 @@ function KnowledgeJobCard({ job }: { job: KnowledgeIngestJobRead }) {
           <strong className="text-[14px] font-semibold text-foreground">{job.filename}</strong>
           <span className="text-[13px] text-[#858b9c]"> · {stageLabel}</span>
         </div>
-        {statusTag(job.status)}
+        <div className="flex shrink-0 items-center gap-[8px]">
+          {statusTag(job.status)}
+          {cancellable && onCancel && (
+            <UIButton
+              type="button"
+              variant="outline"
+              size="sm"
+              className={OUTLINE_ACTION_BUTTON_SM_CLASS}
+              disabled={cancelling || job.status === 'cancel_requested'}
+              onClick={() => onCancel(job)}
+            >
+              <CloseOutlined />
+              {cancelling || job.status === 'cancel_requested' ? '取消中' : '取消'}
+            </UIButton>
+          )}
+        </div>
       </div>
       <SmoothProgress job={job} />
       <div className="knowledge-stage-track">
@@ -1735,6 +1788,13 @@ function KnowledgeJobCard({ job }: { job: KnowledgeIngestJobRead }) {
       {job.error && <span className="text-[13px] text-[#d20b0b]">{job.error}</span>}
     </div>
   );
+}
+
+function knowledgeJobSortTime(job: KnowledgeIngestJobRead): number {
+  const createdAt = Date.parse(job.created_at || '');
+  if (Number.isFinite(createdAt)) return createdAt;
+  const updatedAt = Date.parse(job.updated_at || '');
+  return Number.isFinite(updatedAt) ? updatedAt : 0;
 }
 
 function SmoothProgress({ job }: { job: KnowledgeIngestJobRead }) {
@@ -1754,14 +1814,24 @@ function SmoothProgress({ job }: { job: KnowledgeIngestJobRead }) {
   }, [target]);
 
   const failed = job.status === 'failed';
+  const cancelled = job.status === 'cancelled';
+  const cancelling = job.status === 'cancel_requested';
+  const indicatorClassName = failed
+    ? 'bg-[#d20b0b]'
+    : cancelled
+      ? 'bg-[#9aa3b2]'
+      : cancelling
+        ? 'bg-[#d29a0b]'
+        : 'bg-gradient-to-r from-[#0f7f74] to-[#16a34a]';
+  const valueClassName = failed ? 'text-[#d20b0b]' : 'text-[#858b9c]';
   return (
     <div className="flex items-center gap-[10px]">
       <Progress
         value={displayProgress}
         className="h-[8px] flex-1"
-        indicatorClassName={failed ? 'bg-[#d20b0b]' : 'bg-gradient-to-r from-[#0f7f74] to-[#16a34a]'}
+        indicatorClassName={indicatorClassName}
       />
-      <span className={cn('text-[12px] tabular-nums', failed ? 'text-[#d20b0b]' : 'text-[#858b9c]')}>
+      <span className={cn('text-[12px] tabular-nums', valueClassName)}>
         {displayProgress}%
       </span>
     </div>
@@ -1783,6 +1853,12 @@ function ingestSteps(job: KnowledgeIngestJobRead): IngestStepView[] {
     });
   }
   const currentProgress = job.progress || 0;
+  if (job.status === 'cancelled' || job.stage === 'cancelled') {
+    return DEFAULT_INGEST_STEPS.map((step) => ({
+      ...step,
+      status: step.progress < currentProgress ? 'done' : 'pending',
+    }));
+  }
   return DEFAULT_INGEST_STEPS.map((step) => ({
     ...step,
     status:
@@ -2614,6 +2690,8 @@ function statusTag(status: string) {
     pending: { color: 'gold', label: '待处理' },
     running: { color: 'processing', label: '处理中' },
     queued: { color: 'gold', label: '排队中' },
+    cancel_requested: { color: 'gold', label: '取消中' },
+    cancelled: { color: 'default', label: '已取消' },
   };
   const item = map[status] || { color: 'gold', label: status };
   return <KTag color={item.color}>{item.label}</KTag>;

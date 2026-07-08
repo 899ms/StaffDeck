@@ -16,6 +16,7 @@ from app.db.models import (
     KnowledgeConcept,
     KnowledgeDiscoverySuggestion,
     KnowledgeDocument,
+    KnowledgeIngestJob,
     ModelConfig,
     Skill,
     Tenant,
@@ -128,6 +129,126 @@ def test_knowledge_ingest_creates_document_buckets_and_chunks_without_auto_disco
         assert response.evidence_pack[0]["excerpt"]
         assert response.chunks
         assert db.exec(select(KnowledgeDiscoverySuggestion)).all() == []
+
+
+def test_knowledge_ingest_cancel_queued_job_clears_embedded_content() -> None:
+    with _test_session() as db:
+        db.add(Tenant(id="tenant_demo", name="Demo"))
+        db.add(KnowledgeBase(id="kb_demo", tenant_id="tenant_demo", name="默认知识库"))
+        db.commit()
+        service = KnowledgeService(db)
+        job = service.create_ingest_job(
+            IngestPayload(
+                tenant_id="tenant_demo",
+                knowledge_base_id="kb_demo",
+                filename="policy.md",
+                content_base64=_b64("# 售后政策\n用户可查询订单。"),
+            )
+        )
+
+        cancelled = service.cancel_ingest_job(job.id, "tenant_demo")
+
+        assert cancelled is not None
+        assert cancelled.status == "cancelled"
+        assert cancelled.stage == "cancelled"
+        assert cancelled.finished_at is not None
+        assert cancelled.metadata_json["stage_label"] == "已取消"
+        assert "content_base64" not in cancelled.metadata_json
+
+
+def test_knowledge_ingest_cancel_running_job_cleans_partial_artifacts() -> None:
+    with _test_session() as db:
+        db.add(Tenant(id="tenant_demo", name="Demo"))
+        db.add(KnowledgeBase(id="kb_demo", tenant_id="tenant_demo", name="默认知识库"))
+        document = KnowledgeDocument(
+            id="kdoc_partial",
+            tenant_id="tenant_demo",
+            knowledge_base_id="kb_demo",
+            filename="partial.md",
+            file_type="md",
+            title="半成品",
+            status="processing",
+        )
+        bucket = KnowledgeBucket(
+            id="kbucket_partial",
+            tenant_id="tenant_demo",
+            knowledge_base_id="kb_demo",
+            document_id=document.id,
+            bucket_key="partial",
+            title="半成品目录",
+            summary="半成品摘要",
+        )
+        chunk = KnowledgeChunk(
+            id="kchunk_partial",
+            tenant_id="tenant_demo",
+            knowledge_base_id="kb_demo",
+            document_id=document.id,
+            bucket_id=bucket.id,
+            chunk_index=0,
+            content="半成品引用",
+        )
+        concept = KnowledgeConcept(
+            id="kconcept_partial",
+            tenant_id="tenant_demo",
+            knowledge_base_id="kb_demo",
+            document_id=document.id,
+            concept_id="partial",
+            concept_type="Source Document",
+            title="半成品概念",
+            content_md="半成品概念",
+        )
+        suggestion = KnowledgeDiscoverySuggestion(
+            id="kdisc_partial",
+            tenant_id="tenant_demo",
+            knowledge_base_id="kb_demo",
+            document_id=document.id,
+            bucket_id=bucket.id,
+            suggestion_type="warning",
+            title="半成品建议",
+        )
+        job = KnowledgeIngestJob(
+            id="kjob_partial",
+            tenant_id="tenant_demo",
+            knowledge_base_id="kb_demo",
+            document_id=document.id,
+            filename="partial.md",
+            status="running",
+            stage="chunking",
+            progress=0.62,
+            metadata_json={"content_base64": _b64("partial"), "stage_label": "生成引用来源"},
+        )
+        db.add(document)
+        db.add(bucket)
+        db.add(chunk)
+        db.add(concept)
+        db.add(suggestion)
+        db.add(job)
+        db.commit()
+        document_id = document.id
+        bucket_id = bucket.id
+        chunk_id = chunk.id
+        concept_id = concept.id
+        suggestion_id = suggestion.id
+        service = KnowledgeService(db)
+
+        cancelling = service.cancel_ingest_job(job.id, "tenant_demo")
+        assert cancelling is not None
+        assert cancelling.status == "cancel_requested"
+
+        service._run_ingest_job(job.id)  # noqa: SLF001 - exercise persisted cancellation path.
+
+        cancelled = db.get(KnowledgeIngestJob, job.id)
+        assert cancelled is not None
+        assert cancelled.status == "cancelled"
+        assert cancelled.stage == "cancelled"
+        assert cancelled.document_id is None
+        assert cancelled.metadata_json["cancelled_document_id"] == document_id
+        assert "content_base64" not in cancelled.metadata_json
+        assert db.get(KnowledgeDocument, document_id) is None
+        assert db.get(KnowledgeBucket, bucket_id) is None
+        assert db.get(KnowledgeChunk, chunk_id) is None
+        assert db.get(KnowledgeConcept, concept_id) is None
+        assert db.get(KnowledgeDiscoverySuggestion, suggestion_id) is None
 
 
 def test_knowledge_search_preserves_fallback_bucket_rank_order() -> None:

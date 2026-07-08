@@ -33,9 +33,9 @@ def build_conversation_context(
 
 
 def _context_payload(
-    projected: list[dict[str, str]],
-    original: list[dict[str, str]],
-    omitted: list[dict[str, str]],
+    projected: list[dict[str, Any]],
+    original: list[dict[str, Any]],
+    omitted: list[dict[str, Any]],
     summary: str,
     token_budget: int,
 ) -> dict[str, object]:
@@ -53,19 +53,23 @@ def _context_payload(
     }
 
 
-def _normalize_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
-    normalized: list[dict[str, str]] = []
+def _normalize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
     for message in messages:
         role = str(message.get("role") or "").strip()
         content = str(message.get("content") or "").strip()
         if role not in ALLOWED_CONTEXT_ROLES or not content:
             continue
-        normalized.append({"role": role, "content": content})
+        normalized_message: dict[str, Any] = {"role": role, "content": content}
+        images = message.get("images")
+        if role == "user" and isinstance(images, list) and images:
+            normalized_message["images"] = images
+        normalized.append(normalized_message)
     return normalized
 
 
-def _fit_recent_messages(messages: list[dict[str, str]], token_budget: int) -> list[dict[str, str]]:
-    selected: list[dict[str, str]] = []
+def _fit_recent_messages(messages: list[dict[str, Any]], token_budget: int) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
     used = 0
     for message in reversed(messages):
         cost = _message_tokens(message)
@@ -80,7 +84,7 @@ def _fit_recent_messages(messages: list[dict[str, str]], token_budget: int) -> l
     return selected
 
 
-def _compact_messages(messages: list[dict[str, str]], token_budget: int) -> str:
+def _compact_messages(messages: list[dict[str, Any]], token_budget: int) -> str:
     if not messages:
         return ""
     lines: list[str] = []
@@ -110,19 +114,19 @@ def _compact_content(content: str, max_chars: int = 320) -> str:
     return single_line[:max_chars].rstrip() + "..."
 
 
-def _trim_message(message: dict[str, str], token_budget: int) -> dict[str, str]:
+def _trim_message(message: dict[str, Any], token_budget: int) -> dict[str, Any]:
     content_budget = max(1, token_budget - _estimate_tokens(message["role"]) - 4)
     content = message["content"]
     if _estimate_tokens(content) <= content_budget:
         return message
-    return {"role": message["role"], "content": content[:content_budget].rstrip() + "..."}
+    return {**message, "content": content[:content_budget].rstrip() + "..."}
 
 
-def _messages_tokens(messages: list[dict[str, str]]) -> int:
+def _messages_tokens(messages: list[dict[str, Any]]) -> int:
     return sum(_message_tokens(message) for message in messages)
 
 
-def _message_tokens(message: dict[str, str]) -> int:
+def _message_tokens(message: dict[str, Any]) -> int:
     return _estimate_tokens(message["role"]) + _estimate_tokens(message["content"]) + 6
 
 

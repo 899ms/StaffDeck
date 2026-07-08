@@ -2,10 +2,18 @@ from app.core.response_generator import ResponseGenerator
 from app.db.models import ChatSession, Skill
 from app.llm.client import LLMClient
 from app.session.session_schema import RouterDecision, StepAgentResult
-from app.tools.tool_schema import ToolResult
+from app.tools.tool_schema import ToolError, ToolResult
 
 
-def test_clarify_does_not_leak_internal_router_prompt():
+def test_clarify_does_not_leak_internal_router_prompt(monkeypatch):
+    def fake_init(self, model_config):  # noqa: ANN001
+        return None
+
+    def fake_generate_text(self, system_prompt, payload):  # noqa: ANN001
+        return "请提供当前用户消息、会话状态、技能进度及可用技能列表，以便进行准确的路由决策。"
+
+    monkeypatch.setattr(LLMClient, "__init__", fake_init)
+    monkeypatch.setattr(LLMClient, "generate_text", fake_generate_text)
     session = ChatSession(
         id="session_test",
         tenant_id="tenant_demo",
@@ -59,6 +67,52 @@ def test_tool_result_reply_is_model_driven(monkeypatch):
     )
 
     assert reply == "已创建报修工单 T-100，工程师会尽快联系您。"
+
+
+def test_failed_tool_result_returns_explicit_failure_without_model_call(monkeypatch):
+    def forbidden_generate_text(self, system_prompt, payload):  # noqa: ANN001
+        raise AssertionError("failed tool replies should not rely on model generation")
+
+    monkeypatch.setattr(LLMClient, "generate_text", forbidden_generate_text)
+
+    reply = ResponseGenerator().generate(
+        message="查一下订单",
+        session=ChatSession(id="session_test", tenant_id="tenant_demo"),
+        skill=None,
+        router_decision=RouterDecision(decision="continue_current_skill"),
+        step_result=StepAgentResult(),
+        tool_result=ToolResult(
+            tool_name="order.query",
+            success=False,
+            error=ToolError(code="HTTP_ERROR", message="工具返回异常状态码：502"),
+        ),
+        model_config=None,  # type: ignore[arg-type]
+    )
+
+    assert reply == "工具调用失败：order.query（HTTP_ERROR）：工具返回异常状态码：502。请检查工具配置、调用参数或外部服务状态后重试。"
+
+
+def test_model_failure_returns_explicit_reason(monkeypatch):
+    def fake_init(self, model_config):  # noqa: ANN001
+        return None
+
+    def fake_generate_text(self, system_prompt, payload):  # noqa: ANN001
+        raise RuntimeError("upstream timeout")
+
+    monkeypatch.setattr(LLMClient, "__init__", fake_init)
+    monkeypatch.setattr(LLMClient, "generate_text", fake_generate_text)
+
+    reply = ResponseGenerator().generate(
+        message="你好",
+        session=ChatSession(id="session_test", tenant_id="tenant_demo"),
+        skill=None,
+        router_decision=RouterDecision(decision="answer_only"),
+        step_result=StepAgentResult(reply="你好"),
+        tool_result=None,
+        model_config=None,  # type: ignore[arg-type]
+    )
+
+    assert reply == "模型调用失败（LLM_ERROR）：upstream timeout。请检查模型配置、API Key、网络或模型服务状态后重试。"
 
 
 def test_pending_reply_without_tool_result_uses_model_reply(monkeypatch):
@@ -275,6 +329,57 @@ def test_stream_reply_with_tool_result_is_model_driven(monkeypatch):
 
     reply = "".join(chunks)
     assert reply == stale_price_reply
+
+
+def test_stream_failed_tool_result_returns_explicit_failure_without_model_call(monkeypatch):
+    def forbidden_generate_text_stream(self, system_prompt, payload):  # noqa: ANN001
+        raise AssertionError("failed tool replies should not rely on model generation")
+
+    monkeypatch.setattr(LLMClient, "generate_text_stream", forbidden_generate_text_stream)
+
+    chunks = list(
+        ResponseGenerator().generate_stream(
+            message="查一下订单",
+            session=ChatSession(id="session_test", tenant_id="tenant_demo"),
+            skill=None,
+            router_decision=RouterDecision(decision="continue_current_skill"),
+            step_result=StepAgentResult(),
+            tool_result=ToolResult(
+                tool_name="order.query",
+                success=False,
+                error=ToolError(code="TIMEOUT", message="工具调用超时。"),
+            ),
+            model_config=None,  # type: ignore[arg-type]
+        )
+    )
+
+    assert "".join(chunks) == "工具调用失败：order.query（TIMEOUT）：工具调用超时。请检查工具配置、调用参数或外部服务状态后重试。"
+
+
+def test_stream_model_failure_returns_explicit_reason(monkeypatch):
+    def fake_init(self, model_config):  # noqa: ANN001
+        return None
+
+    def fake_generate_text_stream(self, system_prompt, payload):  # noqa: ANN001
+        raise RuntimeError("connection refused")
+        yield ""  # pragma: no cover
+
+    monkeypatch.setattr(LLMClient, "__init__", fake_init)
+    monkeypatch.setattr(LLMClient, "generate_text_stream", fake_generate_text_stream)
+
+    chunks = list(
+        ResponseGenerator().generate_stream(
+            message="你好",
+            session=ChatSession(id="session_test", tenant_id="tenant_demo"),
+            skill=None,
+            router_decision=RouterDecision(decision="answer_only"),
+            step_result=StepAgentResult(reply="你好"),
+            tool_result=None,
+            model_config=None,  # type: ignore[arg-type]
+        )
+    )
+
+    assert "".join(chunks) == "模型调用失败（LLM_ERROR）：connection refused。请检查模型配置、API Key、网络或模型服务状态后重试。"
 
 
 def test_stream_pending_reply_without_tool_result_is_model_driven(monkeypatch):

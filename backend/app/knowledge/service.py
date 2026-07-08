@@ -55,6 +55,8 @@ BUCKET_SECTION_CHARS = 6000
 PARAGRAPH_GROUP_CHARS = 4200
 SEARCH_DOCUMENT_LIMIT = 40
 SEARCH_BUCKET_LIMIT = 80
+TERMINAL_INGEST_STATUSES = {"succeeded", "failed", "cancelled"}
+CANCELLING_INGEST_STATUSES = {"cancel_requested", "cancelled"}
 GENERIC_SEARCH_TERMS = {
     "请根据",
     "根据",
@@ -114,6 +116,10 @@ class IngestPayload:
     metadata: dict[str, Any] | None = None
 
 
+class KnowledgeIngestCancelled(RuntimeError):
+    """Raised inside the ingest worker when a persisted job is cancelled."""
+
+
 class KnowledgeService:
     def __init__(self, db: Session):
         self.db = db
@@ -139,6 +145,25 @@ class KnowledgeService:
         self.db.refresh(job)
         return job
 
+    def cancel_ingest_job(self, job_id: str, tenant_id: str) -> KnowledgeIngestJob | None:
+        job = self.db.get(KnowledgeIngestJob, job_id)
+        if not job or job.tenant_id != tenant_id:
+            return None
+        if job.status in TERMINAL_INGEST_STATUSES:
+            return job
+        if job.status == "queued":
+            self._finalize_cancelled_job(job, "入库任务已取消")
+            return job
+
+        metadata = dict(job.metadata_json or {})
+        metadata["stage_label"] = "取消中"
+        metadata["stage_detail"] = "已收到取消请求，正在停止当前入库阶段"
+        metadata["cancel_requested_at"] = utc_now().isoformat()
+        metadata["ingest_steps"] = _ingest_steps_for(job.stage, float(job.progress or 0.0), "cancel_requested")
+        job.metadata_json = metadata
+        self._update_job(job, status="cancel_requested", error=None)
+        return job
+
     def run_ingest_job(self, job_id: str) -> None:
         with Session(engine) as db:
             service = KnowledgeService(db)
@@ -148,15 +173,15 @@ class KnowledgeService:
         job = self.db.get(KnowledgeIngestJob, job_id)
         if not job:
             return
-        self._update_ingest_stage(
-            job,
-            "parsing",
-            status="running",
-            started_at=utc_now(),
-            detail="正在识别文件格式并抽取正文",
-        )
-        metadata = job.metadata_json or {}
         try:
+            self._update_ingest_stage(
+                job,
+                "parsing",
+                status="running",
+                started_at=utc_now(),
+                detail="正在识别文件格式并抽取正文",
+            )
+            metadata = job.metadata_json or {}
             content = base64.b64decode(str(metadata.get("content_base64") or ""))
             text, file_type = extract_text(job.filename, content)
             self._update_ingest_stage(
@@ -205,6 +230,9 @@ class KnowledgeService:
             self.db.commit()
             self.db.refresh(document)
             job.document_id = document.id
+            self.db.add(job)
+            self.db.commit()
+            self.db.refresh(job)
             self._update_ingest_stage(
                 job,
                 "bucketing",
@@ -297,6 +325,8 @@ class KnowledgeService:
                 },
             )
             self._clear_embedded_content(job)
+        except KnowledgeIngestCancelled as exc:
+            self._finalize_cancelled_job(job, str(exc) or "入库任务已取消")
         except Exception as exc:  # noqa: BLE001 - persist stable job failure.
             if job.document_id:
                 document = self.db.get(KnowledgeDocument, job.document_id)
@@ -901,6 +931,47 @@ class KnowledgeService:
         self.db.commit()
         self.db.refresh(job)
 
+    def _raise_if_ingest_cancelled(self, job: KnowledgeIngestJob) -> None:
+        self.db.refresh(job)
+        if job.status in CANCELLING_INGEST_STATUSES:
+            raise KnowledgeIngestCancelled("入库任务已取消")
+
+    def _finalize_cancelled_job(self, job: KnowledgeIngestJob, detail: str) -> None:
+        cancelled_document_id = job.document_id
+        if cancelled_document_id:
+            self._delete_partial_ingest_document(job)
+        metadata = dict(job.metadata_json or {})
+        metadata.pop("content_base64", None)
+        metadata["stage_label"] = "已取消"
+        metadata["stage_detail"] = detail
+        metadata["cancelled_at"] = utc_now().isoformat()
+        if cancelled_document_id:
+            metadata["cancelled_document_id"] = cancelled_document_id
+        metadata["ingest_steps"] = _ingest_steps_for(job.stage, float(job.progress or 0.0), "cancelled")
+        job.metadata_json = metadata
+        self._update_job(
+            job,
+            status="cancelled",
+            stage="cancelled",
+            progress=float(job.progress or 0.0),
+            error=None,
+            finished_at=utc_now(),
+            document_id=None,
+        )
+
+    def _delete_partial_ingest_document(self, job: KnowledgeIngestJob) -> None:
+        document_id = job.document_id
+        if not document_id:
+            return
+        for model in (KnowledgeDiscoverySuggestion, KnowledgeConcept, KnowledgeChunk, KnowledgeBucket):
+            self.db.exec(delete(model).where(model.document_id == document_id))
+        document = self.db.get(KnowledgeDocument, document_id)
+        if document:
+            self.db.delete(document)
+        job.document_id = None
+        self.db.add(job)
+        self.db.commit()
+
     def _update_ingest_stage(
         self,
         job: KnowledgeIngestJob,
@@ -909,6 +980,8 @@ class KnowledgeService:
         stats: dict[str, Any] | None = None,
         **changes: Any,
     ) -> None:
+        if changes.get("status") not in {"failed", "cancelled"}:
+            self._raise_if_ingest_cancelled(job)
         stage_def = INGEST_STAGE_BY_KEY.get(stage)
         progress = float(stage_def["progress"]) if stage_def else float(job.progress or 0.0)
         metadata = dict(job.metadata_json or {})
@@ -1092,7 +1165,7 @@ def _hard_split_text(text: str, max_chars: int) -> list[str]:
 
 
 def _ingest_steps_for(stage: str, progress: float, status: str) -> list[dict[str, Any]]:
-    if stage == "failed" or status == "failed":
+    if stage == "failed" or status in {"failed", "cancelled"}:
         return [
             {
                 **item,

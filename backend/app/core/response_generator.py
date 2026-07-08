@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -12,6 +13,43 @@ from app.tools.tool_schema import ToolResult
 
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "llm" / "prompts" / "response_generator_prompt.md"
 FALLBACK_REPLY = "抱歉，我暂时无法处理这个问题。您可以换个说法，或者我可以帮您转人工。"
+MODEL_FAILURE_SUGGESTION = "请检查模型配置、API Key、网络或模型服务状态后重试。"
+TOOL_FAILURE_SUGGESTION = "请检查工具配置、调用参数或外部服务状态后重试。"
+
+
+def public_error_detail(value: object, fallback: str = "未知原因") -> str:
+    detail = re.sub(r"\s+", " ", str(value or "")).strip()
+    detail = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}\b", "sk-***", detail)
+    detail = re.sub(r"\bpt-[A-Za-z0-9_-]{8,}\b", "pt-***", detail)
+    if not detail:
+        detail = fallback
+    return detail[:500]
+
+
+def format_runtime_failure_reply(
+    title: str,
+    detail: object,
+    code: str | None = None,
+    suggestion: str | None = None,
+) -> str:
+    normalized_detail = public_error_detail(detail)
+    normalized_code = public_error_detail(code, "").strip()
+    code_part = f"（{normalized_code}）" if normalized_code else ""
+    normalized_detail = normalized_detail.rstrip("。.!！")
+    suffix = (suggestion or "请稍后重试，或联系管理员查看执行记录。").strip()
+    return f"{title}{code_part}：{normalized_detail}。{suffix}"
+
+
+def tool_failure_reply(tool_result: ToolResult) -> str:
+    error = tool_result.error
+    code = error.code if error else None
+    detail = error.message if error else "工具未返回可用结果"
+    return format_runtime_failure_reply(
+        f"工具调用失败：{tool_result.tool_name}",
+        detail,
+        code,
+        TOOL_FAILURE_SUGGESTION,
+    )
 
 
 class ResponseGenerator:
@@ -39,17 +77,13 @@ class ResponseGenerator:
             conversation_context,
         )
         try:
+            if tool_result and not tool_result.success:
+                return tool_failure_reply(tool_result)
             text = LLMClient(model_config).generate_text(self._system_prompt(persona_prompt), payload)
             reply = text.strip() or step_result.reply or self._minimal_fallback(router_decision)
             return self._visible_reply_or_fallback(reply, session, step_result, tool_result, skill)
-        except Exception:
-            return self._visible_reply_or_fallback(
-                step_result.reply or self._minimal_fallback(router_decision),
-                session,
-                step_result,
-                tool_result,
-                skill,
-            )
+        except Exception as exc:
+            return format_runtime_failure_reply("模型调用失败", exc, "LLM_ERROR", MODEL_FAILURE_SUGGESTION)
 
     def generate_stream(
         self,
@@ -75,6 +109,9 @@ class ResponseGenerator:
             conversation_context,
         )
         try:
+            if tool_result and not tool_result.success:
+                yield from self.chunk_text(tool_failure_reply(tool_result))
+                return
             stream = LLMClient(model_config).generate_text_stream(self._system_prompt(persona_prompt), payload)
             reply_parts: list[str] = []
             has_streamed = False
@@ -101,15 +138,9 @@ class ResponseGenerator:
             )
             yield from self.chunk_text(reply)
             return
-        except Exception:
+        except Exception as exc:
             yield from self.chunk_text(
-                self._visible_reply_or_fallback(
-                    step_result.reply or self._minimal_fallback(router_decision),
-                    session,
-                    step_result,
-                    tool_result,
-                    skill,
-                )
+                format_runtime_failure_reply("模型调用失败", exc, "LLM_ERROR", MODEL_FAILURE_SUGGESTION)
             )
 
     def chunk_text(self, text: str, chunk_size: int = 8) -> Iterator[str]:

@@ -1,4 +1,6 @@
-from app.llm.client import LLMClient
+import pytest
+
+from app.llm.client import LLMClient, LLMError, MULTIMODAL_UNSUPPORTED_MESSAGE, model_supports_images
 
 
 class _ForbiddenResponses:
@@ -145,6 +147,82 @@ def test_generate_text_projects_conversation_context_messages():
     ]
     assert '"messages":' not in call["messages"][-1]["content"]
     assert '"metadata": {"total_messages": 3}' in call["messages"][-1]["content"]
+
+
+def test_generate_text_projects_conversation_context_images_for_vision_model():
+    client = object.__new__(LLMClient)
+    client.client = _FakeOpenAIClient()
+    client.model = "gpt-4o-mini"
+    client.temperature = 0.2
+    client.max_output_tokens = 256
+
+    output = client.generate_text(
+        "system prompt",
+        {
+            "user_message": "看这张图",
+            "conversation_context": {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "看这张图",
+                        "images": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": "data:image/png;base64,AAAA",
+                                    "detail": "auto",
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+    )
+
+    assert output == "ok"
+    call = client.client.chat.completions.calls[0]
+    assert call["messages"][1] == {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "看这张图"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA", "detail": "auto"}},
+        ],
+    }
+    assert '"messages":' not in call["messages"][-1]["content"]
+
+
+def test_generate_text_rejects_images_for_text_only_model():
+    client = object.__new__(LLMClient)
+    client.client = _FakeOpenAIClient()
+    client.model = "qwen3-6-27b"
+    client.temperature = 0.2
+    client.max_output_tokens = 256
+
+    with pytest.raises(LLMError) as exc_info:
+        client.generate_text(
+            "system prompt",
+            {
+                "conversation_context": {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "看图",
+                            "images": [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}}],
+                        }
+                    ],
+                },
+            },
+        )
+
+    assert str(exc_info.value) == MULTIMODAL_UNSUPPORTED_MESSAGE
+    assert client.client.chat.completions.calls == []
+
+
+def test_model_supports_images_uses_known_multimodal_model_names():
+    assert model_supports_images("qwen2.5-vl-72b")
+    assert model_supports_images("gpt-4o-mini")
+    assert not model_supports_images("qwen3-6-27b")
 
 
 def test_generate_json_extracts_fenced_json(monkeypatch):

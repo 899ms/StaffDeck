@@ -48,6 +48,7 @@ import type {
 
 import {
   CHAT_STREAM_IDLE_TIMEOUT_MS,
+  CHAT_STREAM_IDLE_CHECK_INTERVAL_MS,
   HIDDEN_GENERAL_SKILL_TRACE_PHASES,
   RUNNING_EVENT_RECOVERY_WINDOW_MS,
   SELECTED_AGENT_STORAGE_KEY,
@@ -656,6 +657,8 @@ export function useChatSession() {
     stream.accumulated = '';
     stream.turnId = null;
     stream.abortController = null;
+    stream.relayRecoveryStartedAt = null;
+    stream.relayRecoveryTurnId = null;
     if (removeStreamingMessage) {
       const slot = getSlot(id);
       const aliasMap = buildTurnAliasMap([...slot.serverMessages, ...slot.realtimeMessages]);
@@ -750,9 +753,10 @@ export function useChatSession() {
     void storeTick;
     void streamTick;
     void traceTick;
+    void queuedTurnsTick;
     return computeMergedMessages(getSlot(activeConversationId), getStreamSlot(activeConversationId).turnId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeConversationId, feedbackTick, getSlot, getStreamSlot, storeTick, streamTick, traceTick]);
+  }, [activeConversationId, feedbackTick, getSlot, getStreamSlot, queuedTurnsTick, storeTick, streamTick, traceTick]);
 
   const currentStream = useMemo(() => {
     void streamTick;
@@ -1815,6 +1819,11 @@ export function useChatSession() {
       eventStream.loading = false;
       eventStream.phase = '';
       eventStream.abortController = null;
+      eventStream.relayRecoveryStartedAt = null;
+      eventStream.relayRecoveryTurnId = null;
+      setRunningTurn((current) => (
+        current?.sessionId === eventSessionId && current.turnId === traceTurnId ? null : current
+      ));
       notifyStream();
       loadSessions();
       window.setTimeout(() => {
@@ -1837,6 +1846,8 @@ export function useChatSession() {
         return;
       }
       clearStreamSlot(eventSessionId, false);
+      eventStream.relayRecoveryStartedAt = null;
+      eventStream.relayRecoveryTurnId = null;
       upsertTraceStatusPlaceholder(getSlot(eventSessionId), eventSessionId, traceTurnId);
       notifyStore();
       window.setTimeout(() => {
@@ -1865,6 +1876,8 @@ export function useChatSession() {
         return;
       }
       clearStreamSlot(eventSessionId, true);
+      eventStream.relayRecoveryStartedAt = null;
+      eventStream.relayRecoveryTurnId = null;
       upsertTraceLine(traceTurnId, {
         id: 'generation_interrupted',
         kind: 'thinking',
@@ -1918,6 +1931,11 @@ export function useChatSession() {
       eventStream.loading = false;
       eventStream.phase = '';
       eventStream.abortController = null;
+      eventStream.relayRecoveryStartedAt = null;
+      eventStream.relayRecoveryTurnId = null;
+      setRunningTurn((current) => (
+        current?.sessionId === eventSessionId && current.turnId === traceTurnId ? null : current
+      ));
       notifyStream();
       loadSessions();
       window.setTimeout(() => {
@@ -1935,6 +1953,11 @@ export function useChatSession() {
       eventStream.loading = false;
       eventStream.phase = '';
       eventStream.abortController = null;
+      eventStream.relayRecoveryStartedAt = null;
+      eventStream.relayRecoveryTurnId = null;
+      setRunningTurn((current) => (
+        current?.sessionId === eventSessionId && current.turnId === (eventStream.turnId || traceTurnId) ? null : current
+      ));
       finishTrace(eventStream.turnId || traceTurnId, true);
       appendRealtime(eventSessionId, {
         id: `scheduled_error_${Date.now()}`,
@@ -1993,7 +2016,7 @@ export function useChatSession() {
     const slot = getSlot(id);
     if (slot.serverMessages.length === 0) return false;
     const stream = getStreamSlot(id);
-    if (stream.loading) return false;
+    if (stream.loading && stream.abortController) return false;
 
     const groups = new Map<string, ChatSessionEventRead[]>();
     traceEvents.forEach((event) => {
@@ -2047,7 +2070,10 @@ export function useChatSession() {
     stream.loading = true;
     stream.phase = '执行中';
     stream.accumulated = text;
+    stream.relayRecoveryStartedAt = stream.relayRecoveryStartedAt || Date.now();
+    stream.relayRecoveryTurnId = turnId;
     updateStreaming(id, text, turnId, true);
+    setRunningTurn({ sessionId: id, turnId });
 
     runningGroup.forEach((event) => {
       scheduledEventIdsRef.current.add(event.id);
@@ -2086,6 +2112,63 @@ export function useChatSession() {
         );
         const now = Date.now();
         const stream = getStreamSlot(id);
+        const recoveringTurnId = (
+          stream.loading && !stream.abortController
+            ? (stream.relayRecoveryTurnId || stream.turnId || '')
+            : ''
+        );
+        if (recoveringTurnId) {
+          const recoveryEvents = traceEvents
+            .filter((event) => eventTraceTurnId(event) === recoveringTurnId)
+            .sort((left, right) => eventTime(left) - eventTime(right));
+          let recoveredText = '';
+          recoveryEvents.forEach((event) => {
+            const payloadText = eventTextPayload(event);
+            if (event.event === 'stream_replace' || event.event === 'assistant_message_created') {
+              recoveredText = payloadText;
+            } else if (event.event === 'stream_delta' || event.event === 'token') {
+              recoveredText = recoveredText && payloadText.startsWith(recoveredText)
+                ? payloadText
+                : recoveredText + payloadText;
+            }
+          });
+          if (recoveredText && recoveredText !== stream.accumulated) {
+            stream.accumulated = recoveredText;
+            updateStreaming(id, recoveredText, recoveringTurnId, true);
+            notifyStream();
+          }
+          const hasTerminalRecoveryEvent = recoveryEvents.some((event) => isTerminalSessionEvent(event, isTerminalEvent));
+          if (
+            stream.relayRecoveryStartedAt
+            && !hasTerminalRecoveryEvent
+            && !hasAssistantMessageForTurn(slot, recoveringTurnId)
+            && now - stream.relayRecoveryStartedAt >= CHAT_STREAM_IDLE_TIMEOUT_MS
+          ) {
+            clearStreamSlot(id, true);
+            upsertTraceLine(recoveringTurnId, {
+              id: 'stream_relay_timeout',
+              kind: 'thinking',
+              text: '响应同步超时',
+              detail: '前端已从事件日志持续同步，但服务端没有写入完成事件。',
+              state: 'failed',
+            });
+            finishTrace(recoveringTurnId, true);
+            appendRealtime(id, {
+              id: `stream_relay_timeout_${recoveringTurnId}_${Date.now()}`,
+              turnId: recoveringTurnId,
+              role: 'assistant',
+              content: '本次响应同步超时，请重试发送。',
+              created_at: new Date().toISOString(),
+              isError: true,
+            });
+            setRunningTurn((current) => (
+              current?.sessionId === id && current.turnId === recoveringTurnId ? null : current
+            ));
+            notifyStore();
+            notifyStream();
+            return;
+          }
+        }
         const unseenEvents = traceEvents.filter((event) => {
           if (scheduledEventIdsRef.current.has(event.id)) return false;
           const timestamp = eventTime(event);
@@ -2122,6 +2205,9 @@ export function useChatSession() {
           if (liveSseOwnsTurn && STREAM_TEXT_EVENTS.has(streamEvent.event)) {
             return;
           }
+          if (!liveSseOwnsTurn && recoveringTurnId && eventTurnId === recoveringTurnId && STREAM_TEXT_EVENTS.has(streamEvent.event)) {
+            return;
+          }
           const turnEvents = unseenEventsByTurn.get(eventTurnId) || [event];
           const hasTurnProgress = hasRecoverableEventProgress(turnEvents);
           if (hasAssistantCarrierForTurn(slot, eventTurnId) && !liveSseOwnsTurn) return;
@@ -2147,7 +2233,11 @@ export function useChatSession() {
         }
       });
   }, [
+    appendRealtime,
+    clearStreamSlot,
+    eventTextPayload,
     eventTime,
+    finishTrace,
     getSlot,
     getStreamSlot,
     handleStreamEvent,
@@ -2155,11 +2245,13 @@ export function useChatSession() {
     isTerminalEvent,
     loadMessages,
     loadTraces,
+    notifyStore,
     notifyStream,
     redirectToLogin,
     syncTurnUntilAssistant,
     tenantId,
     updateStreaming,
+    upsertTraceLine,
   ]);
 
   const uploadComposerFiles = useCallback((files: File[]) => {
@@ -2362,12 +2454,12 @@ export function useChatSession() {
         return;
       }
       controller.abort();
-      appendInterruptedResponse('本次响应等待时间过长，已停止等待。请重试发送。');
+      beginRelayRecovery('stream_idle');
     };
 
     const armStreamWatchdog = () => {
       clearStreamWatchdog();
-      streamWatchdog = window.setTimeout(failStalledStream, CHAT_STREAM_IDLE_TIMEOUT_MS);
+      streamWatchdog = window.setTimeout(failStalledStream, CHAT_STREAM_IDLE_CHECK_INTERVAL_MS);
     };
 
     const markStreamTerminal = () => {
@@ -2441,6 +2533,37 @@ export function useChatSession() {
       loadSessions();
     };
 
+    function beginRelayRecovery(reason: string) {
+      if (receivedTerminalEvent) return;
+      clearStreamWatchdog();
+      if (startedAsDraftConversation && createdSessionId) {
+        promoteDraftConversation(createdSessionId);
+      }
+      const targetSessionId = liveConversationId;
+      if (!targetSessionId || isDraftConversationKey(targetSessionId)) {
+        appendInterruptedResponse('本次响应连接中断，未能确认服务端会话。请重试发送。');
+        return;
+      }
+      const activeStream = getStreamSlot(targetSessionId);
+      const activeTurnId = activeStream.turnId || turnId;
+      activeStream.abortController = null;
+      activeStream.loading = true;
+      activeStream.phase = '正在同步';
+      activeStream.turnId = activeTurnId;
+      activeStream.relayRecoveryStartedAt = activeStream.relayRecoveryStartedAt || Date.now();
+      activeStream.relayRecoveryTurnId = activeTurnId;
+      updateStreaming(targetSessionId, activeStream.accumulated || '', activeTurnId, true);
+      upsertTraceLine(activeTurnId, {
+        id: 'stream_relay_recovering',
+        kind: 'thinking',
+        text: reason === 'stream_idle' ? '正在同步响应' : '正在恢复响应',
+        state: 'running',
+      });
+      setRunningTurn({ sessionId: targetSessionId, turnId: activeTurnId });
+      notifyStream();
+      void pollScheduledSessionEvents(targetSessionId);
+    }
+
     try {
       const requestBody: Record<string, unknown> = {
         tenant_id: tenantId,
@@ -2504,24 +2627,7 @@ export function useChatSession() {
       }, controller.signal);
       clearStreamWatchdog();
       if (!receivedTerminalEvent && !controller.signal.aborted) {
-        const activeStream = getStreamSlot(liveConversationId);
-        const activeTurnId = activeStream.turnId || turnId;
-        if (activeStream.accumulated) {
-          finishTrace(activeTurnId);
-          finalizeStreaming(liveConversationId);
-          activeStream.loading = false;
-          activeStream.phase = '';
-          activeStream.abortController = null;
-          clearRunningTurn(liveConversationId);
-          notifyStream();
-          loadSessions();
-          window.setTimeout(() => {
-            loadMessages(liveConversationId);
-            loadTraces(liveConversationId);
-          }, 250);
-        } else {
-          appendInterruptedResponse('本次响应中断，未收到模型回复。请重试发送。');
-        }
+        beginRelayRecovery('stream_closed');
       }
     } catch (error) {
       clearStreamWatchdog();
@@ -2536,20 +2642,7 @@ export function useChatSession() {
         redirectToLogin();
         return;
       }
-      const activeTurnId = getStreamSlot(liveConversationId).turnId || turnId;
-      clearStreamSlot(liveConversationId, true);
-      appendRealtime(liveConversationId, {
-        id: `error_${Date.now()}`,
-        turnId: activeTurnId,
-        role: 'assistant',
-        content: '发送失败，请稍后重试',
-        created_at: new Date().toISOString(),
-        isError: true,
-      });
-      notifyRequestError('send', error, '发送失败');
-      finishTrace(activeTurnId, true);
-      clearRunningTurn();
-      notifyStream();
+      beginRelayRecovery('stream_error');
     } finally {
       clearStreamWatchdog();
       if (stream.abortController === controller) {
@@ -2573,9 +2666,9 @@ export function useChatSession() {
     loadTraces,
     navigate,
     notifyQueue,
-    notifyRequestError,
     notifyStore,
     notifyStream,
+    pollScheduledSessionEvents,
     redirectToLogin,
     removeQueuedTurnPreview,
     tenantId,

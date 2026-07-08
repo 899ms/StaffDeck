@@ -14,7 +14,8 @@ from app.api.chat import (
 )
 from app.core.agent_loop import AgentLoop, AgentLoopPreconditionError
 from app.db.models import AgentEvent, AgentProfile, ChatSession, Message, ModelConfig, PersonaConfig, Tenant, User
-from app.session.session_schema import ChatSessionCreateRequest, ChatTurnRequest
+from app.llm import LLMError, MULTIMODAL_UNSUPPORTED_MESSAGE
+from app.session.session_schema import ChatAttachmentRead, ChatSessionCreateRequest, ChatTurnRequest
 
 
 def test_existing_chat_session_cannot_switch_agent() -> None:
@@ -252,6 +253,37 @@ def test_chat_turn_rejects_disabled_selected_model_config() -> None:
             )
 
         assert exc_info.value.code == "disabled_model_config"
+
+
+def test_chat_turn_rejects_image_attachments_for_text_only_model() -> None:
+    with _test_session() as db:
+        request = ChatTurnRequest(
+            tenant_id="tenant_demo",
+            agent_id="agent_demo",
+            message="看下这张图",
+            attachments=[
+                ChatAttachmentRead(
+                    id="file_image",
+                    filename="demo.png",
+                    content_type="image/png",
+                    size=12,
+                    kind="image",
+                    data_url="data:image/png;base64,AAAA",
+                )
+            ],
+        )
+        model_config = ModelConfig(
+            id="model_text",
+            tenant_id="tenant_demo",
+            name="文本模型",
+            api_key_encrypted="",
+            model="qwen3-6-27b",
+        )
+
+        with pytest.raises(LLMError) as exc_info:
+            AgentLoop(db)._ensure_request_multimodal_supported(request, model_config)
+
+        assert str(exc_info.value) == MULTIMODAL_UNSUPPORTED_MESSAGE
 
 
 def test_agent_persona_prompt_includes_employee_identity_and_metadata() -> None:
