@@ -341,7 +341,11 @@ export function resourceDisplayNameWithCreator(
 }
 
 export function resourceCount(resources: AgentResourceBindingRead[] | undefined, type: AgentResourceBindingRead['resource_type']): number {
-  return (resources || []).filter((item) => item.resource_type === type && item.status !== 'deleted').length;
+  return (resources || []).filter((item) => (
+    item.resource_type === type
+    && item.status !== 'deleted'
+    && item.status !== 'inactive'
+  )).length;
 }
 
 /** Employees selectable in the chat sidebar: active employees visible to the current user. */

@@ -23,6 +23,7 @@ import plazaSkillIcon from '../assets/icons/plaza-skill.svg';
 import plazaSopIcon from '../assets/icons/plaza-sop.svg';
 import plazaToolIcon from '../assets/icons/plaza-tool.svg';
 import {
+  agentResourceCount,
   canManageEmployeeAgent,
   employeeDisplayNameWithCreator,
   employeeProfile,
@@ -155,9 +156,9 @@ function platformCountLabel(kind: PlatformKind): string {
 // Bottom metric segments for a 数字员工广场 card.
 function employeeStats(agent: AgentProfileRead): PlatformStat[] {
   return [
-    { value: resourceCount(agent, 'knowledge_base'), label: '资料' },
-    { value: resourceCount(agent, 'general_skill'), label: '技能' },
-    { value: resourceCount(agent, 'skill'), label: 'SOP' },
+    { value: agentResourceCount(agent, 'knowledge_base'), label: '资料' },
+    { value: agentResourceCount(agent, 'general_skill'), label: '技能' },
+    { value: agentResourceCount(agent, 'skill'), label: 'SOP' },
   ];
 }
 
@@ -255,8 +256,8 @@ export default function OpenPlatformPage({
         meta: profile.roleName,
         tags: [
           item.status === 'active' ? '在线' : '下线',
-          `SOP ${resourceCount(item, 'skill')}`,
-          `技能 ${resourceCount(item, 'general_skill')}`,
+          `SOP ${agentResourceCount(item, 'skill')}`,
+          `技能 ${agentResourceCount(item, 'general_skill')}`,
         ],
         agent: item,
       };
@@ -579,10 +580,6 @@ export default function OpenPlatformPage({
       {renderConfirm()}
     </div>
   );
-}
-
-function resourceCount(agent: AgentProfileRead, resourceType: string): number {
-  return (agent.resources || []).filter((item) => item.resource_type === resourceType && item.status !== 'inactive').length;
 }
 
 function isEmptyDefaultKnowledgeBase(item: KnowledgeBaseRead): boolean {

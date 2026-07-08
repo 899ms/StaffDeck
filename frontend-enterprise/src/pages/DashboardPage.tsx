@@ -27,6 +27,7 @@ import capabilityLogs from '../assets/staffdeck/capabilityLogs.png';
 import capabilityTasks from '../assets/staffdeck/capabilityTasks.png';
 import capabilityTools from '../assets/staffdeck/capabilityTools.png';
 import {
+  agentResourceCount,
   canAccessEmployeeAgent,
   canManageEmployeeAgent,
   employeeCreatorNameOrAdmin,
@@ -290,6 +291,10 @@ export default function DashboardPage({
   const activeGeneralSkills = generalSkills.filter((item) => item.status === 'published');
   const activeKnowledge = knowledgeBases.filter((item) => item.status === 'active');
   const activeTools = tools.filter((item) => item.enabled);
+  const selectedKnowledgeCount = agentResourceCount(selectedAgent, 'knowledge_base');
+  const selectedGeneralSkillCount = agentResourceCount(selectedAgent, 'general_skill');
+  const selectedSkillCount = agentResourceCount(selectedAgent, 'skill');
+  const selectedToolCount = agentResourceCount(selectedAgent, 'tool');
   const employeeScheduledTasks = scheduledTasks.filter((item) => item.agent_id === selectedAgent.id && item.status !== 'archived');
   const activeScheduledTasks = employeeScheduledTasks.filter((item) => item.status === 'active');
   const totalFeedback = positiveFeedback + negativeFeedback;
@@ -319,7 +324,7 @@ export default function DashboardPage({
       route: '/enterprise/knowledge',
       title: '知识库',
       tone: 'knowledge',
-      count: activeKnowledge.length,
+      count: selectedKnowledgeCount,
       body: activeKnowledge.slice(0, 3).map((item) => staffdeckDisplayText(item.name)).join(' / ') || '暂无知识库',
       icon: <IconCapFolder className={capabilityGlyphClass} />,
       dark: false,
@@ -328,7 +333,7 @@ export default function DashboardPage({
       route: '/enterprise/general-skills',
       title: '技能',
       tone: 'skill',
-      count: activeGeneralSkills.length,
+      count: selectedGeneralSkillCount,
       body: activeGeneralSkills.slice(0, 3).map((item) => staffdeckDisplayText(item.name)).join(' / ') || '暂无启用技能',
       icon: <IconCapMagicWand className={capabilityGlyphClass} />,
       dark: false,
@@ -337,7 +342,7 @@ export default function DashboardPage({
       route: '/enterprise/skills',
       title: 'SOP',
       tone: 'sop',
-      count: activeSkills.length,
+      count: selectedSkillCount,
       body: activeSkills.slice(0, 3).map((item) => staffdeckDisplayText(item.name)).join(' / ') || '暂无启用 SOP',
       icon: <IconCapClipboard className={capabilityGlyphClass} />,
       dark: false,
@@ -346,7 +351,7 @@ export default function DashboardPage({
       route: '/enterprise/tools',
       title: '工具',
       tone: 'tools',
-      count: activeTools.length,
+      count: selectedToolCount,
       body: activeTools.slice(0, 3).map((item) => staffdeckDisplayText(item.display_name || item.name)).join(' / ') || '暂无启用工具',
       icon: <IconCapBriefcase className={capabilityGlyphClass} />,
       dark: true,
@@ -473,9 +478,9 @@ export default function DashboardPage({
               </p>
 
               <div className="flex w-full max-w-[514px] gap-3">
-                <HeroMetric value={activeKnowledge.length} label="资料" />
-                <HeroMetric value={activeGeneralSkills.length} label="技能" />
-                <HeroMetric value={activeSkills.length} label="SOP" />
+                <HeroMetric value={selectedKnowledgeCount} label="资料" />
+                <HeroMetric value={selectedGeneralSkillCount} label="技能" />
+                <HeroMetric value={selectedSkillCount} label="SOP" />
                 <HeroMetric value={activeScheduledTasks.length} label="定时任务" />
               </div>
             </div>
