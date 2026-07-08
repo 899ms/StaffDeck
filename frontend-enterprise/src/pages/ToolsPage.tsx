@@ -1,4 +1,4 @@
-import { ExperimentOutlined, ToolOutlined } from '../icons';
+import { ApiOutlined, ExperimentOutlined, SyncOutlined, ToolOutlined } from '../icons';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -18,6 +18,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  Checkbox,
   Input,
   Select as UISelect,
   SelectContent,
@@ -52,7 +53,16 @@ import IconTrash from '../assets/icons/trash.svg?react';
 import { canManageEmployeeAgent, resourceCreatorNameOrAdmin, visibleEmployeeAgents } from '../employee';
 import { useClientPagination } from '../hooks/useClientPagination';
 import { StatusBadge } from './scheduled-tasks/StatusBadge';
-import type { AgentProfileRead, ToolRead } from '../types';
+import type {
+  AgentProfileRead,
+  ToolRead,
+  MCPServerRead,
+  MCPServerConnection,
+  MCPDiscoverResponse,
+  MCPSyncResponse,
+  MCPTransport,
+  MCPDiscoveredTool,
+} from '../types';
 
 type ToolPageProps = {
   currentUser?: EnterpriseAuthUser;
@@ -81,6 +91,13 @@ type ToolFormValues = typeof TOOL_FORM_INITIAL_VALUES & {
   url?: string;
 };
 
+const TRANSPORT_OPTIONS: { value: MCPTransport; label: string; hint: string }[] = [
+  { value: 'streamable_http', label: 'Streamable HTTP', hint: '通过 HTTP(S) 连接远程 MCP Server' },
+  { value: 'sse', label: 'SSE', hint: '通过 Server-Sent Events 连接远程 MCP Server' },
+  { value: 'stdio', label: 'Stdio（本地命令）', hint: '启动本地进程并通过标准输入输出通信' },
+  { value: 'builtin', label: '内置 Demo', hint: '使用内置的 builtin.demo MCP，仅用于演示' },
+];
+
 export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {}) {
   const [rows, setRows] = useState<ToolRead[]>([]);
   const [agentId, setAgentId] = useState(() => window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY) || '');
@@ -99,6 +116,9 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
   const [importLoading, setImportLoading] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ToolRead | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [servers, setServers] = useState<MCPServerRead[]>([]);
+  const [serverDeleteTarget, setServerDeleteTarget] = useState<MCPServerRead | null>(null);
+  const [deletingServer, setDeletingServer] = useState(false);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -108,9 +128,16 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
   const agentQuery = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
   const load = () => {
     setLoading(true);
-    return api
-      .get<ToolRead[]>(`/api/enterprise/tools?tenant_id=${TENANT_ID}${agentQuery}`)
-      .then(setRows)
+    return Promise.all([
+      api.get<ToolRead[]>(`/api/enterprise/tools?tenant_id=${TENANT_ID}${agentQuery}`),
+      api
+        .get<MCPServerRead[]>(`/api/enterprise/mcp-servers?tenant_id=${TENANT_ID}`)
+        .catch(() => [] as MCPServerRead[]),
+    ])
+      .then(([toolRows, serverRows]) => {
+        setRows(toolRows);
+        setServers(serverRows);
+      })
       .catch((error) => notify.error(error instanceof Error ? error.message : '加载工具失败'))
       .finally(() => setLoading(false));
   };
@@ -216,12 +243,34 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
       navigate('/enterprise/tools/new');
       return;
     }
+    if (key === 'mcp') {
+      navigate('/enterprise/tools/mcp/new');
+      return;
+    }
     if (key === 'plaza') {
       void openImportTools('plaza');
       return;
     }
     if (key === 'employee') {
       void openImportTools('employee');
+    }
+  }
+
+  async function confirmDeleteServer() {
+    const row = serverDeleteTarget;
+    if (!row || deletingServer) return;
+    setDeletingServer(true);
+    try {
+      await api.delete(
+        `/api/enterprise/mcp-servers/${row.id}?tenant_id=${TENANT_ID}${agentQuery}&remove_tools=true`,
+      );
+      notify.success('已删除');
+      setServerDeleteTarget(null);
+      void load();
+    } catch (error) {
+      notify.error(error instanceof Error ? error.message : '删除失败');
+    } finally {
+      setDeletingServer(false);
     }
   }
 
@@ -342,6 +391,7 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
   }
 
   function renderActions(row: ToolRead) {
+    const isMcpChild = row.tool_type === 'mcp' && Boolean(row.mcp_server_id);
     return (
       <DropdownMenu>
         <DropdownMenuTrigger
@@ -351,23 +401,29 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
           <IconMore className="size-3.5" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className={MENU_CONTENT_CLASS}>
-          <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => navigate(`/enterprise/tools/${row.id}/edit`)}>
-            <IconEdit />
-            编辑
-          </DropdownMenuItem>
+          {!isMcpChild && (
+            <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => navigate(`/enterprise/tools/${row.id}/edit`)}>
+              <IconEdit />
+              编辑
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => navigate(`/enterprise/tools/${row.id}/test`)}>
             <FlaskConical />
             测试
           </DropdownMenuItem>
-          <DropdownMenuSeparator className="my-[2px] bg-[#eef0f4]" />
-          <DropdownMenuItem
-            variant="destructive"
-            className={MENU_ITEM_DANGER_CLASS}
-            onSelect={() => setDeleteTarget(row)}
-          >
-            <IconTrash />
-            {isOverallAgent ? '删除' : '移除'}
-          </DropdownMenuItem>
+          {!isMcpChild && (
+            <>
+              <DropdownMenuSeparator className="my-[2px] bg-[#eef0f4]" />
+              <DropdownMenuItem
+                variant="destructive"
+                className={MENU_ITEM_DANGER_CLASS}
+                onSelect={() => setDeleteTarget(row)}
+              >
+                <IconTrash />
+                {isOverallAgent ? '删除' : '移除'}
+              </DropdownMenuItem>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     );
@@ -438,6 +494,84 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
     },
   ];
 
+  const serverColumns: DataTableColumn<MCPServerRead>[] = [
+    {
+      key: 'name',
+      title: '名称',
+      width: 240,
+      render: (row) => (
+        <div className="flex min-w-0 flex-col gap-[4px]">
+          <span className="inline-flex min-w-0 items-center gap-[6px]">
+            <span className="truncate font-medium leading-[18px] text-[#18181a]" title={row.display_name || row.name}>
+              {row.display_name || row.name}
+            </span>
+            <StatusBadge tone="blue">工具集</StatusBadge>
+          </span>
+          <span className="truncate text-[#858b9c]" title={row.name}>
+            {row.name}
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: 'transport',
+      title: '连接方式',
+      width: 140,
+      render: (row) => <StatusBadge tone="gray">{transportLabel(row.connection.transport)}</StatusBadge>,
+    },
+    {
+      key: 'endpoint',
+      title: '端点',
+      className: 'whitespace-normal',
+      render: (row) => (
+        <span className="line-clamp-1 wrap-break-word text-[#858b9c]">{serverEndpoint(row.connection)}</span>
+      ),
+    },
+    {
+      key: 'tool_count',
+      title: '工具数',
+      width: 110,
+      render: (row) => <span className="text-[#858b9c]">{row.tool_count} 个工具</span>,
+    },
+    {
+      key: 'enabled',
+      title: '启用',
+      width: 90,
+      render: (row) => (
+        <StatusBadge tone={row.enabled ? 'green' : 'gray'}>{row.enabled ? '已启用' : '已停用'}</StatusBadge>
+      ),
+    },
+    {
+      key: 'actions',
+      title: '操作',
+      width: 160,
+      align: 'right',
+      render: (row) => (
+        <div className="flex items-center justify-end gap-[8px]">
+          <UIButton
+            variant="outline"
+            size="sm"
+            onClick={() => navigate(`/enterprise/tools/mcp/${row.id}/edit`)}
+            className={RETURN_BUTTON_CLASS}
+          >
+            <SyncOutlined />
+            发现/同步
+          </UIButton>
+          {isOverallAgent && (
+            <UIButton
+              variant="outline"
+              size="sm"
+              onClick={() => setServerDeleteTarget(row)}
+              className={cn(RETURN_BUTTON_CLASS, 'text-[#e5484d] hover:text-[#e5484d]')}
+            >
+              删除
+            </UIButton>
+          )}
+        </div>
+      ),
+    },
+  ];
+
   const renderMobileCard = (row: ToolRead) => (
     <article className={MOBILE_CARD_CLASS} key={row.id}>
       <div className="flex min-w-0 items-start justify-between gap-[10px]">
@@ -488,6 +622,12 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
               <IconAdd />
               新建空白工具
             </DropdownMenuItem>
+            {isOverallAgent && (
+              <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('mcp')}>
+                <ApiOutlined />
+                添加 MCP 服务器（工具集）
+              </DropdownMenuItem>
+            )}
             {!isOverallAgent && (
               <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('plaza')}>
                 <IconTool className="size-[14px]" />
@@ -510,6 +650,69 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
           <StatCard label="已启用" value={stats.enabled} tone="green" className="basis-[220px]" />
           <StatCard label="分桶" value={stats.buckets} className="basis-[220px]" />
         </div>
+
+        {servers.length > 0 && (
+          <div className="flex flex-col gap-[18px]">
+            <div className="flex items-center gap-[6px] px-[12px] text-[#757f9c]">
+              <ApiOutlined className="size-[14px] shrink-0" />
+              <span className="text-[14px] font-normal leading-none">MCP 服务器（工具集）</span>
+            </div>
+            <div className="hidden md:block">
+              <DataTable
+                aria-label="MCP 服务器列表"
+                columns={serverColumns}
+                data={servers}
+                rowKey={(row) => row.id}
+                loading={loading}
+                emptyText="暂无 MCP 服务器"
+              />
+            </div>
+            <div className="grid gap-[10px] md:hidden">
+              {servers.map((row) => (
+                <article className={MOBILE_CARD_CLASS} key={row.id}>
+                  <div className="flex min-w-0 items-start justify-between gap-[10px]">
+                    <div className="min-w-0">
+                      <strong className="block truncate text-[14px] font-semibold text-[#18181a]">
+                        {row.display_name || row.name}
+                      </strong>
+                      <span className="mt-[2px] block truncate text-[12px] text-[#858b9c]">{row.name}</span>
+                    </div>
+                    <StatusBadge tone="blue">工具集</StatusBadge>
+                  </div>
+                  <div className="mt-[8px] flex flex-wrap items-center gap-[6px]">
+                    <StatusBadge tone="gray">{transportLabel(row.connection.transport)}</StatusBadge>
+                    <StatusBadge tone={row.enabled ? 'green' : 'gray'}>{row.enabled ? '已启用' : '已停用'}</StatusBadge>
+                    <StatusBadge tone="gray">{row.tool_count} 个工具</StatusBadge>
+                  </div>
+                  <p className="mt-[8px] line-clamp-1 wrap-break-word text-[12px] text-[#858b9c]">
+                    {serverEndpoint(row.connection)}
+                  </p>
+                  <div className="mt-[10px] flex items-center gap-[8px]">
+                    <UIButton
+                      variant="outline"
+                      size="sm"
+                      onClick={() => navigate(`/enterprise/tools/mcp/${row.id}/edit`)}
+                      className={RETURN_BUTTON_CLASS}
+                    >
+                      <SyncOutlined />
+                      发现/同步
+                    </UIButton>
+                    {isOverallAgent && (
+                      <UIButton
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setServerDeleteTarget(row)}
+                        className={cn(RETURN_BUTTON_CLASS, 'text-[#e5484d] hover:text-[#e5484d]')}
+                      >
+                        删除
+                      </UIButton>
+                    )}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-col gap-[18px]">
           <div className="flex items-center gap-[6px] px-[12px] text-[#757f9c]">
@@ -636,6 +839,18 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
         confirmText={isOverallAgent ? '删除' : '移除'}
         onConfirm={() => void confirmDelete()}
       />
+
+      <ConfirmDialog
+        open={Boolean(serverDeleteTarget)}
+        onOpenChange={(open) => {
+          if (!open) setServerDeleteTarget(null);
+        }}
+        loading={deletingServer}
+        title={serverDeleteTarget ? `删除 MCP 服务器「${serverDeleteTarget.display_name || serverDeleteTarget.name}」？` : ''}
+        description={`其下 ${serverDeleteTarget?.tool_count ?? 0} 个已导入工具将一并删除，操作不可撤销。`}
+        confirmText="删除"
+        onConfirm={() => void confirmDeleteServer()}
+      />
     </div>
   );
 }
@@ -646,6 +861,14 @@ export function ToolNewPage(props: ToolPageProps = {}) {
 
 export function ToolEditPage(props: ToolPageProps = {}) {
   return <ToolEditorPage mode="edit" {...props} />;
+}
+
+export function McpServerNewPage(props: ToolPageProps = {}) {
+  return <McpServerEditorPage mode="new" {...props} />;
+}
+
+export function McpServerEditPage(props: ToolPageProps = {}) {
+  return <McpServerEditorPage mode="edit" {...props} />;
 }
 
 function ToolEditorPage({ mode, currentUser, onLogout }: { mode: 'new' | 'edit' } & ToolPageProps) {
@@ -934,6 +1157,449 @@ export function ToolTestPage({ currentUser, onLogout }: ToolPageProps = {}) {
           )}
         </SectionCard>
         {tool && <SavedToolTestCard tool={tool} standalone />}
+      </div>
+    </div>
+  );
+}
+
+type McpFormValues = {
+  name: string;
+  display_name: string;
+  description: string;
+  bucket: string;
+  transport: MCPTransport;
+  url: string;
+  headers: string;
+  command: string;
+  args: string;
+  env: string;
+  cwd: string;
+  enabled: boolean;
+};
+
+const MCP_FORM_INITIAL_VALUES: McpFormValues = {
+  name: '',
+  display_name: '',
+  description: '',
+  bucket: 'MCP 工具',
+  transport: 'streamable_http',
+  url: '',
+  headers: '{}',
+  command: '',
+  args: '',
+  env: '{}',
+  cwd: '',
+  enabled: true,
+};
+
+type DiscoveredRow = MCPDiscoverResponse['tools'][number] & { selected: boolean };
+
+function McpServerEditorPage({ mode, currentUser, onLogout }: { mode: 'new' | 'edit' } & ToolPageProps) {
+  const [values, setValues] = useState<McpFormValues>({ ...MCP_FORM_INITIAL_VALUES });
+  const [server, setServer] = useState<MCPServerRead | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [discovered, setDiscovered] = useState<DiscoveredRow[]>([]);
+  const navigate = useNavigate();
+  const { serverId } = useParams();
+  const isEdit = mode === 'edit';
+
+  const setField = <K extends keyof McpFormValues>(name: K, value: McpFormValues[K]) =>
+    setValues((prev) => ({ ...prev, [name]: value }));
+
+  useEffect(() => {
+    if (!isEdit) {
+      setValues({ ...MCP_FORM_INITIAL_VALUES });
+      setServer(null);
+      setDiscovered([]);
+      return;
+    }
+    if (!serverId) return;
+    setLoading(true);
+    api
+      .get<MCPServerRead>(`/api/enterprise/mcp-servers/${serverId}?tenant_id=${TENANT_ID}`)
+      .then((row) => {
+        setServer(row);
+        setValues(serverToFormValues(row));
+      })
+      .catch((error) => notify.error(error instanceof Error ? error.message : '加载 MCP 服务器失败'))
+      .finally(() => setLoading(false));
+  }, [isEdit, serverId]);
+
+  const transportOption = TRANSPORT_OPTIONS.find((item) => item.value === values.transport);
+  const isRemote = values.transport === 'streamable_http' || values.transport === 'sse';
+  const isStdio = values.transport === 'stdio';
+
+  function buildConnection(): MCPServerConnection | null {
+    let headers: Record<string, string>;
+    let env: Record<string, string>;
+    try {
+      headers = parseJson<Record<string, string>>(values.headers, {});
+      env = parseJson<Record<string, string>>(values.env, {});
+    } catch {
+      notify.error('Headers 或 Env 不是合法 JSON');
+      return null;
+    }
+    const args = parseArgs(values.args);
+    if (isStdio) {
+      return {
+        transport: values.transport,
+        url: null,
+        headers,
+        command: String(values.command || '').trim() || null,
+        args,
+        env,
+        cwd: String(values.cwd || '').trim() || null,
+      };
+    }
+    return {
+      transport: values.transport,
+      url: String(values.url || '').trim() || null,
+      headers,
+      command: null,
+      args,
+      env,
+      cwd: null,
+    };
+  }
+
+  function buildPayload(): { payload: Record<string, unknown>; connection: MCPServerConnection } | null {
+    const connection = buildConnection();
+    if (!connection) return null;
+    return {
+      connection,
+      payload: {
+        tenant_id: TENANT_ID,
+        name: String(values.name || '').trim(),
+        display_name: values.display_name,
+        description: values.description,
+        bucket: values.bucket || 'MCP 工具',
+        connection,
+        enabled: values.enabled,
+      },
+    };
+  }
+
+  async function save() {
+    if (!String(values.name || '').trim()) {
+      notify.error('请填写 MCP 服务器名称');
+      return;
+    }
+    const built = buildPayload();
+    if (!built) return;
+    setSaving(true);
+    try {
+      const saved = isEdit && serverId
+        ? await api.put<MCPServerRead>(`/api/enterprise/mcp-servers/${serverId}`, built.payload)
+        : await api.post<MCPServerRead>('/api/enterprise/mcp-servers', built.payload);
+      notify.success('已保存');
+      setServer(saved);
+      setValues(serverToFormValues(saved));
+      if (!isEdit) {
+        navigate(`/enterprise/tools/mcp/${saved.id}/edit`, { replace: true });
+      }
+    } catch (error) {
+      notify.error(error instanceof Error ? error.message : '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function discover() {
+    const built = buildPayload();
+    if (!built) return;
+    setDiscovering(true);
+    try {
+      const response = server
+        ? await api.post<MCPDiscoverResponse>(`/api/enterprise/mcp-servers/${server.id}/discover`, {
+            tenant_id: TENANT_ID,
+            connection: built.connection,
+          })
+        : await api.post<MCPDiscoverResponse>('/api/enterprise/mcp-servers/discover', {
+            tenant_id: TENANT_ID,
+            connection: built.connection,
+          });
+      if (!response.success) {
+        notify.error(response.error?.message || '发现工具失败');
+        return;
+      }
+      setDiscovered(response.tools.map((tool) => ({ ...tool, selected: !tool.imported })));
+      notify.success(`发现 ${response.tools.length} 个工具`);
+    } catch (error) {
+      notify.error(error instanceof Error ? error.message : '发现工具失败');
+    } finally {
+      setDiscovering(false);
+    }
+  }
+
+  async function sync() {
+    if (!server) {
+      notify.warning('请先保存 MCP 服务器，再同步工具');
+      return;
+    }
+    const selectedNames = discovered.filter((tool) => tool.selected).map((tool) => tool.name);
+    if (discovered.length > 0 && selectedNames.length === 0) {
+      notify.warning('请至少选择一个要导入的工具');
+      return;
+    }
+    setSyncing(true);
+    try {
+      const response = await api.post<MCPSyncResponse>(`/api/enterprise/mcp-servers/${server.id}/sync`, {
+        tenant_id: TENANT_ID,
+        tool_names: discovered.length ? selectedNames : null,
+      });
+      if (!response.success) {
+        notify.error(response.error?.message || '同步失败');
+        return;
+      }
+      notify.success(`同步完成：新增 ${response.imported.length}，更新 ${response.updated.length}`);
+      try {
+        const refreshed = await api.get<MCPServerRead>(
+          `/api/enterprise/mcp-servers/${server.id}?tenant_id=${TENANT_ID}`,
+        );
+        setServer(refreshed);
+      } catch {
+        // ignore refresh failure
+      }
+      await discover();
+    } catch (error) {
+      notify.error(error instanceof Error ? error.message : '同步失败');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  const discoveredColumns: DataTableColumn<DiscoveredRow>[] = [
+    {
+      key: 'selected',
+      title: '',
+      width: 40,
+      render: (row) => (
+        <Checkbox
+          checked={row.selected}
+          onCheckedChange={(next) =>
+            setDiscovered((prev) =>
+              prev.map((item) => (item.name === row.name ? { ...item, selected: next === true } : item)),
+            )
+          }
+          aria-label={`选择 ${row.name}`}
+        />
+      ),
+    },
+    {
+      key: 'name',
+      title: '工具',
+      width: 180,
+      render: (row) => (
+        <span className="truncate font-medium text-[#18181a]" title={row.name}>
+          {row.name}
+        </span>
+      ),
+    },
+    {
+      key: 'description',
+      title: '描述',
+      className: 'whitespace-normal',
+      render: (row) => (
+        <span className="line-clamp-2 wrap-break-word text-[#858b9c]">{row.description || '暂无描述'}</span>
+      ),
+    },
+    {
+      key: 'imported',
+      title: '状态',
+      width: 96,
+      render: (row) => (
+        <StatusBadge tone={row.imported ? 'green' : 'gray'}>{row.imported ? '已导入' : '未导入'}</StatusBadge>
+      ),
+    },
+  ];
+
+  return (
+    <div className="min-h-full box-border px-[48px] pt-[32px] pb-[43px] max-[900px]:px-[16px]" aria-busy={loading}>
+      <AppHeader
+        onLogout={onLogout}
+        userName={currentUser?.username}
+        title={isEdit ? '编辑 MCP 服务器' : '添加 MCP 服务器'}
+        description="配置 MCP Server 连接后，可发现其提供的工具并同步为工具集。"
+      />
+      <div className="mt-[20px] mb-[16px] flex flex-wrap justify-end gap-[16px]">
+        <UIButton variant="outline" onClick={() => navigate('/enterprise/tools')} className={RETURN_BUTTON_CLASS}>
+          <IconArrowRight className="size-3.5 rotate-180" />
+          返回工具
+        </UIButton>
+        <UIButton disabled={saving} onClick={() => void save()} className={PRIMARY_BUTTON_CLASS}>
+          保存
+        </UIButton>
+      </div>
+      <div className="grid grid-cols-1 items-start gap-[20px] xl:grid-cols-2">
+        <SectionCard title="连接配置" loading={loading && isEdit && !server}>
+          <div className="flex flex-col gap-[16px]">
+            <div className="grid grid-cols-1 gap-[16px] sm:grid-cols-2">
+              <Field label="名称" htmlFor="mcp-name" hint={isEdit ? '保存后不可修改名称。' : undefined}>
+                <Input
+                  id="mcp-name"
+                  placeholder="my_mcp_server"
+                  disabled={isEdit}
+                  value={values.name}
+                  onChange={(event) => setField('name', event.target.value)}
+                />
+              </Field>
+              <Field label="展示名称" htmlFor="mcp-display-name">
+                <Input
+                  id="mcp-display-name"
+                  placeholder="我的工具集"
+                  value={values.display_name}
+                  onChange={(event) => setField('display_name', event.target.value)}
+                />
+              </Field>
+            </div>
+
+            <Field label="描述" htmlFor="mcp-description">
+              <Textarea
+                id="mcp-description"
+                rows={2}
+                placeholder="简单说明这个工具集的用途"
+                value={values.description}
+                onChange={(event) => setField('description', event.target.value)}
+              />
+            </Field>
+
+            <Field label="分桶" htmlFor="mcp-bucket">
+              <Input
+                id="mcp-bucket"
+                placeholder="MCP 工具"
+                value={values.bucket}
+                onChange={(event) => setField('bucket', event.target.value)}
+              />
+            </Field>
+
+            <Field label="连接方式" hint={transportOption?.hint}>
+              <UISelect
+                value={values.transport}
+                onValueChange={(value) => setField('transport', value as MCPTransport)}
+              >
+                <SelectTrigger className={cn(SELECT_TRIGGER_CLASS, 'w-full')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TRANSPORT_OPTIONS.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </UISelect>
+            </Field>
+
+            {isRemote && (
+              <>
+                <Field label="URL" htmlFor="mcp-url">
+                  <Input
+                    id="mcp-url"
+                    placeholder="https://example.com/mcp"
+                    value={values.url}
+                    onChange={(event) => setField('url', event.target.value)}
+                  />
+                </Field>
+                <Field label="Headers JSON" htmlFor="mcp-headers">
+                  <Textarea
+                    id="mcp-headers"
+                    rows={4}
+                    className={MONO_INPUT_CLASS}
+                    value={values.headers}
+                    onChange={(event) => setField('headers', event.target.value)}
+                  />
+                </Field>
+              </>
+            )}
+
+            {isStdio && (
+              <>
+                <Field label="Command" htmlFor="mcp-command">
+                  <Input
+                    id="mcp-command"
+                    placeholder="python"
+                    value={values.command}
+                    onChange={(event) => setField('command', event.target.value)}
+                  />
+                </Field>
+                <Field label="Args" htmlFor="mcp-args" hint="每行一个参数。">
+                  <Textarea
+                    id="mcp-args"
+                    rows={4}
+                    className={MONO_INPUT_CLASS}
+                    placeholder={'-m\nmy_mcp.server\n--port\n8000'}
+                    value={values.args}
+                    onChange={(event) => setField('args', event.target.value)}
+                  />
+                </Field>
+                <Field label="Env JSON" htmlFor="mcp-env">
+                  <Textarea
+                    id="mcp-env"
+                    rows={4}
+                    className={MONO_INPUT_CLASS}
+                    value={values.env}
+                    onChange={(event) => setField('env', event.target.value)}
+                  />
+                </Field>
+                <Field label="工作目录（cwd）" htmlFor="mcp-cwd">
+                  <Input
+                    id="mcp-cwd"
+                    placeholder="/path/to/workdir"
+                    value={values.cwd}
+                    onChange={(event) => setField('cwd', event.target.value)}
+                  />
+                </Field>
+              </>
+            )}
+
+            <div className="flex items-center justify-between rounded-[12px] border border-[#eceef1] bg-[#fafbfc] px-[14px] py-[12px]">
+              <div className="flex flex-col gap-[2px]">
+                <span className={FIELD_LABEL_CLASS}>启用工具集</span>
+                <span className={HINT_CLASS}>停用后其下工具将无法被员工调用。</span>
+              </div>
+              <Switch checked={values.enabled} onCheckedChange={(next) => setField('enabled', next)} />
+            </div>
+          </div>
+        </SectionCard>
+
+        <SectionCard
+          title="工具发现（tools/list）"
+          bodyClassName="flex flex-col gap-[14px]"
+          extra={(
+            <div className="flex items-center gap-[8px]">
+              <UIButton variant="outline" disabled={discovering} onClick={() => void discover()} className={RETURN_BUTTON_CLASS}>
+                <SyncOutlined />
+                发现工具
+              </UIButton>
+              <UIButton disabled={!server || syncing} onClick={() => void sync()} className={PRIMARY_BUTTON_CLASS}>
+                导入/同步
+              </UIButton>
+            </div>
+          )}
+        >
+          <p className={HINT_CLASS}>
+            {server
+              ? '点击「发现工具」拉取 tools/list，勾选后「导入/同步」即可生成工具行。'
+              : '请先保存 MCP 服务器，才能导入并同步工具。'}
+          </p>
+          {discovered.length ? (
+            <DataTable
+              aria-label="发现的工具"
+              columns={discoveredColumns}
+              data={discovered}
+              rowKey={(row) => row.name}
+              loading={discovering}
+              emptyText="未发现工具"
+            />
+          ) : (
+            <div className="grid min-h-[180px] place-items-center rounded-[12px] border border-dashed border-[#eceef1] p-[20px] text-center text-[13px] text-[#858b9c]">
+              点击「发现工具」后，这里会列出该 MCP Server 提供的工具。
+            </div>
+          )}
+        </SectionCard>
       </div>
     </div>
   );
@@ -1370,6 +2036,40 @@ function schemaPropertyCount(schema: Record<string, unknown>): string {
 
 function toolTypeLabel(tool: ToolRead): string {
   return tool.tool_type === 'mcp' ? 'MCP 服务' : 'HTTP 接口';
+}
+
+function serverToFormValues(row: MCPServerRead): McpFormValues {
+  const connection = row.connection;
+  return {
+    name: row.name,
+    display_name: row.display_name || '',
+    description: row.description || '',
+    bucket: row.bucket || 'MCP 工具',
+    transport: connection.transport,
+    url: connection.url || '',
+    headers: JSON.stringify(connection.headers || {}, null, 2),
+    command: connection.command || '',
+    args: (connection.args || []).join('\n'),
+    env: JSON.stringify(connection.env || {}, null, 2),
+    cwd: connection.cwd || '',
+    enabled: row.enabled,
+  };
+}
+
+function parseArgs(value: string): string[] {
+  const text = String(value || '');
+  const parts = text.includes('\n') ? text.split('\n') : text.split(/\s+/);
+  return parts.map((item) => item.trim()).filter(Boolean);
+}
+
+function transportLabel(transport: MCPTransport | string): string {
+  return TRANSPORT_OPTIONS.find((item) => item.value === transport)?.label || String(transport);
+}
+
+function serverEndpoint(connection: MCPServerConnection): string {
+  if (connection.transport === 'stdio') return connection.command || '—';
+  if (connection.transport === 'builtin') return 'builtin.demo';
+  return connection.url || '—';
 }
 
 function exampleFromSchema(schema: Record<string, unknown>): Record<string, unknown> {
