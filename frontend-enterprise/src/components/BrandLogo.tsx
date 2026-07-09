@@ -2,7 +2,7 @@ import { cn } from '@/lib/utils';
 import logoMark from '../assets/LOGO.svg';
 
 export type BrandLogoProps = {
-  /** Hide the "Modelbest / StaffDeck" wordmark and only render the logo mark. */
+  /** Hide the "OpenBMB / StaffDeck" wordmark and only render the logo mark. */
   markOnly?: boolean;
   /** Size of the square logo mark in pixels. */
   markSize?: number;
@@ -11,7 +11,7 @@ export type BrandLogoProps = {
   wordmarkClassName?: string;
 };
 
-/** Brand logo lockup (logo mark + "Modelbest" / "StaffDeck" wordmark). Figma node 38:344. */
+/** Brand logo lockup (logo mark + "OpenBMB" / "StaffDeck" wordmark). Figma node 504:7137. */
 export default function BrandLogo({
   markOnly = false,
   markSize = 28,
@@ -29,9 +29,9 @@ export default function BrandLogo({
       {!markOnly && (
         <span className={cn('flex flex-col items-start gap-[2px] leading-none', wordmarkClassName)}>
           <span className="text-[12px] font-semibold leading-none text-[#0f136c]">
-            Modelbest
+            OpenBMB
           </span>
-          <strong className="text-[17px] font-semibold leading-none text-sidebar-accent-foreground">
+          <strong className="text-[17px] font-semibold leading-none text-[#18181a]">
             StaffDeck
           </strong>
         </span>

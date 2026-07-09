@@ -241,13 +241,16 @@ function AgentSwitcher({
           <IconChevronDown className="size-[14px] shrink-0 text-sidebar-foreground group-data-[collapsible=icon]:hidden" />
         </div>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-(--radix-dropdown-menu-trigger-width)">
+      <DropdownMenuContent
+        align="start"
+        className="flex max-h-[320px] w-(--radix-dropdown-menu-trigger-width) flex-col gap-[4px] overflow-y-auto"
+      >
         {scopeAgents.map((agent) => (
           <DropdownMenuItem
             key={agent.id}
             data-active={agent.id === selectedAgentId}
             onSelect={() => onSelectAgent(agent.id)}
-            className="gap-2 rounded-[14px] cursor-pointer focus:bg-[#F6F6F6] focus:[&_strong]:text-foreground! focus:[&_small]:text-muted-foreground!"
+            className="shrink-0 gap-2 rounded-[14px] cursor-pointer focus:bg-[#F6F6F6] focus:[&_strong]:text-foreground! focus:[&_small]:text-muted-foreground! data-[active=true]:bg-[#F6F6F6] data-[active=true]:[&_strong]:text-foreground!"
           >
             <EmployeeAvatar agent={agent} size={28} />
             <span className="flex min-w-0 flex-col">
@@ -373,13 +376,13 @@ function CollapsedAgentSwitcher({
           </span>
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="min-w-[180px]">
+      <DropdownMenuContent align="start" className="flex max-h-[320px] min-w-[180px] flex-col gap-[4px] overflow-y-auto">
         {scopeAgents.map((agent) => (
           <DropdownMenuItem
             key={agent.id}
             data-active={agent.id === selectedAgentId}
             onSelect={() => onSelectAgent(agent.id)}
-            className="gap-2 rounded-[14px] cursor-pointer focus:bg-[#F6F6F6] focus:[&_strong]:text-foreground! focus:[&_small]:text-muted-foreground!"
+            className="shrink-0 gap-2 rounded-[14px] cursor-pointer focus:bg-[#F6F6F6] focus:[&_strong]:text-foreground! focus:[&_small]:text-muted-foreground! data-[active=true]:bg-[#F6F6F6] data-[active=true]:[&_strong]:text-foreground!"
           >
             <EmployeeAvatar agent={agent} size={28} />
             <span className="flex min-w-0 flex-col">
@@ -686,7 +689,7 @@ function ChatSessionFilter({
         align={collapsed ? 'center' : 'start'}
         side={collapsed ? 'right' : 'bottom'}
         className={cn(
-          'flex flex-col gap-[6px] rounded-[14px] bg-white p-[6px] shadow-[0px_16px_15px_rgba(0,0,0,0.1)] ring-0',
+          'flex max-h-[320px] flex-col gap-[6px] overflow-y-auto rounded-[14px] bg-white p-[6px] shadow-[0px_16px_15px_rgba(0,0,0,0.1)] ring-0',
           collapsed ? 'min-w-[160px]' : 'w-(--radix-dropdown-menu-trigger-width)',
         )}
       >
@@ -699,7 +702,7 @@ function ChatSessionFilter({
               data-active={active}
               onSelect={() => onSessionFilterChange(option.value)}
               className={cn(
-                'group/filter flex h-[32px] cursor-pointer items-center gap-[4px] rounded-[14px] px-[12px] py-[4px] transition-colors focus:bg-[#f6f6f6]',
+                'group/filter flex h-[32px] shrink-0 cursor-pointer items-center gap-[4px] rounded-[14px] px-[12px] py-[4px] transition-colors focus:bg-[#f6f6f6]',
                 active ? 'bg-[#f6f6f6]' : 'bg-transparent',
               )}
             >
