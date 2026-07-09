@@ -66,7 +66,7 @@ def test_only_creator_or_admin_can_update_and_delete_agent() -> None:
 
 def test_non_admin_cannot_manage_overall_agent() -> None:
     with _test_session() as db:
-        owner, _other, admin = _seed_users(db)
+        owner, other, admin = _seed_users(db)
         overall = AgentProfile(id="agent_overall", tenant_id="tenant_demo", name="开放广场", is_overall=True)
         db.add(overall)
         db.commit()
@@ -147,13 +147,34 @@ def test_list_agents_filters_to_visible_agents_for_non_admin() -> None:
                 metadata_json={"owner_user_id": other.id, "owner_username": other.username},
             )
         )
+        db.add(
+            AgentProfile(
+                id="agent_created_by_owner_only",
+                tenant_id="tenant_demo",
+                name="创建字段命中但非本人",
+                is_overall=False,
+                metadata_json={
+                    "owner_user_id": other.id,
+                    "owner_username": other.username,
+                    "created_by_user_id": owner.id,
+                    "created_by_username": owner.username,
+                    "published_to_gallery": False,
+                },
+            )
+        )
         db.commit()
 
         owner_rows = list_agents("tenant_demo", db=db, current_user=owner)
         admin_rows = list_agents("tenant_demo", db=db, current_user=admin)
 
         assert {row.id for row in owner_rows} == {"agent_overall", "agent_owned", "agent_gallery"}
-        assert {row.id for row in admin_rows} == {"agent_overall", "agent_owned", "agent_gallery", "agent_private"}
+        assert {row.id for row in admin_rows} == {
+            "agent_overall",
+            "agent_owned",
+            "agent_gallery",
+            "agent_private",
+            "agent_created_by_owner_only",
+        }
 
 
 def test_gallery_agent_is_visible_but_not_manageable_by_non_owner() -> None:
@@ -201,7 +222,7 @@ def test_gallery_agent_is_visible_but_not_manageable_by_non_owner() -> None:
 
 def test_create_agent_records_creator_and_blocks_non_admin_overall() -> None:
     with _test_session() as db:
-        owner, _other, admin = _seed_users(db)
+        owner, other, admin = _seed_users(db)
 
         created = create_agent(
             AgentProfileCreateRequest(tenant_id="tenant_demo", name="新员工", source_mode="blank"),
@@ -212,6 +233,44 @@ def test_create_agent_records_creator_and_blocks_non_admin_overall() -> None:
         assert created.metadata["owner_username"] == owner.username
         assert created.metadata["created_by_user_id"] == owner.id
         assert created.metadata["created_by_username"] == owner.username
+
+        source = AgentProfile(
+            id="agent_source",
+            tenant_id="tenant_demo",
+            name="源员工",
+            is_overall=False,
+            persona_prompt="源提示词",
+            metadata_json={
+                "owner_user_id": owner.id,
+                "owner_username": owner.username,
+                "created_by_user_id": owner.id,
+                "created_by_username": owner.username,
+                "published_to_gallery": True,
+                "role_name": "源角色",
+            },
+        )
+        db.add(source)
+        db.commit()
+        copied = create_agent(
+            AgentProfileCreateRequest(
+                tenant_id="tenant_demo",
+                name="复制员工",
+                source_mode="copy",
+                copy_from_agent_id=source.id,
+                metadata={
+                    **source.metadata_json,
+                    "owner_user_id": other.id,
+                    "owner_username": other.username,
+                },
+            ),
+            db=db,
+            current_user=other,
+        )
+        assert copied.metadata["owner_user_id"] == other.id
+        assert copied.metadata["owner_username"] == other.username
+        assert copied.metadata["created_by_user_id"] == other.id
+        assert copied.metadata["created_by_username"] == other.username
+        assert copied.metadata["role_name"] == "源角色"
 
         with pytest.raises(HTTPException) as create_error:
             create_agent(

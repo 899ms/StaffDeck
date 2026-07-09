@@ -54,8 +54,8 @@ def ensure_agent_scope_manager(
 
 def agent_owned_by_user(row: AgentProfile, user: User) -> bool:
     metadata = row.metadata_json or {}
-    owner_ids = _metadata_user_values(metadata, "owner_user_id", "created_by_user_id")
-    owner_names = _metadata_user_values(metadata, "owner_username", "created_by_username")
+    owner_ids = _metadata_user_values(metadata, "owner_user_id")
+    owner_names = _metadata_user_values(metadata, "owner_username")
     return user.id in owner_ids or user.username in owner_names
 
 

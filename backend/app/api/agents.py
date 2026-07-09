@@ -567,8 +567,8 @@ def _metadata_user_values(metadata: dict[str, object], *keys: str) -> set[str]:
 
 def _agent_owned_by_user(row: AgentProfile, user: User) -> bool:
     metadata = row.metadata_json or {}
-    owner_ids = _metadata_user_values(metadata, "owner_user_id", "created_by_user_id")
-    owner_names = _metadata_user_values(metadata, "owner_username", "created_by_username")
+    owner_ids = _metadata_user_values(metadata, "owner_user_id")
+    owner_names = _metadata_user_values(metadata, "owner_username")
     return user.id in owner_ids or user.username in owner_names
 
 
@@ -631,14 +631,14 @@ def _metadata_with_creator(metadata: dict[str, object], user: User | None) -> di
     if user is None:
         return system_creator_metadata(normalized)
     display_name = user.display_name or user.username
-    normalized.setdefault("owner_user_id", user.id)
-    normalized.setdefault("owner_username", user.username)
-    normalized.setdefault("owner_display_name", display_name)
-    normalized.setdefault("created_by_user_id", user.id)
-    normalized.setdefault("created_by_username", user.username)
-    normalized.setdefault("created_by", user.username)
-    normalized.setdefault("created_by_display_name", display_name)
-    normalized.setdefault("creator_name", user.username)
+    normalized["owner_user_id"] = user.id
+    normalized["owner_username"] = user.username
+    normalized["owner_display_name"] = display_name
+    normalized["created_by_user_id"] = user.id
+    normalized["created_by_username"] = user.username
+    normalized["created_by"] = user.username
+    normalized["created_by_display_name"] = display_name
+    normalized["creator_name"] = user.username
     return normalized
 
 
