@@ -909,6 +909,15 @@ export function useChatSession() {
       });
   }, [getSlot, input, navigate, notifyRequestError, tenantId, userId]);
 
+  const handleMissingSession = useCallback((id: string) => {
+    forgetMissingSession(id);
+    loadSessions();
+    if (sessionId === id) {
+      pendingPromotedSessionIdRef.current = null;
+      navigate('/workspace/gallery', { replace: true });
+    }
+  }, [forgetMissingSession, loadSessions, navigate, sessionId]);
+
   const loadMessages = useCallback((id: string) => {
     return api
       .get<ChatMessage[]>(`/api/chat/sessions/${id}/messages?tenant_id=${tenantId}`)
@@ -928,14 +937,13 @@ export function useChatSession() {
       })
       .catch((error) => {
         if (isMissingChatSessionError(error)) {
-          forgetMissingSession(id);
-          loadSessions();
+          handleMissingSession(id);
           return [];
         }
         notifyRequestError('messages', error, '消息加载失败');
         return [];
       });
-  }, [clearStreamSlot, forgetMissingSession, getSlot, getStreamSlot, loadSessions, notifyRequestError, notifyStore, pruneRealtime, tenantId]);
+  }, [clearStreamSlot, getSlot, getStreamSlot, handleMissingSession, notifyRequestError, notifyStore, pruneRealtime, tenantId]);
 
   const loadTraces = useCallback((id: string) => {
     return api
@@ -1010,13 +1018,12 @@ export function useChatSession() {
       })
       .catch((error) => {
         if (isMissingChatSessionError(error)) {
-          forgetMissingSession(id);
-          loadSessions();
+          handleMissingSession(id);
           return;
         }
         notifyRequestError('trace', error, '轨迹加载失败');
       });
-  }, [forgetMissingSession, getSlot, getStreamSlot, loadSessions, notifyRequestError, notifyStore, notifyStream, notifyTrace, tenantId]);
+  }, [getSlot, getStreamSlot, handleMissingSession, notifyRequestError, notifyStore, notifyStream, notifyTrace, tenantId]);
 
   const stopTerminalTurnSync = useCallback((sessionIdToStop: string, turnIdToStop: string) => {
     const key = `${sessionIdToStop}:${turnIdToStop}`;
