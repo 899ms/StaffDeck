@@ -682,12 +682,9 @@ def _bucket_concept(document: KnowledgeDocument, document_concept_id: str, bucke
 
 
 def _concept_type_for_bucket(bucket: KnowledgeBucket) -> str:
-    text = f"{bucket.title} {bucket.summary} {bucket.metadata_json}".lower()
-    if any(token in text for token in ("流程", "sop", "playbook", "步骤", "办理")):
-        return "Playbook"
-    if any(token in text for token in ("规则", "政策", "原则", "policy", "限制", "约束")):
-        return "Business Rule"
-    return "Topic"
+    metadata = bucket.metadata_json if isinstance(bucket.metadata_json, dict) else {}
+    concept_type = str(metadata.get("concept_type") or "Topic").strip()
+    return concept_type if concept_type in {"Topic", "Playbook", "Business Rule"} else "Topic"
 
 
 def _parse_okf_zip(content: bytes) -> list[ParsedOkfDocument]:

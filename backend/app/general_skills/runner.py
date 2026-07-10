@@ -47,8 +47,6 @@ class GeneralSkillSelector:
         general_skills: list[GeneralSkill],
         model_config: ModelConfig,
     ) -> GeneralSkillSelection:
-        if not general_skills:
-            return GeneralSkillSelection(use_general_skill=False, reason="No general skills are available")
         payload = {
             "user_message": query,
             "general_skills": [
@@ -63,19 +61,12 @@ class GeneralSkillSelector:
                 if skill.status == "published"
             ],
         }
-        if not payload["general_skills"]:
-            return GeneralSkillSelection(use_general_skill=False, reason="No published general skills are available")
         raw = LLMClient(model_config).generate_json(SELECTOR_PROMPT.read_text(encoding="utf-8"), payload)
         decision = GeneralSkillSelection.model_validate(raw)
         slugs = {skill.slug for skill in general_skills if skill.status == "published"}
-        if not decision.use_general_skill or not decision.selected_slug or decision.selected_slug not in slugs:
-            return GeneralSkillSelection(
-                use_general_skill=False,
-                selected_slug=None,
-                confidence=decision.confidence,
-                reason=decision.reason or "The model did not select a published general skill",
-            )
-        return decision
+        if decision.use_general_skill and decision.selected_slug in slugs:
+            return decision
+        return decision.model_copy(update={"use_general_skill": False, "selected_slug": None})
 
 
 class GeneralSkillRunner:

@@ -86,7 +86,7 @@ export function sessionHasUnreadReply(
   if (session.id === activeSessionId) return false;
   const summary = session.summary || session.last_agent_question || '';
   if (!summary) return false;
-  if (summary.includes('正在') || summary.includes('执行中')) return false;
+  if (session.status === 'running' || session.status === 'executing') return false;
   const updatedAt = Date.parse(session.updated_at || '');
   const readAt = Date.parse(readTimes[session.id] || '');
   return Number.isFinite(updatedAt) && (!Number.isFinite(readAt) || updatedAt > readAt + 1000);

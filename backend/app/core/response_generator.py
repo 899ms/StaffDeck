@@ -98,7 +98,9 @@ class ResponseGenerator:
                 return tool_failure_reply(tool_result)
             text = LLMClient(model_config).generate_text(self._system_prompt(persona_prompt), payload)
             reply = text.strip() or step_result.reply or self._minimal_fallback(router_decision)
-            return self._visible_reply_or_fallback(reply, session, step_result, tool_result, skill)
+            return self._visible_reply_or_fallback(
+                reply, session, router_decision, step_result, tool_result, skill
+            )
         except Exception as exc:
             return format_runtime_failure_reply("模型调用失败", exc, "LLM_ERROR", model_failure_suggestion(exc))
 
@@ -129,6 +131,9 @@ class ResponseGenerator:
             if tool_result and not tool_result.success:
                 yield from self.chunk_text(tool_failure_reply(tool_result))
                 return
+            if router_decision.decision == "clarify" and step_result.reply:
+                yield from self.chunk_text(step_result.reply)
+                return
             stream = LLMClient(model_config).generate_text_stream(self._system_prompt(persona_prompt), payload)
             reply_parts: list[str] = []
             has_streamed = False
@@ -140,8 +145,6 @@ class ResponseGenerator:
                     preview = "".join(reply_parts).strip()
                     if not preview:
                         continue
-                    if not self._is_user_safe(preview):
-                        raise ValueError("Unsafe model stream content")
                     has_streamed = True
                 yield chunk
             if has_streamed:
@@ -149,6 +152,7 @@ class ResponseGenerator:
             reply = self._visible_reply_or_fallback(
                 "".join(reply_parts).strip() or step_result.reply or self._minimal_fallback(router_decision),
                 session,
+                router_decision,
                 step_result,
                 tool_result,
                 skill,
@@ -210,35 +214,18 @@ class ResponseGenerator:
             return list(step_result.knowledge_results)
         return []
 
-    def _is_user_safe(self, text: str) -> bool:
-        internal_terms = (
-            "当前用户消息",
-            "会话状态",
-            "技能进度",
-            "可用技能",
-            "路由决策",
-            "Router",
-            "router",
-            "Step Agent",
-            "step agent",
-            "decision",
-            "JSON",
-            "tool_call",
-            "session_state",
-        )
-        return not any(term in text for term in internal_terms)
-
     def _visible_reply_or_fallback(
         self,
         reply: str,
         session: ChatSession,
+        router_decision: RouterDecision,
         step_result: StepAgentResult,
         tool_result: ToolResult | None,
         skill: Skill | None = None,
     ) -> str:
         completion_ready = self._skill_completion_ready(session, skill, step_result, tool_result)
         completion_fallback = self._completion_fallback() if completion_ready else ""
-        prefer_step_reply = self._prefer_step_reply_for_knowledge(step_result)
+        prefer_step_reply = bool(step_result.reply and router_decision.decision == "clarify")
         candidates = self._reply_candidates(
             reply,
             step_result.reply or "",
@@ -251,8 +238,6 @@ class ResponseGenerator:
         for candidate in candidates:
             stripped = candidate.strip()
             if not stripped:
-                continue
-            if not self._is_user_safe(stripped):
                 continue
             return stripped
         return FALLBACK_REPLY
@@ -298,27 +283,6 @@ class ResponseGenerator:
             session_fallback,
             FALLBACK_REPLY,
         )
-
-    def _prefer_step_reply_for_knowledge(self, step_result: StepAgentResult) -> bool:
-        step_reply = (step_result.reply or "").strip()
-        if not step_reply:
-            return False
-        if self._is_generic_step_reply(step_reply):
-            return False
-        return (
-            "[1]" in step_reply
-            or "根据业务资料" in step_reply
-            or ("业务资料" in step_reply and "引用" in step_reply)
-        )
-
-    def _is_generic_step_reply(self, reply: str) -> bool:
-        generic_terms = (
-            "已记录完整信息",
-            "请问还有其他需要帮助的吗",
-            "请您再补充一下具体诉求",
-            "我会继续帮您处理",
-        )
-        return any(term in reply for term in generic_terms)
 
     def _progress_payload(
         self,

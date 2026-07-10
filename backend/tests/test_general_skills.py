@@ -45,7 +45,7 @@ from app.general_skills.schema import (
 from app.llm import LLMClient, LLMError
 from app.security.auth import hash_password
 from app.security.encryption import encrypt_secret
-from app.session.session_schema import ChatTurnRequest
+from app.session.session_schema import ChatTurnRequest, RouterDecision, StepAgentResult
 from app.tools.tool_schema import ToolCall
 
 
@@ -53,6 +53,97 @@ WEATHER_SKILL_MD = """# 中国城市天气查询工具
 
 python weather.py -json -today <地区名称>
 """
+
+
+def test_capability_selector_allows_general_skill_and_knowledge_together(monkeypatch) -> None:
+    monkeypatch.setattr(LLMClient, "__init__", lambda self, model_config: None)
+    monkeypatch.setattr(
+        LLMClient,
+        "generate_json",
+        lambda self, system_prompt, payload: {
+            "use_general_skill": True,
+            "selected_slug": "weather-zh",
+            "use_knowledge": True,
+            "knowledge_query": "内部出差规范对天气风险有什么要求",
+            "confidence": 0.93,
+            "reason": "需要天气能力和内部出差规范共同回答。",
+        },
+    )
+    skill = GeneralSkill(
+        tenant_id="tenant_demo",
+        slug="weather-zh",
+        name="中国城市天气",
+        skill_markdown=WEATHER_SKILL_MD,
+        status="published",
+    )
+
+    decision = GeneralSkillSelector().decide("结合天气和公司规范给出建议", [skill], SimpleNamespace())
+
+    assert decision.use_general_skill is True
+    assert decision.selected_slug == "weather-zh"
+    assert decision.use_knowledge is True
+    assert decision.knowledge_query == "内部出差规范对天气风险有什么要求"
+
+
+def test_capability_selector_still_checks_knowledge_without_general_skills(monkeypatch) -> None:
+    received: dict[str, object] = {}
+    monkeypatch.setattr(LLMClient, "__init__", lambda self, model_config: None)
+
+    def fake_generate_json(self, system_prompt, payload):  # noqa: ANN001
+        received.update(payload)
+        return {
+            "use_general_skill": False,
+            "selected_slug": None,
+            "use_knowledge": True,
+            "knowledge_query": "员工报销的审批要求",
+            "confidence": 0.88,
+            "reason": "回答依赖企业文档。",
+        }
+
+    monkeypatch.setattr(LLMClient, "generate_json", fake_generate_json)
+
+    decision = GeneralSkillSelector().decide("这种费用应该怎么报", [], SimpleNamespace())
+
+    assert received["general_skills"] == []
+    assert decision.use_general_skill is False
+    assert decision.use_knowledge is True
+    assert decision.knowledge_query == "员工报销的审批要求"
+
+
+def test_capability_knowledge_is_merged_into_general_skill_result() -> None:
+    step_result = StepAgentResult(reply="天气查询完成", is_step_completed=True)
+    knowledge_result = StepAgentResult(
+        knowledge_query={"query": "内部出差规范"},
+        knowledge_results=[{"evidence_pack": [{"content": "恶劣天气时应调整行程"}]}],
+    )
+
+    AgentLoop._merge_capability_knowledge(step_result, knowledge_result)
+
+    assert step_result.knowledge_query is not None
+    assert step_result.knowledge_query.query == "内部出差规范"
+    assert step_result.knowledge_results == knowledge_result.knowledge_results
+
+
+def test_knowledge_keywords_do_not_bypass_structured_capability_selection() -> None:
+    loop = object.__new__(AgentLoop)
+    result = loop._auto_knowledge_step_result(  # noqa: SLF001
+        ChatTurnRequest(
+            tenant_id="tenant_demo",
+            user_id="user_demo",
+            message="请根据知识库资料、规则、政策和文档说明怎么处理",
+        ),
+        ChatSession(id="session_demo", tenant_id="tenant_demo"),
+        SimpleNamespace(),
+        RouterDecision(decision="answer_only"),
+        GeneralSkillSelection(
+            use_general_skill=False,
+            use_knowledge=False,
+            reason="第二轮能力选择认为当前上下文足以回答。",
+        ),
+    )
+
+    assert result.knowledge_query is None
+    assert result.knowledge_results == []
 
 
 def _admin_user() -> User:

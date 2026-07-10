@@ -227,10 +227,6 @@ def _effective_analysis_status(row: MessageFeedback) -> str:
     metadata = row.analysis_json or {}
     if metadata.get("error_type") or metadata.get("retryable"):
         return "failed"
-    reason = row.analysis_reason or ""
-    summary = row.analysis_summary or ""
-    if "模型分析失败" in reason or "后台分析失败" in summary:
-        return "failed"
     return row.analysis_status
 
 

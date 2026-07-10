@@ -603,6 +603,7 @@ class KnowledgeService:
                 metadata_json={
                     "content": content[:BUCKET_SECTION_CHARS],
                     "bucket_type": str(spec.get("bucket_type") or "structure"),
+                    "concept_type": str(spec.get("concept_type") or "Topic"),
                     "section_ids": section_ids,
                     "section_paths": spec.get("section_paths") if isinstance(spec.get("section_paths"), list) else [],
                     "representative_chunk_ids": [],
@@ -1452,6 +1453,7 @@ def _structure_bucket_specs(section_nodes: list[dict[str, Any]]) -> list[dict[st
                 "section_ids": [str(node.get("section_id")) for node in nodes if node.get("section_id")],
                 "section_paths": section_paths,
                 "bucket_type": "structure",
+                "concept_type": "Topic",
                 "applicable_query_types": ["answer", "policy_check"],
             }
         )
@@ -1485,6 +1487,7 @@ def _normalize_llm_bucket_specs(
                 "section_ids": section_ids,
                 "section_paths": [str(node.get("path") or node.get("title") or "") for node in nodes],
                 "bucket_type": str(item.get("bucket_type") or "task"),
+                "concept_type": str(item.get("concept_type") or "Topic"),
                 "applicable_query_types": item.get("applicable_query_types")
                 if isinstance(item.get("applicable_query_types"), list)
                 else ["answer", "policy_check", "tool_discovery", "skill_discovery"],
@@ -1548,6 +1551,7 @@ def _fallback_bucket_specs(sections: list[str], section_nodes: list[dict[str, An
             "summary": section[:360],
             "content": section,
             "bucket_type": "structure",
+            "concept_type": "Topic",
             "section_ids": [],
             "section_paths": [],
         }

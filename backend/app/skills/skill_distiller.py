@@ -39,6 +39,9 @@ ADAPTIVE_STEP_INSTRUCTION_SUFFIX = (
     "将本步骤作为目标而不是固定话术；如果用户当前消息、历史 slots 或路由意图已满足本步骤，"
     "直接写入对应 slot 并继续到下一缺失信息、工具调用或最终回复，不要重复确认。"
 )
+FINAL_RESPONSE_INSTRUCTION_SUFFIX = "给用户明确最终回复；无法闭环时转人工，不要只说请稍候。"
+
+
 class SkillDistiller:
     def distill(self, request: SkillDistillRequest, model_config: ModelConfig) -> SkillDistillResponse:
         return self._generate_response(request, model_config)
@@ -335,9 +338,7 @@ class SkillDistiller:
             if "continue_flow" not in actions:
                 actions.append("continue_flow")
                 node["allowed_actions"] = actions
-            instruction = str(node.get("instruction") or "")
-            if "工具成功后" not in instruction:
-                node["instruction"] = f"{instruction}{TOOL_STEP_INSTRUCTION_SUFFIX}"
+            _append_instruction_suffix(node, TOOL_STEP_INSTRUCTION_SUFFIX)
 
         if not _last_step_allows_answer(normalized_nodes):
             normalized_nodes.append(
@@ -357,11 +358,7 @@ class SkillDistiller:
             warnings.append("原始改写缺少最终回复节点，已补充闭环反馈节点。")
         else:
             last_step = normalized_nodes[-1]
-            instruction = str(last_step.get("instruction") or "")
-            if "明确" not in instruction or "请稍候" in instruction:
-                last_step["instruction"] = (
-                    f"{instruction}给用户明确最终回复；无法闭环时转人工，不要只说请稍候。"
-                )
+            _append_instruction_suffix(last_step, FINAL_RESPONSE_INSTRUCTION_SUFFIX)
 
         return normalized_nodes, warnings
 
@@ -503,10 +500,14 @@ def _steps_have_tool_action(steps: list[dict[str, Any]]) -> bool:
 
 
 def _ensure_adaptive_step_instruction(step: dict[str, Any]) -> None:
+    _append_instruction_suffix(step, ADAPTIVE_STEP_INSTRUCTION_SUFFIX)
+
+
+def _append_instruction_suffix(step: dict[str, Any], suffix: str) -> None:
     instruction = str(step.get("instruction") or "")
-    if "目标而不是固定话术" in instruction or "不是固定问答脚本" in instruction:
+    if suffix in instruction:
         return
-    step["instruction"] = f"{instruction}{ADAPTIVE_STEP_INSTRUCTION_SUFFIX}"
+    step["instruction"] = f"{instruction}{suffix}"
 
 
 def _confirmation_fields(steps: list[dict[str, Any]]) -> list[str]:
@@ -536,11 +537,8 @@ def _attach_declared_confirmation_to_tool_steps(steps: list[dict[str, Any]]) -> 
 def _append_tool_confirmation_instruction(step: dict[str, Any], confirmation_fields: list[str]) -> None:
     if not confirmation_fields:
         return
-    instruction = str(step.get("instruction") or "")
-    if "确认字段" in instruction or "confirmed=true" in instruction:
-        return
     field_text = "、".join(f"{field}=true" for field in confirmation_fields)
-    step["instruction"] = f"{instruction}调用工具前必须确认字段已满足：{field_text}。"
+    _append_instruction_suffix(step, f"调用工具前必须确认字段已满足：{field_text}。")
 
 
 def _last_step_allows_answer(steps: list[dict[str, Any]]) -> bool:
@@ -606,17 +604,6 @@ def _compact_warnings(warnings: list[str]) -> list[str]:
 
 def _compact_warning(warning: str) -> str:
     text = warning.strip()
-    tool_name = _warning_tool_name(text)
-    if tool_name and (
-        "未配置工具" in text
-        or "available_tools" in text
-        or "tool_suggestions" in text
-        or "tool_mentions" in text
-        or "allowed_actions" in text
-    ):
-        return f"未配置工具 {tool_name}，已移出调用动作；需在原文中提供完整工具接口信息。"
-    if "没有任何工具支持" in text or ("available_tools" in text and "工具" in text):
-        return "缺少可用工具，需先新增工具后再执行该流程。"
     replacements = (
         ("原始改写未包含工具步骤，已按可用工具补充闭环执行步骤。", "已补充工具执行步骤。"),
         ("原始改写缺少执行前确认步骤，已补充确认步骤。", "已补充执行前确认步骤。"),
@@ -627,20 +614,6 @@ def _compact_warning(warning: str) -> str:
         if text == source:
             return target
     return text
-
-
-def _warning_tool_name(text: str) -> str:
-    patterns = (
-        r"未配置工具\s+`?([A-Za-z0-9_.:-]+)`?",
-        r"工具\s+`?([A-Za-z0-9_.:-]+)`?\s+不在",
-        r"引用了未配置工具\s+`?([A-Za-z0-9_.:-]+)`?",
-        r"提到了工具\s+`?([A-Za-z0-9_.:-]+)`?",
-    )
-    for pattern in patterns:
-        match = re.search(pattern, text)
-        if match:
-            return match.group(1).strip("`，。,. ")
-    return ""
 
 
 def _request_text(request: Any) -> str:

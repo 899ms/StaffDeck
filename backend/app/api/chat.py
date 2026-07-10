@@ -2569,6 +2569,7 @@ def _fallback_knowledge_citation_traces(messages: list[Message]) -> list[dict]:
                     {
                         "id": "knowledge_query",
                         "kind": "knowledge",
+                        "phase": "query",
                         "text": "查询业务资料",
                         "detail": current_user.content if current_user else None,
                         "state": "completed",
@@ -2576,6 +2577,7 @@ def _fallback_knowledge_citation_traces(messages: list[Message]) -> list[dict]:
                     {
                         "id": "knowledge_retrieval",
                         "kind": "knowledge",
+                        "phase": "result",
                         "text": "读取业务资料",
                         "detail": (
                             f"命中 {len(citations)} 条知识引用"
@@ -2598,9 +2600,13 @@ def _fallback_knowledge_citation_traces(messages: list[Message]) -> list[dict]:
 
 
 def _ensure_knowledge_query_line(lines: list[dict], user_message: object | None = None) -> None:
-    has_query = any(line.get("text") == "查询业务资料" for line in lines)
+    has_query = any(line.get("kind") == "knowledge" and line.get("phase") == "query" for line in lines)
     read_index = next(
-        (index for index, line in enumerate(lines) if line.get("text") == "读取业务资料"),
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.get("kind") == "knowledge" and line.get("phase") == "result"
+        ),
         None,
     )
     if has_query or read_index is None:
@@ -2611,6 +2617,7 @@ def _ensure_knowledge_query_line(lines: list[dict], user_message: object | None 
         {
             "id": "knowledge_query_synthetic",
             "kind": "knowledge",
+            "phase": "query",
             "text": "查询业务资料",
             "detail": detail or None,
             "state": "completed",
@@ -2926,6 +2933,7 @@ def _event_trace_line(
         return {
             "id": f"knowledge_{event.id}_started",
             "kind": "knowledge",
+            "phase": "query",
             "text": "查询业务资料",
             "detail": text or None,
             "state": "running",
@@ -2944,6 +2952,7 @@ def _event_trace_line(
         return {
             "id": f"knowledge_{event.id}_finished",
             "kind": "knowledge",
+            "phase": "result",
             "text": "读取业务资料",
             "detail": " · ".join(part for part in parts if part),
             "state": "completed",

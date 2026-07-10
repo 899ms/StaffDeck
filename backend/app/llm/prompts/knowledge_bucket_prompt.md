@@ -8,6 +8,7 @@
 - 每个 bucket 必须保留 section_ids，方便系统回填原文。
 - bucket_key 使用稳定英文小写标识，如 after_sales_policy、api_examples。
 - bucket_type 固定输出 "task"。
+- concept_type 根据桶的语义输出 "Topic"、"Playbook" 或 "Business Rule"；不要由系统再扫描标题或正文关键词分类。
 - applicable_query_types 可从 answer、policy_check、tool_discovery、skill_discovery 中选择。
 
 只输出 JSON：
@@ -18,6 +19,7 @@
       "title": "...",
       "summary": "...",
       "bucket_type": "task",
+      "concept_type": "Playbook",
       "section_ids": ["sec_1", "sec_2"],
       "applicable_query_types": ["answer"]
     }

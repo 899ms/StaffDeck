@@ -90,6 +90,8 @@ class GeneralSkillRunResponse(BaseModel):
 class GeneralSkillSelection(BaseModel):
     use_general_skill: bool = False
     selected_slug: Optional[str] = None
+    use_knowledge: bool = False
+    knowledge_query: Optional[str] = None
     confidence: float = 0.0
     reason: Optional[str] = None
 

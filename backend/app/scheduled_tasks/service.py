@@ -46,29 +46,6 @@ DEFAULT_TASK_TIME = "09:00"
 LEASE_SECONDS = 15 * 60
 WORKER_SLEEP_SECONDS = 5
 SCHEDULE_TYPES = {"once", "daily", "weekly", "monthly"}
-WEEKDAY_MAP = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
-WEEKDAY_MARKER_PATTERN = re.compile(r"(?:周|星期)([一二三四五六日天])")
-WEEKLY_MARKERS = ("每周", "每星期", "星期")
-MONTHLY_MARKERS = ("每月", "每个月")
-ONCE_MARKERS = ("一次", "今天", "今晚", "明天", "明晚", "后天")
-TOMORROW_MARKERS = ("明天", "明晚")
-PM_MARKERS = ("下午", "晚上", "今晚", "晚间", "夜里", "明晚")
-MIDNIGHT_MARKERS = ("凌晨", "半夜")
-BASIC_TIME_PATTERNS: tuple[tuple[re.Pattern[str], int | None], ...] = (
-    (re.compile(r"(?P<hour>\d{1,2})\s*(?:点|时)\s*半"), 30),
-    (
-        re.compile(r"(?P<hour>\d{1,2})\s*(?:点|时)\s*(?P<minute>\d{1,2})\s*分?"),
-        None,
-    ),
-    (
-        re.compile(r"(?P<hour>\d{1,2})\s*[:：.．]\s*(?P<minute>\d{1,2})\s*分?"),
-        None,
-    ),
-    (re.compile(r"(?P<hour>\d{1,2})\s*(?:点|时)"), 0),
-)
-CONFIG_PREFIX_PATTERN = re.compile(
-    r"^(请|帮我|麻烦)?(设置|创建|新增)?(一个)?(自动任务|定时任务|提醒)[:：，,]?"
-)
 
 
 class _LLMScheduledTaskDraft(BaseModel):
@@ -265,14 +242,9 @@ def detect_scheduled_task_draft(
         return None
     user_timezone = _safe_timezone(timezone)
     llm_draft = _detect_with_llm(db, tenant_id, agent_id, message, user_timezone)
-    if llm_draft is not None:
-        if not llm_draft.should_create:
-            return None
-        draft: _LLMScheduledTaskDraft | ScheduledTaskDraftRead = llm_draft
-    else:
-        draft = _fallback_draft(message, user_timezone)
-    if not draft or not draft.should_create:
+    if llm_draft is None or not llm_draft.should_create:
         return None
+    draft = llm_draft
     try:
         schedule_type = _normalize_schedule_type(draft.schedule_type)
         draft_timezone = _safe_timezone(draft.timezone, user_timezone)
@@ -703,85 +675,8 @@ def _detect_with_llm(
         return None
 
 
-def _fallback_draft(message: str, timezone: str = DEFAULT_TIMEZONE) -> ScheduledTaskDraftRead | None:
-    schedule_type, schedule = _basic_fallback_schedule(message)
-    return ScheduledTaskDraftRead(
-        should_create=True,
-        tenant_id="",
-        agent_id="",
-        title=_compact_title(message),
-        prompt=_execution_goal_from_message(message),
-        description="模型未返回有效草案，已按基础关键词生成可编辑自动任务草案，请确认计划和执行内容。",
-        schedule_type=schedule_type,  # type: ignore[arg-type]
-        schedule=schedule,
-        timezone=_safe_timezone(timezone),
-        confidence=0.45,
-        reason="模型解析失败后的轻量关键词兜底草案",
-    )
-
-
-def _basic_fallback_schedule(message: str) -> tuple[str, dict[str, Any]]:
-    time_text = _extract_basic_time(message) or DEFAULT_TASK_TIME
-    if _is_weekly_schedule_request(message):
-        return "weekly", {"time": time_text, "weekdays": _extract_basic_weekdays(message) or [0]}
-    if _contains_any(message, MONTHLY_MARKERS):
-        return "monthly", {"time": time_text, "day_of_month": _extract_basic_monthday(message) or 1}
-    if _contains_any(message, ONCE_MARKERS):
-        return "once", {"run_at": _basic_once_run_at(message, time_text).isoformat()}
-    return "daily", {"time": time_text}
-
-
-def _extract_basic_time(message: str) -> str | None:
-    for pattern, fixed_minute in BASIC_TIME_PATTERNS:
-        match = pattern.search(message)
-        if not match:
-            continue
-        hour = _adjust_basic_hour(message, int(match.group("hour")))
-        minute = (
-            fixed_minute
-            if fixed_minute is not None
-            else int(match.groupdict().get("minute") or 0)
-        )
-        return _format_basic_time(hour, minute)
-    return None
-
-
-def _adjust_basic_hour(message: str, hour: int) -> int:
-    if _contains_any(message, PM_MARKERS) and 1 <= hour < 12:
-        return hour + 12
-    if _contains_any(message, MIDNIGHT_MARKERS) and hour == 12:
-        return 0
-    return hour
-
-
-def _extract_basic_weekdays(message: str) -> list[int]:
-    return sorted({WEEKDAY_MAP[match.group(1)] for match in WEEKDAY_MARKER_PATTERN.finditer(message)})
-
-
-def _extract_basic_monthday(message: str) -> int | None:
-    match = re.search(r"每(?:个)?月\s*(\d{1,2})(?:号|日)?", message)
-    if not match:
-        return None
-    return _normalize_day_of_month(match.group(1))
-
-
-def _basic_once_run_at(message: str, time_text: str) -> datetime:
-    now = _to_local(utc_now(), DEFAULT_TIMEZONE)
-    day = now.date()
-    if "后天" in message:
-        day += timedelta(days=2)
-    elif _contains_any(message, TOMORROW_MARKERS):
-        day += timedelta(days=1)
-    candidate = datetime.combine(day, _parse_time(time_text)).replace(tzinfo=_tz(DEFAULT_TIMEZONE))
-    if candidate <= now:
-        candidate += timedelta(days=1)
-    return candidate
-
-
 def _execution_goal_from_message(message: str) -> str:
-    text = message.strip()
-    text = CONFIG_PREFIX_PATTERN.sub("", text)
-    return text.strip() or message.strip()
+    return message.strip()
 
 
 def _compact_title(message: str) -> str:
@@ -794,21 +689,6 @@ def _normalize_schedule_type(value: str) -> str:
     if value not in SCHEDULE_TYPES:
         raise HTTPException(status_code=400, detail="不支持的自动任务调度类型")
     return value
-
-
-def _is_weekly_schedule_request(message: str) -> bool:
-    return _contains_any(message, WEEKLY_MARKERS) or bool(WEEKDAY_MARKER_PATTERN.search(message))
-
-
-def _contains_any(text: str, markers: tuple[str, ...]) -> bool:
-    return any(marker in text for marker in markers)
-
-
-def _format_basic_time(hour: int, minute: int) -> str | None:
-    try:
-        return _format_time(time(hour, minute))
-    except ValueError:
-        return None
 
 
 def _normalize_weekdays(value: Any) -> list[int]:

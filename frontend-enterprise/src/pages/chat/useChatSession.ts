@@ -2429,12 +2429,7 @@ export function useChatSession() {
       const ids = new Set<string>();
       const isLiveSseSession = (id: string) => Boolean(streamRef.current.get(id)?.abortController);
       sessions.forEach((session) => {
-        const looksRunning = (
-          session.status === 'running'
-          || session.status === 'executing'
-          || (session.summary || '').includes('执行中')
-          || (session.last_agent_question || '').includes('执行中')
-        );
+        const looksRunning = session.status === 'running' || session.status === 'executing';
         if (looksRunning && !isLiveSseSession(session.id)) ids.add(session.id);
       });
       streamRef.current.forEach((slot, id) => {

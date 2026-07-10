@@ -82,49 +82,8 @@ GRAPH_PENDING_STEPS_SLOT = "_graph_pending_steps"
 GENERAL_SKILL_TOOL_PREFIX = "general_skill."
 CANCELLED_ASSISTANT_REPLY = "已停止生成"
 IDEMPOTENT_WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-READ_ONLY_TOOL_HINTS = {
-    "check",
-    "compare",
-    "fetch",
-    "find",
-    "forecast",
-    "get",
-    "inspect",
-    "list",
-    "lookup",
-    "price",
-    "query",
-    "read",
-    "retrieve",
-    "search",
-    "summarize",
-    "validate",
-    "weather",
-    "查看",
-    "查询",
-    "搜索",
-    "读取",
-    "获取",
-    "列表",
-    "比价",
-    "价格",
-    "天气",
-}
 ERROR_TRACEBACK_CHAR_LIMIT = 6000
 PROFILE_NAME_PREFIX = "用户姓名/称呼："
-TASK_CONFIRMATION_MARKERS = ("确认下单", "确认购买", "请确认", "是否确认")
-TASK_HANDOFF_MARKERS = ("接下来", "然后", "下一步", "随后", "之后")
-TASK_PRODUCT_PATTERN = re.compile(r"(?<![A-Za-z0-9])([Aa]\d+|SKU-\d+)(?![A-Za-z0-9])")
-KNOWN_PRODUCT_ID_ALIASES = {
-    "a1": "A1",
-    "a3": "A3",
-    "sku001": "SKU-001",
-    "sku-001": "SKU-001",
-    "sku002": "SKU-002",
-    "sku-002": "SKU-002",
-    "sku003": "SKU-003",
-    "sku-003": "SKU-003",
-}
 AGENT_PERSONA_METADATA_FIELDS: tuple[tuple[str, str], ...] = (
     ("role_name", "岗位"),
     ("position", "岗位"),
@@ -241,15 +200,6 @@ def _profile_name_from_memory(memory_context: list[dict[str, object]]) -> str:
         if name:
             return name[:40]
     return ""
-
-
-def _known_product_id(value: Any) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    normalized = re.sub(r"[\s_]+", "-", text.lower())
-    compact = re.sub(r"[^a-z0-9]+", "", text.lower())
-    return KNOWN_PRODUCT_ID_ALIASES.get(normalized) or KNOWN_PRODUCT_ID_ALIASES.get(compact, "")
 
 
 def _node_as_step(node: dict[str, Any]) -> dict[str, Any]:
@@ -374,10 +324,6 @@ class AgentLoop:
             profile_name = _profile_name_from_memory(memory_context)
             if profile_name:
                 patch["user_name"] = profile_name
-        if "product_id" in expected_fields and not _slot_has_value(slots, "product_id"):
-            product_id = _known_product_id(slots.get("product_name") or slots.get("product_id"))
-            if product_id:
-                patch["product_id"] = product_id
         return patch
 
     def _trim_satisfied_awaiting_fields(
@@ -517,13 +463,16 @@ class AgentLoop:
         memory_context: list[dict[str, object]] | None = None,
         conversation_context: dict[str, object] | None = None,
         user_message_id: str | None = None,
+        capability: tuple[GeneralSkill | None, GeneralSkillSelection] | None = None,
     ) -> ChatTurnResponse | None:
         if not self._scene_router_deferred_to_general(router_decision):
             return None
-        selected = self._select_general_skill(request.message, model_config, chat_session.agent_id)
-        if not selected:
+        capability = capability or self._select_general_capability(
+            request.message, model_config, chat_session.agent_id
+        )
+        skill, selection = capability
+        if skill is None:
             return None
-        skill, selection = selected
         self.events.record(
             request.tenant_id,
             chat_session.id,
@@ -557,6 +506,14 @@ class AgentLoop:
         run_response = self.general_skill_runner.run(skill, request.message, model_config, request.user_id)
         self._record_general_skill_run_events(request.tenant_id, chat_session, run_response, user_message_id)
         step_result, tool_result = self._general_skill_agent_outputs(run_response)
+        knowledge_step = self._auto_knowledge_step_result(
+            request,
+            chat_session,
+            model_config,
+            router_decision,
+            selection,
+        )
+        self._merge_capability_knowledge(step_result, knowledge_step)
         active_skill = self._get_active_skill(request.tenant_id, chat_session.active_skill_id, chat_session.agent_id)
         reply = self._generate_reply_segment(
             request.message,
@@ -621,6 +578,16 @@ class AgentLoop:
             tool_call=None,
         )
         return step_result, tool_result
+
+    @staticmethod
+    def _merge_capability_knowledge(
+        step_result: StepAgentResult,
+        knowledge_step: StepAgentResult,
+    ) -> None:
+        if knowledge_step.knowledge_query is not None:
+            step_result.knowledge_query = knowledge_step.knowledge_query
+        if knowledge_step.knowledge_results:
+            step_result.knowledge_results = knowledge_step.knowledge_results
 
     def _scene_router_deferred_to_general(self, router_decision: RouterDecision) -> bool:
         if router_decision.selected_task_id:
@@ -821,15 +788,34 @@ class AgentLoop:
         )
         if is_cancelled and is_cancelled():
             return
-        yield self._stream_status(chat_session, "responding", "正在生成回复", user_message_id=user_message_id)
         step_result, tool_result = self._general_skill_agent_outputs(run_response)
+        resolved_router_decision = router_decision or RouterDecision(
+            decision="answer_only", user_intent="通用技能执行结果回复"
+        )
+        knowledge_stream_events: list[tuple[str, dict[str, object]]] = []
+        knowledge_step = self._auto_knowledge_step_result(
+            request,
+            chat_session,
+            model_config,
+            resolved_router_decision,
+            selection,
+            stream_events=knowledge_stream_events,
+        )
+        self._merge_capability_knowledge(step_result, knowledge_step)
+        for event_name, payload in knowledge_stream_events:
+            yield self._stream_event(
+                event_name,
+                chat_session,
+                self._turn_payload(payload, user_message_id),
+            )
+        yield self._stream_status(chat_session, "responding", "正在生成回复", user_message_id=user_message_id)
         active_skill = self._get_active_skill(request.tenant_id, chat_session.active_skill_id, chat_session.agent_id)
         reply = ""
         for chunk in self._generate_reply_stream_segment(
             request.message,
             chat_session,
             active_skill,
-            router_decision or RouterDecision(decision="answer_only", user_intent="通用技能执行结果回复"),
+            resolved_router_decision,
             step_result,
             tool_result,
             model_config,
@@ -1346,6 +1332,7 @@ class AgentLoop:
 
         try:
             chat_session = self._get_or_create_session(request)
+            self._mark_session_running(chat_session)
             yield self._stream_event(
                 "session_created",
                 chat_session,
@@ -1405,13 +1392,15 @@ class AgentLoop:
             self._drop_unavailable_skill_state(request.tenant_id, chat_session, skills)
             if not skills:
                 yield self._stream_status(chat_session, "routing", "正在判断用户意图", user_message_id=user_message_id)
-                selected_general_skill = self._select_general_skill(request.message, model_config, chat_session.agent_id)
-                if selected_general_skill:
+                capability = self._select_general_capability(
+                    request.message, model_config, chat_session.agent_id
+                )
+                if capability[0] is not None:
                     yield from self._stream_general_skill_response(
                         request,
                         chat_session,
                         model_config,
-                        selected_general_skill,
+                        (capability[0], capability[1]),
                         None,
                         [],
                         self._conversation_context(chat_session),
@@ -1435,6 +1424,7 @@ class AgentLoop:
                     chat_session,
                     model_config,
                     router_decision,
+                    capability[1],
                     stream_events=knowledge_stream_events,
                 )
                 for event_name, payload in knowledge_stream_events:
@@ -1529,14 +1519,18 @@ class AgentLoop:
                 chat_session,
                 self._turn_payload(router_decision.model_dump(mode="json"), user_message_id),
             )
+            capability_selection: GeneralSkillSelection | None = None
             if self._scene_router_deferred_to_general(router_decision):
-                selected_general_skill = self._select_general_skill(request.message, model_config, chat_session.agent_id)
-                if selected_general_skill:
+                capability = self._select_general_capability(
+                    request.message, model_config, chat_session.agent_id
+                )
+                capability_selection = capability[1]
+                if capability[0] is not None:
                     yield from self._stream_general_skill_response(
                         request,
                         chat_session,
                         model_config,
-                        selected_general_skill,
+                        (capability[0], capability[1]),
                         router_decision,
                         memory_context,
                         conversation_context,
@@ -1665,9 +1659,10 @@ class AgentLoop:
                     chat_session,
                     model_config,
                     router_decision,
+                    capability_selection,
                     stream_events=knowledge_stream_events,
                 )
-                if auto_step_result.knowledge_results:
+                if auto_step_result.knowledge_query:
                     step_result = auto_step_result
                 for event_name, payload in knowledge_stream_events:
                     yield self._stream_event(event_name, chat_session, self._turn_payload(payload, user_message_id))
@@ -1764,23 +1759,6 @@ class AgentLoop:
                 self.db.refresh(chat_session)
                 for event_name, payload in knowledge_stream_events:
                     yield self._stream_event(event_name, chat_session, self._turn_payload(payload, user_message_id))
-            elif not step_result.knowledge_results and self._should_auto_query_knowledge(request.message, router_decision):
-                knowledge_stream_events = []
-                auto_step_result = self._auto_knowledge_step_result(
-                    request,
-                    chat_session,
-                    model_config,
-                    router_decision,
-                    stream_events=knowledge_stream_events,
-                )
-                if auto_step_result.knowledge_results:
-                    step_result.knowledge_query = auto_step_result.knowledge_query
-                    step_result.knowledge_results = auto_step_result.knowledge_results
-                self.db.commit()
-                self.db.refresh(chat_session)
-                for event_name, payload in knowledge_stream_events:
-                    yield self._stream_event(event_name, chat_session, self._turn_payload(payload, user_message_id))
-
             if step_result.tool_call:
                 tool_stream_events: list[tuple[str, dict[str, object]]] = []
                 step_result, tool_result = self._execute_tool_action_cycle(
@@ -2039,6 +2017,7 @@ class AgentLoop:
                 status_callback(phase, payload or {})
 
         chat_session = self._get_or_create_session(request)
+        self._mark_session_running(chat_session)
         status("received", {"session_id": chat_session.id})
         user_message = self._append_message(
             request.tenant_id,
@@ -2072,6 +2051,9 @@ class AgentLoop:
         self._ensure_request_multimodal_supported(request, model_config)
         self._drop_unavailable_skill_state(request.tenant_id, chat_session, skills)
         if not skills:
+            capability = self._select_general_capability(
+                request.message, model_config, chat_session.agent_id
+            )
             router_decision = RouterDecision(
                 decision="answer_only",
                 reason="No published scene skills are available; try general skills, then answer as chat.",
@@ -2084,6 +2066,7 @@ class AgentLoop:
                 [],
                 self._conversation_context(chat_session),
                 user_message.id,
+                capability,
             )
             if general_response:
                 return PreparedTurn(
@@ -2103,6 +2086,7 @@ class AgentLoop:
                 chat_session,
                 model_config,
                 router_decision,
+                capability[1],
                 status_callback=status,
             )
             return PreparedTurn(
@@ -2159,6 +2143,11 @@ class AgentLoop:
             "router_decision_created",
             self._turn_payload(router_decision.model_dump(), user_message.id),
         )
+        capability: tuple[GeneralSkill | None, GeneralSkillSelection] | None = None
+        if self._scene_router_deferred_to_general(router_decision):
+            capability = self._select_general_capability(
+                request.message, model_config, chat_session.agent_id
+            )
         general_response = self._try_handle_general_skill_after_scene_router(
             request,
             chat_session,
@@ -2167,6 +2156,7 @@ class AgentLoop:
             memory_context,
             conversation_context,
             user_message.id,
+            capability,
         )
         if general_response:
             return PreparedTurn(
@@ -2251,6 +2241,7 @@ class AgentLoop:
                 chat_session,
                 model_config,
                 router_decision,
+                capability[1] if capability else None,
                 status_callback=status,
             )
             return PreparedTurn(
@@ -2294,19 +2285,6 @@ class AgentLoop:
                 conversation_context,
                 status_callback=status,
             )
-            self.db.commit()
-            self.db.refresh(chat_session)
-        elif not step_result.knowledge_results and self._should_auto_query_knowledge(request.message, router_decision):
-            auto_step_result = self._auto_knowledge_step_result(
-                request,
-                chat_session,
-                model_config,
-                router_decision,
-                status_callback=status,
-            )
-            if auto_step_result.knowledge_results:
-                step_result.knowledge_query = auto_step_result.knowledge_query
-                step_result.knowledge_results = auto_step_result.knowledge_results
             self.db.commit()
             self.db.refresh(chat_session)
         if step_result.tool_call:
@@ -2989,45 +2967,7 @@ class AgentLoop:
         clean_segment = str(segment or "").strip()
         if not clean_segment:
             return replies, False
-        if not replies:
-            return [clean_segment], False
-
-        previous = replies[-1].strip()
-        merged = self._merge_overlapping_task_confirmation(previous, clean_segment)
-        if merged:
-            return [*replies[:-1], merged], True
         return [*replies, clean_segment], False
-
-    def _merge_overlapping_task_confirmation(self, previous: str, current: str) -> str | None:
-        if not previous or not current:
-            return None
-        if not self._has_task_confirmation(previous) or not self._has_task_confirmation(current):
-            return None
-        previous_products = self._task_reply_products(previous)
-        current_products = self._task_reply_products(current)
-        if not current_products:
-            return None
-        if previous_products and current_products and previous_products.isdisjoint(current_products):
-            return None
-
-        split_index = self._task_handoff_index(previous)
-        if split_index is None:
-            return None
-        prefix = previous[:split_index].strip()
-        if not prefix:
-            return current.strip()
-        return f"{prefix}\n\n{current.strip()}"
-
-    def _has_task_confirmation(self, text: str) -> bool:
-        return any(marker in text for marker in TASK_CONFIRMATION_MARKERS)
-
-    def _task_handoff_index(self, text: str) -> int | None:
-        indexes = [text.find(marker) for marker in TASK_HANDOFF_MARKERS if marker in text]
-        indexes = [index for index in indexes if index >= 0]
-        return min(indexes) if indexes else None
-
-    def _task_reply_products(self, text: str) -> set[str]:
-        return {match.group(1).upper() for match in TASK_PRODUCT_PATTERN.finditer(text or "")}
 
     def _router_decision_from_task_frame(
         self,
@@ -3740,9 +3680,6 @@ class AgentLoop:
             original_message = request.message.strip()
             if original_message and original_message not in search_query:
                 search_query = f"{search_query}\n{original_message}"
-            expanded_query = self._expanded_knowledge_query(original_message)
-            if expanded_query and expanded_query not in search_query:
-                search_query = f"{search_query}\n{expanded_query}"
             search_response = KnowledgeService(self.db).search(
                 KnowledgeSearchRequest(
                     tenant_id=request.tenant_id,
@@ -3806,15 +3743,18 @@ class AgentLoop:
         chat_session: ChatSession,
         model_config: ModelConfig,
         router_decision: RouterDecision,
+        selection: GeneralSkillSelection | None,
         stream_events: list[tuple[str, dict[str, object]]] | None = None,
         status_callback: StatusCallback | None = None,
     ) -> StepAgentResult:
-        if not self._should_auto_query_knowledge(request.message, router_decision):
+        del router_decision
+        if selection is None or not selection.use_knowledge:
             return StepAgentResult()
 
+        query_text = (selection.knowledge_query or request.message).strip()
         query = KnowledgeQuery(
-            query=request.message,
-            reason="用户要求基于业务资料或规则回答",
+            query=query_text,
+            reason=selection.reason or "第二轮能力选择判断需要企业知识",
             max_chunks=8,
             max_depth=3,
         )
@@ -3837,20 +3777,34 @@ class AgentLoop:
             query,
             model_config,
         )
-        if not knowledge_items:
-            return StepAgentResult()
-        self._record_knowledge_results(chat_session, knowledge_items)
+        finished_payload = knowledge_items or {
+            "query": query.model_dump(mode="json"),
+            "source_message": request.message,
+            "selected_buckets": [],
+            "chunks": [],
+            "trace": [],
+            "selected_documents": [],
+            "selected_concepts": [],
+            "expanded_sections": [],
+            "okf_citations": [],
+            "evidence_pack": [],
+        }
+        if knowledge_items:
+            self._record_knowledge_results(chat_session, knowledge_items)
         self.events.record(
             request.tenant_id,
             chat_session.id,
             "knowledge_query_finished",
-            {**knowledge_items, "auto": True},
+            {**finished_payload, "auto": True},
         )
         if stream_events is not None:
-            for trace in knowledge_items.get("trace") or []:
+            for trace in finished_payload.get("trace") or []:
                 stream_events.append(("status", {"phase": "knowledge", **trace}))
-            stream_events.append(("knowledge_result", knowledge_items))
-        return StepAgentResult(knowledge_query=query, knowledge_results=[knowledge_items])
+            stream_events.append(("knowledge_result", finished_payload))
+        return StepAgentResult(
+            knowledge_query=query,
+            knowledge_results=[knowledge_items] if knowledge_items else [],
+        )
 
     def _knowledge_items_for_message(
         self,
@@ -3873,7 +3827,7 @@ class AgentLoop:
             KnowledgeSearchRequest(
                 tenant_id=tenant_id,
                 agent_id=agent_id,
-                query=self._expanded_knowledge_query(message),
+                query=knowledge_query.query.strip() or message,
                 mode="chat",
                 knowledge_base_ids=knowledge_base_ids,
                 max_chunks=8,
@@ -3902,79 +3856,6 @@ class AgentLoop:
             "okf_citations": search_response.okf_citations,
             "evidence_pack": search_response.evidence_pack,
         }
-
-    def _expanded_knowledge_query(self, message: str) -> str:
-        text = (message or "").strip()
-        if not text:
-            return text
-        lowered = text.lower()
-        expansions: list[str] = [text]
-        if any(term in lowered for term in ("不想要", "不要了", "取消", "退", "退款", "撤销")):
-            expansions.append("订单取消 刚创建订单取消 取消刚创建的订单 售后退款 订单处理")
-        if any(term in lowered for term in ("刚买", "刚下单", "下单", "订单", "支付")):
-            expansions.append("订单创建 支付确认 取消处理 客服处理边界")
-        if any(term in lowered for term in ("会员", "账号", "地址", "称呼", "隐私")):
-            expansions.append("用户身份 称呼 隐私保护 会员账号 历史地址 处理原则")
-        if any(term in lowered for term in ("客服", "客户", "用户", "服务人员")):
-            expansions.append("服务人员 应先确认真实诉求 当前已知事实 可执行动作 需要补充的信息")
-        unique: list[str] = []
-        for item in expansions:
-            if item not in unique:
-                unique.append(item)
-        return "\n".join(unique)
-
-    def _should_auto_query_knowledge(self, message: str, router_decision: RouterDecision | None = None) -> bool:
-        text = (message or "").strip().lower()
-        if not text:
-            return False
-        explicit_terms = (
-            "业务资料",
-            "知识库",
-            "知识",
-            "引用",
-            "基于",
-            "根据",
-            "规则",
-            "政策",
-            "资料",
-            "文档",
-            "怎么处理",
-            "如何处理",
-            "应该怎么",
-            "怎么办",
-            "怎么回",
-            "怎么回复",
-            "该怎么",
-            "如何回复",
-        )
-        if any(term in text for term in explicit_terms):
-            return True
-        question_terms = (
-            "怎么",
-            "如何",
-            "应该",
-            "应当",
-            "能否",
-            "能不能",
-            "可以吗",
-            "行不行",
-            "要不要",
-            "问什么",
-            "回复",
-        )
-        knowledge_terms = (
-            "规范",
-            "标准",
-            "要求",
-            "制度",
-            "手册",
-            "口径",
-            "流程说明",
-        )
-        if any(term in text for term in question_terms) and any(term in text for term in knowledge_terms):
-            return True
-        intent = (router_decision.user_intent or "").lower() if router_decision else ""
-        return any(term in intent for term in ("知识", "资料", "规则", "政策"))
 
     def _record_knowledge_results(self, chat_session: ChatSession, item: dict[str, Any]) -> None:
         history = list(chat_session.knowledge_context_json or [])
@@ -4654,17 +4535,7 @@ class AgentLoop:
         method = str(tool.method or "").upper()
         if method not in IDEMPOTENT_WRITE_METHODS:
             return False, None
-        if self._tool_looks_read_only(tool):
-            return False, None
         return True, key_fields
-
-    def _tool_looks_read_only(self, tool: Tool) -> bool:
-        values = [tool.name, tool.display_name, tool.description, tool.url]
-        text = " ".join(str(value or "").lower() for value in values)
-        words = set(re.split(r"[^a-z0-9\u4e00-\u9fff]+", text))
-        if READ_ONLY_TOOL_HINTS.intersection(words):
-            return True
-        return any(hint in text for hint in READ_ONLY_TOOL_HINTS if re.search(r"[\u4e00-\u9fff]", hint))
 
     def _idempotency_arguments(self, arguments: dict[str, Any], key_fields: list[str] | None) -> dict[str, Any]:
         if not key_fields:
@@ -5565,18 +5436,27 @@ class AgentLoop:
         model_config: ModelConfig,
         agent_id: str | None = None,
     ) -> tuple[GeneralSkill, GeneralSkillSelection] | None:
-        general_skills = self._list_published_general_skills(model_config.tenant_id, agent_id)
-        if not general_skills:
+        skill, selection = self._select_general_capability(message, model_config, agent_id)
+        if skill is None:
             return None
+        return skill, selection
+
+    def _select_general_capability(
+        self,
+        message: str,
+        model_config: ModelConfig,
+        agent_id: str | None = None,
+    ) -> tuple[GeneralSkill | None, GeneralSkillSelection]:
+        general_skills = self._list_published_general_skills(model_config.tenant_id, agent_id)
         try:
             selection = self.general_skill_selector.decide(message, general_skills, model_config)
-        except LLMError:
-            return None
+        except LLMError as exc:
+            return None, GeneralSkillSelection(reason=f"Capability selection failed: {exc}")
         if not selection.use_general_skill or not selection.selected_slug:
-            return None
+            return None, selection
         skill = next((item for item in general_skills if item.slug == selection.selected_slug), None)
         if not skill:
-            return None
+            return None, selection.model_copy(update={"use_general_skill": False, "selected_slug": None})
         return skill, selection
 
     def _list_enabled_tools(self, tenant_id: str) -> list[Tool]:
@@ -6169,8 +6049,9 @@ class AgentLoop:
         user_message_id: str | None = None,
     ) -> None:
         chat_session.updated_at = utc_now()
+        if chat_session.status != "handoff":
+            chat_session.status = "active"
         metadata = self._assistant_message_metadata(step_result, chat_session, source_message)
-        reply = self._normalize_overlapping_task_confirmations(reply)
         reply = self._normalize_reply_citation_labels(reply, metadata.get("knowledge_citations"))
         reply = self._strip_trailing_citation_summary(reply)
         metadata = self._metadata_with_reply_citations(metadata, reply)
@@ -6213,6 +6094,13 @@ class AgentLoop:
             public_session(chat_session).model_dump(),
         )
 
+    def _mark_session_running(self, chat_session: ChatSession) -> None:
+        if chat_session.status == "handoff":
+            return
+        chat_session.status = "running"
+        chat_session.updated_at = utc_now()
+        self.db.add(chat_session)
+
     @staticmethod
     def _fallback_session_title_from_message(message: str) -> str:
         title = re.sub(r"\s+", " ", message).strip().strip("。！？!?")
@@ -6243,35 +6131,10 @@ class AgentLoop:
             reply.rstrip(),
         ).rstrip()
 
-    def _normalize_overlapping_task_confirmations(self, reply: str) -> str:
-        paragraphs = [part.strip() for part in re.split(r"\n{2,}", reply or "") if part.strip()]
-        if len(paragraphs) < 2:
-            return reply
-        merged: list[str] = []
-        replaced = False
-        for paragraph in paragraphs:
-            if not merged:
-                merged.append(paragraph)
-                continue
-            candidate = self._merge_overlapping_task_confirmation("\n\n".join(merged), paragraph)
-            if candidate:
-                merged = [candidate]
-                replaced = True
-            else:
-                merged.append(paragraph)
-        if not replaced:
-            return reply
-        return "\n\n".join(merged).strip()
-
     def _metadata_with_reply_citations(self, metadata: dict[str, Any], reply: str) -> dict[str, Any]:
         citations = metadata.get("knowledge_citations")
         if not isinstance(citations, list) or not citations:
             return metadata
-        if self._reply_is_generic_non_knowledge_answer(reply):
-            next_metadata = dict(metadata)
-            next_metadata.pop("knowledge_citations", None)
-            next_metadata.pop("knowledge_query", None)
-            return next_metadata
         used_labels = self._reply_citation_labels(reply, len(citations))
         if not used_labels:
             next_metadata = dict(metadata)
@@ -6289,35 +6152,6 @@ class AgentLoop:
         next_metadata = dict(metadata)
         next_metadata["knowledge_citations"] = next_citations
         return next_metadata
-
-    def _reply_is_generic_non_knowledge_answer(self, reply: str) -> bool:
-        normalized = re.sub(r"\[\d+\]", "", reply or "").strip()
-        if not normalized:
-            return True
-        substantive_terms = (
-            "根据业务资料",
-            "根据资料",
-            "规范",
-            "规则",
-            "流程",
-            "步骤",
-            "应当",
-            "需要",
-            "禁止",
-            "包括",
-            "处理",
-        )
-        if any(term in normalized for term in substantive_terms):
-            return False
-        generic_patterns = (
-            r"请.{0,12}补充",
-            r"已记录完整信息",
-            r"请问还有其他.*帮助",
-            r"还需要.*帮助",
-            r"暂时无法.*回答",
-            r"没有找到.*相关",
-        )
-        return any(re.search(pattern, normalized) for pattern in generic_patterns)
 
     def _reply_citation_labels(self, reply: str, max_label: int) -> set[int]:
         labels: set[int] = set()

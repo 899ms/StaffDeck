@@ -48,7 +48,7 @@ class FakeExecResult:
         return self.rows[0] if self.rows else None
 
 
-def test_router_decision_hydrates_purchase_slots_from_memory_and_product_alias() -> None:
+def test_router_decision_only_hydrates_structured_profile_memory() -> None:
     loop = object.__new__(AgentLoop)
     session = ChatSession(id="session_test", tenant_id="tenant_demo", slots_json={})
     decision = RouterDecision(
@@ -70,9 +70,10 @@ def test_router_decision_hydrates_purchase_slots_from_memory_and_product_alias()
         [{"kind": "profile", "content": "用户姓名/称呼：hm", "metadata": {"key": "preferred_name"}}],
     )
 
-    assert hydrated["primary"] == {"user_name": "hm", "product_id": "A1"}
-    assert decision.slot_hints == {"product_name": "a1", "quantity": 1, "user_name": "hm", "product_id": "A1"}
-    assert decision.awaiting_input is None
+    assert hydrated["primary"] == {"user_name": "hm"}
+    assert decision.slot_hints == {"product_name": "a1", "quantity": 1, "user_name": "hm"}
+    assert decision.awaiting_input is not None
+    assert decision.awaiting_input.expected_fields == ["product_id"]
 
 
 class FakeMessageDb(FakeDb):
@@ -207,6 +208,7 @@ def test_post_read_only_tool_does_not_reuse_previous_result() -> None:
         display_name="查询订单",
         method="POST",
         url="http://localhost:8000/api/mock/order/query",
+        config_json={"idempotency": {"enabled": False}},
         enabled=True,
     )
     event = AgentEvent(
@@ -723,7 +725,7 @@ def test_finalize_turn_keeps_only_inline_knowledge_citations() -> None:
     assert [item["label"] for item in message.metadata_json["knowledge_citations"]] == ["[2]"]
 
 
-def test_merge_scheduled_reply_replaces_duplicate_followup_confirmation() -> None:
+def test_merge_scheduled_reply_preserves_each_structured_execution_segment() -> None:
     loop = object.__new__(AgentLoop)
     refund_then_purchase = (
         "好的，已为您提交订单 MOCK7A17191FC9（商品 A1）的退款申请，退款原因为“不想要了”。\n\n"
@@ -738,32 +740,8 @@ def test_merge_scheduled_reply_replaces_duplicate_followup_confirmation() -> Non
     replies, replaced = loop._merge_scheduled_reply_segment([], refund_then_purchase)
     replies, replaced = loop._merge_scheduled_reply_segment(replies, purchase_confirmation)
 
-    assert replaced is True
-    assert len(replies) == 1
-    assert "退款申请" in replies[0]
-    assert "已为您确认购买 A3 高阶商品 1 件，价格 239.0 元" in replies[0]
-    assert "请确认以下信息" not in replies[0]
-    assert replies[0].count("请问确认下单吗") == 1
-
-
-def test_normalize_overlapping_task_confirmations_inside_final_reply() -> None:
-    loop = object.__new__(AgentLoop)
-    reply = (
-        "好的，已为您提交订单 MOCK7A17191FC9（商品 A1）的退款申请，退款原因为“不想要了”。\n\n"
-        "接下来为您购买 A3 高阶商品，请确认以下信息：\n"
-        "- 用户：hm\n"
-        "- 商品：A3\n"
-        "- 数量：1\n\n"
-        "请问确认下单吗？\n\n"
-        "好的，hm。已为您确认购买 A3 高阶商品 1 件，价格 239.0 元。请问确认下单吗？"
-    )
-
-    normalized = loop._normalize_overlapping_task_confirmations(reply)
-
-    assert "退款申请" in normalized
-    assert "已为您确认购买 A3 高阶商品 1 件，价格 239.0 元" in normalized
-    assert "请确认以下信息" not in normalized
-    assert normalized.count("请问确认下单吗") == 1
+    assert replaced is False
+    assert replies == [refund_then_purchase, purchase_confirmation]
 
 
 def test_merge_scheduled_reply_keeps_distinct_followup_confirmations() -> None:
