@@ -7,6 +7,12 @@ cd "$REPO"
 VERSION="${VERSION:-0.1.0}"
 DEB_VERSION="${VERSION#v}"
 ARCH="$(uname -m)"
+RUNTIME_DL_DIR="${RUNTIME_DL_DIR:-packaging/runtime_dl}"
+if [[ "$RUNTIME_DL_DIR" = /* ]]; then
+  RUNTIME_DL_ROOT="$RUNTIME_DL_DIR"
+else
+  RUNTIME_DL_ROOT="$REPO/$RUNTIME_DL_DIR"
+fi
 
 if [[ "$ARCH" != "x86_64" ]]; then
   echo "Unsupported Linux architecture: $ARCH (expected x86_64)" >&2
@@ -66,16 +72,20 @@ command -v objdump >/dev/null 2>&1 || {
 }
 
 echo "==> [2/8] Installing and building frontend"
-npm --prefix frontend-enterprise ci --no-audit --no-fund
-npm --prefix frontend-enterprise run build
+if [[ "${SKIP_FRONTEND:-0}" = "1" ]]; then
+  echo "Skipping frontend build because SKIP_FRONTEND=1; expecting frontend-enterprise/dist to be ready"
+else
+  npm --prefix frontend-enterprise ci --no-audit --no-fund
+  npm --prefix frontend-enterprise run build
+fi
 
 echo "==> [3/8] Preparing portable Python 3.11 runtime"
-BUILD_PY="$REPO/packaging/runtime_dl/python/bin/python3"
+BUILD_PY="$RUNTIME_DL_ROOT/python/bin/python3"
 if [[ -x "$BUILD_PY" ]] && "$BUILD_PY" -c "import requests, docx, openpyxl" 2>/dev/null; then
   echo "Reusing verified Python runtime at $BUILD_PY"
 else
-  python3 packaging/fetch_runtime_python.py packaging/runtime_dl --expect-arch x86_64
-  rm -f packaging/runtime_dl/*.tar.gz
+  python3 packaging/fetch_runtime_python.py "$RUNTIME_DL_DIR" --expect-arch x86_64
+  rm -f "$RUNTIME_DL_ROOT"/*.tar.gz
 fi
 
 echo "==> [4/8] Creating backend build environment"
@@ -96,7 +106,7 @@ rm -rf packaging/out packaging/build
     --distpath ../packaging/out --workpath ../packaging/build
 )
 rm -rf packaging/out/staffdeck/runtime
-cp -a packaging/runtime_dl/python packaging/out/staffdeck/runtime
+cp -a "$RUNTIME_DL_ROOT/python" packaging/out/staffdeck/runtime
 
 echo "==> [6/8] Building Debian package"
 STAGE="packaging/out/deb"
