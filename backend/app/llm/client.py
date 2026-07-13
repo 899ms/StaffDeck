@@ -12,7 +12,8 @@ from openai import OpenAI
 
 from app.config import get_settings
 from app.db.models import ModelConfig
-from app.observability.spans import llm_span_attributes, start_llm_call
+from app.llm.output_policy import compact_json_system_prompt, operation_output_tokens
+from app.observability.spans import current_llm_operation, llm_span_attributes, start_llm_call
 from app.security.encryption import decrypt_secret
 
 
@@ -50,6 +51,9 @@ class LLMClient:
         user_payload: dict[str, Any],
         response_format: dict[str, str] | None = None,
     ) -> str:
+        max_output_tokens = operation_output_tokens(
+            current_llm_operation(), self.max_output_tokens
+        )
         context_messages, serialized_payload = _project_context_messages(user_payload)
         serialized = json.dumps(serialized_payload, ensure_ascii=False)
         try:
@@ -61,7 +65,7 @@ class LLMClient:
                     {"role": "user", "content": serialized},
                 ],
                 "temperature": self.temperature,
-                "max_tokens": self.max_output_tokens,
+                "max_tokens": max_output_tokens,
             }
             if response_format:
                 request["response_format"] = response_format
@@ -75,7 +79,7 @@ class LLMClient:
                     attempt=attempt + 1,
                     retry_count=attempt,
                     max_attempts=EMPTY_RESPONSE_RETRIES + 1,
-                    max_output_tokens=self.max_output_tokens,
+                    max_output_tokens=max_output_tokens,
                 )
                 try:
                     completion = self.client.chat.completions.create(
@@ -111,6 +115,9 @@ class LLMClient:
     def generate_text_stream(
         self, system_prompt: str, user_payload: dict[str, Any]
     ) -> Iterator[str]:
+        max_output_tokens = operation_output_tokens(
+            current_llm_operation(), self.max_output_tokens
+        )
         context_messages, serialized_payload = _project_context_messages(user_payload)
         serialized = json.dumps(serialized_payload, ensure_ascii=False)
         try:
@@ -124,7 +131,7 @@ class LLMClient:
                     attempt=attempt + 1,
                     retry_count=attempt,
                     max_attempts=EMPTY_RESPONSE_RETRIES + 1,
-                    max_output_tokens=self.max_output_tokens,
+                    max_output_tokens=max_output_tokens,
                 )
                 pending_parts: list[str] = []
                 emitted_text = False
@@ -145,7 +152,7 @@ class LLMClient:
                             {"role": "user", "content": serialized},
                         ],
                         temperature=self.temperature,
-                        max_tokens=self.max_output_tokens,
+                        max_tokens=max_output_tokens,
                         stream=True,
                     )
                     provider_setup_ms = span.elapsed_ms()
@@ -230,6 +237,7 @@ class LLMClient:
             raise LLMError(_provider_failure_detail(self, exc)) from exc
 
     def generate_json(self, system_prompt: str, user_payload: dict[str, Any]) -> dict[str, Any]:
+        system_prompt = compact_json_system_prompt(system_prompt)
         outputs: list[str] = []
         next_payload = user_payload
         last_error: json.JSONDecodeError | None = None
@@ -242,9 +250,9 @@ class LLMClient:
                 json_max_attempts=JSON_REPAIR_ATTEMPTS + 1,
             ):
                 text = self._generate_json_candidate(system_prompt, next_payload, json_mode_supported)
-            if json_mode_supported and _response_format_unsupported(text):
-                json_mode_supported = False
-                text = self.generate_text(system_prompt, next_payload)
+                if json_mode_supported and _response_format_unsupported(text):
+                    json_mode_supported = False
+                    text = self.generate_text(system_prompt, next_payload)
             outputs.append(text)
             try:
                 return _loads_llm_json(text)

@@ -75,6 +75,10 @@ def llm_span_attributes(**attributes: Any) -> Iterator[None]:
         _span_attributes.reset(token)
 
 
+def current_llm_operation() -> str:
+    return _span_operation.get()
+
+
 @dataclass
 class ManualSpan:
     event_prefix: str

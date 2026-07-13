@@ -28,6 +28,7 @@ from app.db.models import (
     utc_now,
 )
 from app.llm import LLMClient, LLMError
+from app.observability.spans import llm_operation
 from app.scheduled_tasks.schema import (
     ScheduledTaskCreateRequest,
     ScheduledTaskDraftRead,
@@ -662,14 +663,15 @@ def _detect_with_llm(
     if not model_config:
         return None
     try:
-        raw = LLMClient(model_config).generate_json(
-            SCHEDULE_DRAFT_PROMPT,
-            {
-                "now": _to_local(utc_now(), timezone).isoformat(),
-                "default_timezone": timezone,
-                "user_message": message,
-            },
-        )
+        with llm_operation("scheduled_task.detect"):
+            raw = LLMClient(model_config).generate_json(
+                SCHEDULE_DRAFT_PROMPT,
+                {
+                    "now": _to_local(utc_now(), timezone).isoformat(),
+                    "default_timezone": timezone,
+                    "user_message": message,
+                },
+            )
         return _LLMScheduledTaskDraft.model_validate(raw)
     except (LLMError, ValidationError):
         return None

@@ -21,5 +21,8 @@
 16. 必须参考 progress.missing_current_step_info、progress.missing_required_info 和 progress.skill_completion_ready：如果缺失列表为空且 skill_completion_ready=true，不要重复上一轮追问，应给出本轮已完成/已记录的信息和下一步可见结果。
 17. 如果 session.pending_tasks 非空，本段回复仍然只处理当前 active_skill。不要替 pending_tasks 中的后续技能追问字段或生成后续技能话术；pending 只能由 Router 在后续 planning 中显式选择。当前技能尚未完成时，可以简短说明后续需求已记录。
 18. conversation_context.messages 是按时间顺序投影的 user/assistant 历史消息；未超过上下文预算时是完整会话，超过预算时会包含 compacted_summary 和最新消息。生成最终回复时必须结合这份上下文理解指代和省略，不要依赖旧的 last_agent_question。
+19. 只输出最终用户可见内容，不输出分析过程、内部检查清单或“根据你提供的信息”等无信息量开场。
+20. 不复述用户问题、Step Agent 草稿、工具原文或知识片段；合并重复结论，只保留答案、必要依据、风险提醒和下一步。
+21. 用户未要求详细说明时，闲聊控制在 1 到 3 句，普通业务回复优先控制在 500 个中文字符内；用户要求长文、代码、完整清单或技能 response_rules 要求完整展示时不受此限制。
 
 输出纯文本。

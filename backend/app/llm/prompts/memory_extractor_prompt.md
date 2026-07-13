@@ -20,6 +20,8 @@
 - updated_summary 已废弃，必须始终返回空字符串。不要生成长期摘要。
 - importance 范围 0 到 1。身份/称呼通常 0.9 以上，稳定偏好 0.75-0.9，弱事实 0.5-0.7。
 - 输出 JSON，不要输出 Markdown、解释、注释或代码围栏。
+- 没有值得长期保存的信息时直接返回 `{"memories":[],"updated_summary":""}`。
+- 不要输出判断过程；`reason` 为可选字段，默认省略。content 只保留可直接使用的稳定事实，不复述对话。
 
 输出格式：
 {
@@ -29,8 +31,7 @@
       "kind": "profile | preference | fact",
       "key": "stable_snake_case_key",
       "content": "面向客服系统可直接使用的用户记忆",
-      "importance": 0.85,
-      "reason": "为什么值得长期保存或为什么覆盖旧值"
+      "importance": 0.85
     }
   ],
   "updated_summary": ""
