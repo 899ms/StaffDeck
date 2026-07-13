@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.async_jobs import AsyncJob, enqueue_async_job
 from app.db import engine
-from app.db.models import ChatSession, ModelConfig
+from app.db.models import AgentEvent, ChatSession, ModelConfig
 from app.memory.service import MemoryService, memory_read
 from app.observability import EventLog
+from app.observability.spans import bind_span_sink
 from app.session.session_schema import ChatTurnRequest, StepAgentResult
 from app.tools.tool_schema import ToolResult
 
@@ -70,16 +71,54 @@ def run_memory_capture_job(payload: dict[str, Any]) -> None:
             db.commit()
             return
 
-        try:
-            rows = MemoryService(db).capture_turn(
-                request,
-                chat_session,
-                reply,
-                step_result,
-                tool_result,
-                model_config,
-                recent_messages,
+        user_events = db.exec(
+            select(AgentEvent)
+            .where(
+                AgentEvent.tenant_id == request.tenant_id,
+                AgentEvent.session_id == session_id,
+                AgentEvent.event_type == "user_message_received",
             )
+            .order_by(AgentEvent.created_at.desc(), AgentEvent.id.desc())
+        ).all()
+        latest_user_event = next(
+            (
+                event
+                for event in user_events
+                if request.client_turn_id
+                and str((event.payload_json or {}).get("client_turn_id") or "")
+                == request.client_turn_id
+            ),
+            user_events[0] if user_events else None,
+        )
+        latest_user_payload = dict(latest_user_event.payload_json or {}) if latest_user_event else {}
+        turn_id = str(
+            latest_user_payload.get("turn_id")
+            or latest_user_payload.get("user_message_id")
+            or latest_user_payload.get("message_id")
+            or ""
+        )
+
+        def persist_span(event_type: str, event_payload: dict[str, Any]) -> None:
+            traced_payload = dict(event_payload)
+            if turn_id:
+                traced_payload.setdefault("turn_id", turn_id)
+                traced_payload.setdefault("user_message_id", turn_id)
+            if request.client_turn_id:
+                traced_payload.setdefault("client_turn_id", request.client_turn_id)
+            events.record(request.tenant_id, session_id, event_type, traced_payload)
+            db.commit()
+
+        try:
+            with bind_span_sink(persist_span):
+                rows = MemoryService(db).capture_turn(
+                    request,
+                    chat_session,
+                    reply,
+                    step_result,
+                    tool_result,
+                    model_config,
+                    recent_messages,
+                )
         except Exception as exc:  # noqa: BLE001 - persist failure without affecting the request path.
             events.record(
                 request.tenant_id,

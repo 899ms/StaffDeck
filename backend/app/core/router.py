@@ -5,6 +5,7 @@ from typing import Any
 from app import paths
 from app.db.models import ChatSession, ModelConfig, Skill
 from app.llm import LLMClient, LLMError
+from app.observability.spans import llm_operation
 from app.session.helpers import public_session
 from app.session.session_schema import RouterDecision, TaskScheduleDecision
 from app.session.slot_policy import strip_router_generated_message_slots
@@ -32,7 +33,10 @@ class Router:
             "available_skills": _available_skill_payloads(available_skills),
         }
         try:
-            raw = LLMClient(model_config).generate_json(PROMPT_PATH.read_text(encoding="utf-8"), payload)
+            with llm_operation("router.scene"):
+                raw = LLMClient(model_config).generate_json(
+                    PROMPT_PATH.read_text(encoding="utf-8"), payload
+                )
             decision = RouterDecision.model_validate(raw)
         except Exception as exc:
             if isinstance(exc, LLMError):
@@ -61,10 +65,11 @@ class Router:
             "available_skills": _available_skill_payloads(available_skills),
         }
         try:
-            raw = LLMClient(model_config).generate_json(
-                TASK_SCHEDULER_PROMPT_PATH.read_text(encoding="utf-8"),
-                payload,
-            )
+            with llm_operation("router.task_scheduler"):
+                raw = LLMClient(model_config).generate_json(
+                    TASK_SCHEDULER_PROMPT_PATH.read_text(encoding="utf-8"),
+                    payload,
+                )
             schedule = TaskScheduleDecision.model_validate(raw)
         except Exception as exc:
             if isinstance(exc, LLMError):

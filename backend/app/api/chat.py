@@ -6,8 +6,8 @@ import re
 import threading
 import time
 import traceback
+from collections.abc import Callable, Iterator
 from datetime import timedelta
-from collections.abc import Iterator
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -38,11 +38,17 @@ from app.db.models import (
 from app.feedback import enqueue_feedback_analysis
 from app.knowledge.citations import CITATION_EXCERPT_CHAR_LIMIT, compact_knowledge_citation_labels
 from app.llm import LLMClient, LLMError
+from app.observability.spans import (
+    bind_span_sink,
+    llm_operation,
+    reset_span_sink,
+    set_span_sink,
+)
 from app.security.auth import get_current_user
 from app.security.permissions import agent_owned_by_user, is_admin_user
 from app.security.tenant import ensure_tenant
 from app.scheduled_tasks.schema import ScheduledTaskDraftRead
-from app.scheduled_tasks.service import detect_scheduled_task_draft
+from app.scheduled_tasks.service import DEFAULT_TASK_TIME, detect_scheduled_task_draft
 from app.session.attachments import parse_chat_attachment
 from app.session.helpers import public_session
 from app.session.session_schema import (
@@ -68,6 +74,7 @@ STREAM_INTERRUPTED_TRACEBACK_CHAR_LIMIT = 6000
 MAX_CHAT_ATTACHMENT_BYTES = 12 * 1024 * 1024
 MAX_CHAT_ATTACHMENTS = 8
 SESSION_TITLE_SUMMARY_EVENT = "session_title_summarized"
+SCHEDULE_WEEKDAY_LABELS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 EVENT_PAYLOAD_META_KEYS = {"id", "event", "type", "event_type", "created_at", "data"}
 STREAM_RELAY_EVENT_ALIASES = {
     "router_decision_created": "router_decision",
@@ -79,12 +86,21 @@ STREAM_RELAY_TERMINAL_EVENTS = {
     "stream_cancelled",
     "stream_interrupted",
 }
+SPAN_EVENT_TYPES = {
+    "llm_call_started",
+    "llm_call_finished",
+    "llm_call_failed",
+    "knowledge_span_started",
+    "knowledge_span_finished",
+    "knowledge_span_failed",
+}
 SESSION_TITLE_PROMPT = """你是任务派发台的会话标题编辑器。
 
 根据首轮用户需求和员工回复，生成一个简短、可读、具体的中文标题。
 
 要求：
 - 输出 JSON object，格式为 {"title": "..."}。
+- 直接输出标题 JSON，不输出分析、候选标题或解释。
 - 标题 4 到 18 个中文字符优先，最多 24 个字符。
 - 不要使用“新任务”“任务记录”“用户咨询”等空泛标题。
 - 不要包含标点符号、引号、编号、员工名或用户称呼。
@@ -350,7 +366,26 @@ def _summarize_session_title_once(
             title_source = "first_user_fallback"
             if model_config:
                 try:
-                    raw = LLMClient(model_config).generate_json(SESSION_TITLE_PROMPT, payload)
+                    title_turn_id = next((row.id for row in messages if row.role == "user"), "")
+
+                    def persist_title_span(
+                        event_type: str, event_payload: dict[str, object]
+                    ) -> None:
+                        traced_payload = dict(event_payload)
+                        if title_turn_id:
+                            traced_payload.setdefault("turn_id", title_turn_id)
+                            traced_payload.setdefault("user_message_id", title_turn_id)
+                        with Session(engine) as span_db:
+                            _persist_relay_only_event(
+                                span_db,
+                                tenant_id,
+                                session_id,
+                                event_type,
+                                traced_payload,
+                            )
+
+                    with bind_span_sink(persist_title_span), llm_operation("session.title"):
+                        raw = LLMClient(model_config).generate_json(SESSION_TITLE_PROMPT, payload)
                     title = _normalize_auto_title(str(raw.get("title") or ""))
                     if title:
                         title_source = "first_turn_summary"
@@ -714,22 +749,49 @@ def _format_draft_schedule(draft: ScheduledTaskDraftRead) -> str:
     return _format_scheduled_task_schedule(draft.schedule_type, draft.schedule or {})
 
 
+def _format_once_schedule(schedule: dict) -> str:
+    return f"一次性 {schedule.get('run_at') or '待确认时间'}"
+
+
+def _format_weekly_schedule(schedule: dict) -> str:
+    return f"每周 {_format_weekday_labels(schedule.get('weekdays'))} {schedule.get('time') or DEFAULT_TASK_TIME}"
+
+
+def _format_monthly_schedule(schedule: dict) -> str:
+    return f"每月 {schedule.get('day_of_month') or 1} 号 {schedule.get('time') or DEFAULT_TASK_TIME}"
+
+
+def _format_daily_schedule(schedule: dict) -> str:
+    return f"每天 {schedule.get('time') or DEFAULT_TASK_TIME}"
+
+
+SCHEDULE_TEXT_FORMATTERS: dict[str, Callable[[dict], str]] = {
+    "once": _format_once_schedule,
+    "weekly": _format_weekly_schedule,
+    "monthly": _format_monthly_schedule,
+    "daily": _format_daily_schedule,
+}
+
+
 def _format_scheduled_task_schedule(schedule_type: object, schedule_value: object) -> str:
     schedule = schedule_value if isinstance(schedule_value, dict) else {}
     schedule_type_text = str(schedule_type or "daily")
-    if schedule_type_text == "once":
-        return f"一次性 {schedule.get('run_at') or '待确认时间'}"
-    if schedule_type_text == "weekly":
-        weekdays = schedule.get("weekdays")
-        labels = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-        if isinstance(weekdays, list):
-            days = "、".join(labels[int(day)] for day in weekdays if str(day).isdigit() and 0 <= int(day) <= 6)
-        else:
-            days = "周一"
-        return f"每周 {days or '周一'} {schedule.get('time') or '09:00'}"
-    if schedule_type_text == "monthly":
-        return f"每月 {schedule.get('day_of_month') or 1} 号 {schedule.get('time') or '09:00'}"
-    return f"每天 {schedule.get('time') or '09:00'}"
+    formatter = SCHEDULE_TEXT_FORMATTERS.get(schedule_type_text, _format_daily_schedule)
+    return formatter(schedule)
+
+
+def _format_weekday_labels(value: object) -> str:
+    if not isinstance(value, list):
+        return SCHEDULE_WEEKDAY_LABELS[0]
+    labels: list[str] = []
+    for item in value:
+        text = str(item).strip()
+        if not text.isdigit():
+            continue
+        day = int(text)
+        if 0 <= day < len(SCHEDULE_WEEKDAY_LABELS):
+            labels.append(SCHEDULE_WEEKDAY_LABELS[day])
+    return "、".join(labels) or SCHEDULE_WEEKDAY_LABELS[0]
 
 
 def _scheduled_task_trace_detail(payload: dict) -> str | None:
@@ -896,8 +958,31 @@ def chat_stream(
         relay_ready.set()
 
     def run_stream_worker() -> None:
+        span_sink_token = None
         try:
             with Session(engine) as worker_db:
+                span_turn_id = {"value": ""}
+
+                def persist_span(event_type: str, payload: dict[str, object]) -> None:
+                    session_id = source_session_id["value"] or request.session_id or ""
+                    if not session_id:
+                        return
+                    turn_id = span_turn_id["value"]
+                    event_payload = dict(payload)
+                    if turn_id:
+                        event_payload.setdefault("turn_id", turn_id)
+                        event_payload.setdefault("user_message_id", turn_id)
+                    if request.client_turn_id:
+                        event_payload.setdefault("client_turn_id", request.client_turn_id)
+                    _persist_relay_only_event(
+                        worker_db,
+                        request.tenant_id,
+                        session_id,
+                        event_type,
+                        event_payload,
+                    )
+
+                span_sink_token = set_span_sink(persist_span)
                 ensure_tenant(worker_db, request.tenant_id)
                 if request.session_id:
                     chat_session = _ensure_chat_session_available(
@@ -1001,6 +1086,12 @@ def chat_stream(
                     if item["event"] == "user_message_received":
                         event_source_session_id = str(item["data"].get("sessionId") or request.session_id or "")
                         set_source_session(event_source_session_id)
+                        span_turn_id["value"] = str(
+                            data.get("turn_id")
+                            or data.get("user_message_id")
+                            or data.get("message_id")
+                            or ""
+                        )
                         _schedule_session_title_summary(
                             request.tenant_id,
                             request.user_id,
@@ -1091,6 +1182,8 @@ def chat_stream(
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                 raise
         finally:
+            if span_sink_token is not None:
+                reset_span_sink(span_sink_token)
             session_id = source_session_id["value"] or request.session_id or ""
             if session_id and not worker_terminal["seen"]:
                 with Session(engine) as final_db:
@@ -1559,7 +1652,11 @@ def _events_after_cursor(
     session_id: str,
     cursor: tuple[object, str] | None,
 ) -> list[AgentEvent]:
-    statement = select(AgentEvent).where(AgentEvent.tenant_id == tenant_id, AgentEvent.session_id == session_id)
+    statement = select(AgentEvent).where(
+        AgentEvent.tenant_id == tenant_id,
+        AgentEvent.session_id == session_id,
+        AgentEvent.event_type.notin_(SPAN_EVENT_TYPES),
+    )
     if cursor:
         last_created_at, last_id = cursor
         statement = statement.where(
@@ -1953,6 +2050,35 @@ def list_chat_session_trace(
     skills = db.exec(select(Skill).where(Skill.tenant_id == tenant_id)).all()
     skill_names = {skill.skill_id: skill.name for skill in skills}
     return _build_turn_traces(messages, events, skill_names)
+
+
+@router.get("/sessions/{session_id}/spans")
+def list_chat_session_spans(
+    session_id: str,
+    tenant_id: str = Query(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    _ensure_request_tenant(tenant_id, current_user)
+    _get_readable_chat_session(db, tenant_id, current_user, session_id)
+    rows = db.exec(
+        select(AgentEvent)
+        .where(
+            AgentEvent.tenant_id == tenant_id,
+            AgentEvent.session_id == session_id,
+            AgentEvent.event_type.in_(SPAN_EVENT_TYPES),
+        )
+        .order_by(AgentEvent.created_at, AgentEvent.id)
+    ).all()
+    return [
+        {
+            "event_id": row.id,
+            "event_type": row.event_type,
+            "created_at": row.created_at.isoformat(),
+            **dict(row.payload_json or {}),
+        }
+        for row in rows
+    ]
 
 
 def _get_user_chat_session(db: Session, tenant_id: str, user_id: str, session_id: str) -> ChatSession:

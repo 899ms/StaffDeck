@@ -1,7 +1,9 @@
 import pytest
 
 from app.llm.client import LLMClient, LLMError
+from app.llm.output_policy import operation_output_tokens
 from app.llm.schemas import ModelConfigCreateRequest
+from app.observability.spans import bind_span_sink, llm_operation
 
 
 class _ForbiddenResponses:
@@ -108,6 +110,34 @@ def test_generate_text_uses_chat_completions_only():
     assert call["max_tokens"] == 256
 
 
+def test_generate_text_persists_provider_request_metrics():
+    client = object.__new__(LLMClient)
+    client.client = _FakeOpenAIClient()
+    client.model = "demo-model"
+    client.base_url = "https://example.test/v1"
+    client.temperature = 0.2
+    client.max_output_tokens = 256
+    events: list[tuple[str, dict]] = []
+
+    with bind_span_sink(lambda event_type, payload: events.append((event_type, payload))):
+        with llm_operation("router.scene"):
+            assert client.generate_text("system prompt", {"hello": "world"}) == "ok"
+
+    assert [event_type for event_type, _ in events] == [
+        "llm_call_started",
+        "llm_call_finished",
+    ]
+    started, finished = events[0][1], events[1][1]
+    assert started["span_id"] == finished["span_id"]
+    assert finished["operation"] == "router.scene"
+    assert finished["model"] == "demo-model"
+    assert finished["attempt"] == 1
+    assert finished["retry_count"] == 0
+    assert finished["output_chars"] == 2
+    assert finished["duration_ms"] >= 0
+    assert finished["ttft_ms"] >= 0
+
+
 def test_generate_text_retries_empty_response():
     client = object.__new__(LLMClient)
     client.client = _FakeOpenAIClient()
@@ -124,6 +154,28 @@ def test_generate_text_retries_empty_response():
 
     assert client.generate_text("system prompt", {"hello": "world"}) == "ok"
     assert len(client.client.chat.completions.calls) == 3
+
+
+def test_generate_text_records_each_empty_response_retry():
+    client = object.__new__(LLMClient)
+    client.client = _FakeOpenAIClient()
+    client.model = "demo-model"
+    client.base_url = "https://example.test/v1"
+    client.temperature = 0.2
+    client.max_output_tokens = 256
+    contents = iter(["", None, "ok"])
+    events: list[tuple[str, dict]] = []
+
+    client.client.chat.completions.create = lambda **_kwargs: _completion_with_content(
+        next(contents)
+    )
+    with bind_span_sink(lambda event_type, payload: events.append((event_type, payload))):
+        assert client.generate_text("system prompt", {"hello": "world"}) == "ok"
+
+    finished = [payload for event_type, payload in events if event_type == "llm_call_finished"]
+    assert [item["status"] for item in finished] == ["empty", "empty", "success"]
+    assert [item["attempt"] for item in finished] == [1, 2, 3]
+    assert [item["retry_count"] for item in finished] == [0, 1, 2]
 
 
 def test_generate_text_empty_response_reports_provider_diagnostics():
@@ -208,6 +260,39 @@ def test_generate_text_stream_reports_empty_stream_diagnostics():
     assert "reasoning_chars=14" in detail
     assert len(client.client.chat.completions.calls) == 3
     assert all(call["messages"][0] == {"role": "system", "content": "system prompt"} for call in client.client.chat.completions.calls)
+
+
+def test_generate_text_stream_records_ttft_and_output_volume():
+    client = object.__new__(LLMClient)
+    client.client = _FakeOpenAIClient()
+    client.model = "demo-model"
+    client.base_url = "https://example.test/v1"
+    client.temperature = 0.2
+    client.max_output_tokens = 256
+    events: list[tuple[str, dict]] = []
+
+    def chunk(content, finish_reason=None):  # noqa: ANN001
+        delta = type("Delta", (), {"content": content, "reasoning_content": None})()
+        choice = type("Choice", (), {"delta": delta, "finish_reason": finish_reason})()
+        return type("Chunk", (), {"id": "chunk_demo", "choices": [choice]})()
+
+    client.client.chat.completions.create = lambda **_kwargs: iter(
+        [chunk("你"), chunk("好", "stop")]
+    )
+
+    with bind_span_sink(lambda event_type, payload: events.append((event_type, payload))):
+        with llm_operation("response.generate_stream"):
+            assert "".join(client.generate_text_stream("system", {"hello": "world"})) == "你好"
+
+    finished = next(
+        payload for event_type, payload in events if event_type == "llm_call_finished"
+    )
+    assert finished["operation"] == "response.generate_stream"
+    assert finished["stream"] is True
+    assert finished["ttft_ms"] is not None
+    assert finished["output_chars"] == 2
+    assert finished["stream_chunks"] == 2
+    assert finished["finish_reasons"] == ["stop"]
 
 
 def test_generate_text_projects_conversation_context_messages():
@@ -352,6 +437,61 @@ def test_generate_json_requests_json_object_mode():
 
     assert client.generate_json("prompt", {}) == {"ok": True}
     assert client.client.chat.completions.calls[0]["response_format"] == {"type": "json_object"}
+
+
+def test_internal_json_operation_caps_output_and_appends_compact_contract():
+    client = object.__new__(LLMClient)
+    client.client = _FakeOpenAIClient()
+    client.model = "demo-model"
+    client.temperature = 0.2
+    client.max_output_tokens = 8192
+    client.client.chat.completions.create = lambda **kwargs: (  # noqa: E731
+        client.client.chat.completions.calls.append(kwargs)
+        or _completion_with_content('{"decision":"answer_only"}')
+    )
+
+    with llm_operation("router.scene"):
+        assert client.generate_json("router prompt", {}) == {"decision": "answer_only"}
+
+    call = client.client.chat.completions.calls[0]
+    assert call["max_tokens"] == 1024
+    assert "不要输出思考过程" in call["messages"][0]["content"]
+    assert "只保留任务 schema 和业务执行所需字段" in call["messages"][0]["content"]
+
+
+def test_internal_output_budget_never_increases_smaller_model_config():
+    assert operation_output_tokens("router.scene", 256) == 256
+
+
+def test_user_visible_response_keeps_configured_output_budget():
+    client = object.__new__(LLMClient)
+    client.client = _FakeOpenAIClient()
+    client.model = "demo-model"
+    client.temperature = 0.2
+    client.max_output_tokens = 8192
+
+    with llm_operation("response.generate"):
+        assert client.generate_text("system prompt", {}) == "ok"
+
+    assert client.client.chat.completions.calls[0]["max_tokens"] == 8192
+
+
+@pytest.mark.parametrize(
+    ("operation", "expected"),
+    [
+        ("router.task_scheduler", 512),
+        ("step_agent.run", 1536),
+        ("step_agent.repair", 1536),
+        ("reflection.review", 512),
+        ("general_skill.select", 512),
+        ("knowledge.document_route", 512),
+        ("knowledge.bucket_route", 512),
+        ("memory.capture", 1024),
+        ("session.title", 512),
+    ],
+)
+def test_control_plane_operation_output_budgets(operation, expected):  # noqa: ANN001
+    assert operation_output_tokens(operation, 8192) == expected
 
 
 def test_generate_json_falls_back_when_json_object_mode_is_unsupported():

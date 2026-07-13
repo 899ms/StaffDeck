@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from app import paths
 from app.db.models import ChatSession, ModelConfig, Skill, Tool
 from app.llm import LLMClient, LLMError
+from app.observability.spans import llm_operation
 from app.session.helpers import public_session
 from app.session.session_schema import RouterDecision, StepAgentResult
 from app.tools.tool_schema import ToolResult
@@ -71,7 +72,10 @@ class ReflectionAgent:
             "available_tools": self._available_tool_payload(available_tools, available_skill_ids),
         }
         try:
-            raw = LLMClient(model_config).generate_json(PROMPT_PATH.read_text(encoding="utf-8"), payload)
+            with llm_operation("reflection.review"):
+                raw = LLMClient(model_config).generate_json(
+                    PROMPT_PATH.read_text(encoding="utf-8"), payload
+                )
             return ReflectionDecision.model_validate(raw)
         except Exception as exc:
             if isinstance(exc, LLMError):

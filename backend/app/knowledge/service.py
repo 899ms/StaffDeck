@@ -42,6 +42,7 @@ from app.knowledge.okf import (
 )
 from app.knowledge.citations import CITATION_EXCERPT_CHAR_LIMIT
 from app.llm import LLMClient, LLMError
+from app.observability.spans import llm_operation, observed_span
 from app.skills.skill_schema import SkillCard
 
 
@@ -360,6 +361,17 @@ class KnowledgeService:
             self._clear_embedded_content(job)
 
     def search(self, request: KnowledgeSearchRequest, model_config: ModelConfig | None = None) -> KnowledgeSearchResponse:
+        with observed_span(
+            "knowledge_span",
+            "knowledge.search",
+            query_chars=len(request.query.strip()),
+            max_chunks=request.max_chunks,
+            max_buckets=request.max_buckets,
+            max_depth=request.max_depth,
+        ):
+            return self._search(request, model_config)
+
+    def _search(self, request: KnowledgeSearchRequest, model_config: ModelConfig | None = None) -> KnowledgeSearchResponse:
         query = request.query.strip()
         if not query:
             return KnowledgeSearchResponse()
@@ -368,8 +380,14 @@ class KnowledgeService:
             route_trace.append({"phase": "no_visible_knowledge", "message": "当前智能体没有可见知识"})
             return KnowledgeSearchResponse(trace=route_trace, route_trace=route_trace)
 
-        concepts = self._load_concepts_for_search(request)
-        selected_concepts = search_concepts(query, concepts, max(request.max_buckets, 4))
+        with observed_span("knowledge_span", "knowledge.load_concepts") as span:
+            concepts = self._load_concepts_for_search(request)
+            span.finish(candidate_count=len(concepts))
+        with observed_span(
+            "knowledge_span", "knowledge.route_concepts", candidate_count=len(concepts)
+        ) as span:
+            selected_concepts = search_concepts(query, concepts, max(request.max_buckets, 4))
+            span.finish(selected_count=len(selected_concepts))
         selected_concept_payload = selected_concept_cards(selected_concepts)
         okf_citations = okf_citations_for_concepts(selected_concepts)
         if concepts:
@@ -382,7 +400,9 @@ class KnowledgeService:
                 }
             )
 
-        documents = self._load_documents_for_search(request)
+        with observed_span("knowledge_span", "knowledge.load_documents") as span:
+            documents = self._load_documents_for_search(request)
+            span.finish(candidate_count=len(documents))
         if not documents and not selected_concepts:
             route_trace.append({"phase": "no_documents", "message": "没有可检索的知识文档或 OKF 概念"})
             return KnowledgeSearchResponse(trace=route_trace, route_trace=route_trace)
@@ -403,18 +423,27 @@ class KnowledgeService:
                 "mode": request.mode,
             }
         )
-        selected_document_ids: list[str] = []
-        if model_config:
-            selected_document_ids = self._select_documents_with_llm(query, documents, 5, model_config, route_trace)
-        else:
-            selected_document_ids = [row.id for row in _score_documents(query, documents)[:5]]
-            route_trace.append(
-                {
-                    "phase": "document_route_lexical",
-                    "message": "按检索相关性选择知识文档",
-                    "selected_count": len(selected_document_ids),
-                }
-            )
+        with observed_span(
+            "knowledge_span",
+            "knowledge.route_documents",
+            candidate_count=len(documents),
+            strategy="llm" if model_config else "lexical",
+        ) as span:
+            selected_document_ids: list[str] = []
+            if model_config:
+                selected_document_ids = self._select_documents_with_llm(
+                    query, documents, 5, model_config, route_trace
+                )
+            else:
+                selected_document_ids = [row.id for row in _score_documents(query, documents)[:5]]
+                route_trace.append(
+                    {
+                        "phase": "document_route_lexical",
+                        "message": "按检索相关性选择知识文档",
+                        "selected_count": len(selected_document_ids),
+                    }
+                )
+            span.finish(selected_count=len(selected_document_ids))
         concept_document_ids = [
             str(ref.get("document_id"))
             for concept in selected_concepts
@@ -429,7 +458,11 @@ class KnowledgeService:
             route_trace.append({"phase": "document_route_no_match", "message": "没有足够相关的知识文档"})
             return KnowledgeSearchResponse(trace=route_trace, route_trace=route_trace)
 
-        buckets = self._load_buckets_for_search(request, selected_document_ids)
+        with observed_span(
+            "knowledge_span", "knowledge.load_buckets", document_count=len(selected_document_ids)
+        ) as span:
+            buckets = self._load_buckets_for_search(request, selected_document_ids)
+            span.finish(candidate_count=len(buckets))
         if not buckets:
             route_trace.append({"phase": "no_buckets", "message": "所选文档没有可展开的内部索引"})
             return KnowledgeSearchResponse(
@@ -440,7 +473,6 @@ class KnowledgeService:
                 okf_citations=okf_citations,
             )
 
-        selected_ids: list[str] = []
         route_trace.append(
             {
                 "phase": "bucket_route",
@@ -449,17 +481,27 @@ class KnowledgeService:
                 "selected_document_ids": selected_document_ids,
             }
         )
-        if model_config:
-            selected_ids = self._select_buckets_with_llm(query, buckets, request.max_buckets, model_config, route_trace)
-        else:
-            selected_ids = [bucket.id for bucket in _score_buckets(query, buckets)[: request.max_buckets]]
-            route_trace.append(
-                {
-                    "phase": "bucket_route_lexical",
-                    "message": "按检索相关性选择内部索引",
-                    "selected_count": len(selected_ids),
-                }
-            )
+        with observed_span(
+            "knowledge_span",
+            "knowledge.route_buckets",
+            candidate_count=len(buckets),
+            strategy="llm" if model_config else "lexical",
+        ) as span:
+            selected_ids: list[str] = []
+            if model_config:
+                selected_ids = self._select_buckets_with_llm(
+                    query, buckets, request.max_buckets, model_config, route_trace
+                )
+            else:
+                selected_ids = [bucket.id for bucket in _score_buckets(query, buckets)[: request.max_buckets]]
+                route_trace.append(
+                    {
+                        "phase": "bucket_route_lexical",
+                        "message": "按检索相关性选择内部索引",
+                        "selected_count": len(selected_ids),
+                    }
+                )
+            span.finish(selected_count=len(selected_ids))
 
         bucket_by_id = {bucket.id: bucket for bucket in buckets}
         selected_buckets = [bucket_by_id[bucket_id] for bucket_id in selected_ids if bucket_id in bucket_by_id]
@@ -470,7 +512,16 @@ class KnowledgeService:
                 route_trace=route_trace,
                 selected_documents=selected_document_cards,
             )
-        expanded_sections = _expand_sections(selected_documents, selected_buckets, request.max_depth)
+        with observed_span(
+            "knowledge_span",
+            "knowledge.expand_sections",
+            document_count=len(selected_documents),
+            bucket_count=len(selected_buckets),
+        ) as span:
+            expanded_sections = _expand_sections(
+                selected_documents, selected_buckets, request.max_depth
+            )
+            span.finish(section_count=len(expanded_sections))
         route_trace.append(
             {
                 "phase": "section_expand",
@@ -478,9 +529,32 @@ class KnowledgeService:
                 "section_count": len(expanded_sections),
             }
         )
-        chunks = self._load_chunks_for_buckets(request.tenant_id, selected_ids, max(request.max_chunks * 3, request.max_chunks))
-        ranked_chunks = _rank_chunks(query, chunks, selected_buckets, expanded_sections)[: request.max_chunks]
-        evidence_pack = _build_evidence_pack(query, ranked_chunks) if request.need_evidence_pack else []
+        with observed_span(
+            "knowledge_span", "knowledge.load_chunks", bucket_count=len(selected_ids)
+        ) as span:
+            chunks = self._load_chunks_for_buckets(
+                request.tenant_id,
+                selected_ids,
+                max(request.max_chunks * 3, request.max_chunks),
+            )
+            span.finish(candidate_count=len(chunks))
+        with observed_span(
+            "knowledge_span", "knowledge.rank_chunks", candidate_count=len(chunks)
+        ) as span:
+            ranked_chunks = _rank_chunks(query, chunks, selected_buckets, expanded_sections)[
+                : request.max_chunks
+            ]
+            span.finish(selected_count=len(ranked_chunks))
+        with observed_span(
+            "knowledge_span",
+            "knowledge.build_evidence_pack",
+            chunk_count=len(ranked_chunks),
+            enabled=request.need_evidence_pack,
+        ) as span:
+            evidence_pack = (
+                _build_evidence_pack(query, ranked_chunks) if request.need_evidence_pack else []
+            )
+            span.finish(evidence_count=len(evidence_pack))
         route_trace.extend(
             [
                 {"phase": "read_chunks", "message": "读取引用来源", "chunk_count": len(ranked_chunks)},
@@ -683,7 +757,10 @@ class KnowledgeService:
             ],
         }
         try:
-            raw = LLMClient(model_config).generate_json(DISCOVERY_PROMPT.read_text(encoding="utf-8"), payload)
+            with llm_operation("knowledge.discovery", bucket_count=len(buckets)):
+                raw = LLMClient(model_config).generate_json(
+                    DISCOVERY_PROMPT.read_text(encoding="utf-8"), payload
+                )
         except (LLMError, Exception):
             return
         self._raise_if_ingest_cancelled(job)
@@ -731,7 +808,10 @@ class KnowledgeService:
             ]
         }
         try:
-            raw = LLMClient(model_config).generate_json(BUCKET_PROMPT.read_text(encoding="utf-8"), payload)
+            with llm_operation("knowledge.ingest_bucket", section_count=len(section_nodes)):
+                raw = LLMClient(model_config).generate_json(
+                    BUCKET_PROMPT.read_text(encoding="utf-8"), payload
+                )
         except (LLMError, Exception):
             return []
         buckets = raw.get("buckets") if isinstance(raw, dict) else None
@@ -790,7 +870,10 @@ class KnowledgeService:
             "documents": [_document_card_for_search(row) for row in documents],
         }
         try:
-            raw = LLMClient(model_config).generate_json(DOCUMENT_ROUTE_PROMPT.read_text(encoding="utf-8"), payload)
+            with llm_operation("knowledge.document_route", candidate_count=len(documents)):
+                raw = LLMClient(model_config).generate_json(
+                    DOCUMENT_ROUTE_PROMPT.read_text(encoding="utf-8"), payload
+                )
         except (LLMError, Exception) as exc:
             trace.append({"phase": "document_route_failed", "message": str(exc)})
             return []
@@ -825,7 +908,10 @@ class KnowledgeService:
             ],
         }
         try:
-            raw = LLMClient(model_config).generate_json(SEARCH_PROMPT.read_text(encoding="utf-8"), payload)
+            with llm_operation("knowledge.bucket_route", candidate_count=len(buckets)):
+                raw = LLMClient(model_config).generate_json(
+                    SEARCH_PROMPT.read_text(encoding="utf-8"), payload
+                )
         except (LLMError, Exception) as exc:
             trace.append({"phase": "bucket_selection_failed", "message": str(exc)})
             return []

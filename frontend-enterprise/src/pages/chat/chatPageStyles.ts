@@ -46,6 +46,8 @@ export const CHAT_BUBBLE_ASSISTANT_CLASS =
 export const CHAT_BUBBLE_USER_CLASS =
   'rounded-[14px] bg-[#f6f6f6] px-[16px] py-[11px] text-[#18181a]';
 export const CHAT_BUBBLE_ERROR_CLASS = 'border-[#f38989] bg-[#fce7e7] text-[#d20b0b]';
+export const CHAT_BUBBLE_STREAMING_PLACEHOLDER_CLASS =
+  'inline-grid h-[42px] w-[48px] max-w-[48px] place-items-center px-0 py-0';
 
 export function chatRowClass(role: 'user' | 'assistant' | 'system' | 'tool'): string {
   return cn(
@@ -66,6 +68,9 @@ export function chatBubbleClass(role: 'user' | 'assistant' | 'system' | 'tool', 
 export const CHAT_PLAIN_ANSWER_CLASS = 'flex flex-col items-end gap-[6px] whitespace-pre-wrap';
 export const CHAT_MESSAGE_MODE_CHIP_CLASS =
   'inline-flex items-center gap-[4px] rounded-full bg-[#eef0f4] px-[9px] py-[2px] text-[11px] font-medium text-[#464c5e]';
+export const CHAT_QUEUED_STATUS_ROW_CLASS = 'mt-[5px] flex justify-end pr-[2px]';
+export const CHAT_QUEUED_STATUS_CLASS =
+  'inline-flex items-center gap-[4px] text-[11px] font-medium leading-[1.4] text-[#858b9c]';
 export const CHAT_TYPING_CARET_CLASS =
   'inline-block h-[15px] w-[2px] translate-y-[2px] animate-pulse bg-[#18181a]';
 

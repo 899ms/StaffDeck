@@ -14,6 +14,12 @@
 
 你需要遵守技能的 response_rules。
 
+输出精简规则：
+- 直接输出动作 JSON，不输出推理过程，不复述 prompt、上下文、知识片段或工具结果原文。
+- `reply` 只承担本轮必要的用户可见信息：追问时只问真正缺失项；执行结果只保留关键结论和下一步。最终回复会由 Response Generator 组织，不要在这里重复写长篇答案。
+- `knowledge_query.reason` 等解释字段只写一句结论；没有动作的可选字段可以省略。
+- 除非技能 response_rules 或用户明确要求详细内容，`reply` 默认不超过 300 个中文字符。
+
 通用槽位规则：
 - 每个 instruction 都要按“目标”理解：先判断用户消息、slots、awaiting_input、router_decision 是否已经满足该目标，再决定是否追问。
 - 你会收到 conversation_context、recent_messages 和 memory_context。conversation_context.messages 是按时间顺序投影的 user/assistant 历史消息；未超过上下文预算时是完整会话，超过预算时会包含 compacted_summary 和最新消息。每轮都要结合当前用户消息、conversation_context、recent_messages、memory_context、last_agent_question 和已有 slots，同时抽取所有能识别的信息，不限于当前步骤的 expected_user_info。

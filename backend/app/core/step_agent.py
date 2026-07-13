@@ -3,6 +3,7 @@ from __future__ import annotations
 from app import paths
 from app.db.models import ChatSession, ModelConfig, Skill, Tool
 from app.llm import LLMClient, LLMError
+from app.observability.spans import llm_operation
 from app.session.session_schema import RouterDecision, StepAgentResult
 
 
@@ -51,7 +52,12 @@ class StepAgent:
             ],
         }
         try:
-            raw = LLMClient(model_config).generate_json(PROMPT_PATH.read_text(encoding="utf-8"), payload)
+            operation = "step_agent.repair" if repair_context else "step_agent.run"
+            repair_reason = str((repair_context or {}).get("reason") or "") or None
+            with llm_operation(operation, repair_reason=repair_reason):
+                raw = LLMClient(model_config).generate_json(
+                    PROMPT_PATH.read_text(encoding="utf-8"), payload
+                )
             return StepAgentResult.model_validate(raw)
         except Exception as exc:
             if isinstance(exc, LLMError):

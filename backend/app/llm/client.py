@@ -12,6 +12,8 @@ from openai import OpenAI
 
 from app.config import get_settings
 from app.db.models import ModelConfig
+from app.llm.output_policy import compact_json_system_prompt, operation_output_tokens
+from app.observability.spans import current_llm_operation, llm_span_attributes, start_llm_call
 from app.security.encryption import decrypt_secret
 
 
@@ -49,6 +51,9 @@ class LLMClient:
         user_payload: dict[str, Any],
         response_format: dict[str, str] | None = None,
     ) -> str:
+        max_output_tokens = operation_output_tokens(
+            current_llm_operation(), self.max_output_tokens
+        )
         context_messages, serialized_payload = _project_context_messages(user_payload)
         serialized = json.dumps(serialized_payload, ensure_ascii=False)
         try:
@@ -60,18 +65,45 @@ class LLMClient:
                     {"role": "user", "content": serialized},
                 ],
                 "temperature": self.temperature,
-                "max_tokens": self.max_output_tokens,
+                "max_tokens": max_output_tokens,
             }
             if response_format:
                 request["response_format"] = response_format
             empty_diagnostics: list[str] = []
             for attempt in range(EMPTY_RESPONSE_RETRIES + 1):
-                completion = self.client.chat.completions.create(
-                    **request,
+                span = start_llm_call(
+                    model=self.model,
+                    endpoint=_endpoint_label(getattr(self, "base_url", "")),
+                    request_kind="chat.completions",
+                    stream=False,
+                    attempt=attempt + 1,
+                    retry_count=attempt,
+                    max_attempts=EMPTY_RESPONSE_RETRIES + 1,
+                    max_output_tokens=max_output_tokens,
                 )
+                try:
+                    completion = self.client.chat.completions.create(
+                        **request,
+                    )
+                except BaseException as exc:
+                    span.fail(exc, **_completion_span_metrics(None))
+                    raise
                 content = _completion_message_content(completion)
+                metrics = _completion_span_metrics(completion)
                 if content.strip():
+                    span.finish(
+                        ttft_ms=span.elapsed_ms(),
+                        output_chars=len(content),
+                        status="success",
+                        **metrics,
+                    )
                     return content
+                span.finish(
+                    ttft_ms=span.elapsed_ms(),
+                    output_chars=0,
+                    status="empty",
+                    **metrics,
+                )
                 empty_diagnostics.append(_completion_empty_diagnostic(completion, attempt + 1))
                 if attempt >= EMPTY_RESPONSE_RETRIES:
                     raise LLMError(_empty_response_detail(self, empty_diagnostics))
@@ -83,58 +115,111 @@ class LLMClient:
     def generate_text_stream(
         self, system_prompt: str, user_payload: dict[str, Any]
     ) -> Iterator[str]:
+        max_output_tokens = operation_output_tokens(
+            current_llm_operation(), self.max_output_tokens
+        )
         context_messages, serialized_payload = _project_context_messages(user_payload)
         serialized = json.dumps(serialized_payload, ensure_ascii=False)
         try:
             empty_diagnostics: list[str] = []
             for attempt in range(EMPTY_RESPONSE_RETRIES + 1):
-                stream = self.client.chat.completions.create(
+                span = start_llm_call(
                     model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        *context_messages,
-                        {"role": "user", "content": serialized},
-                    ],
-                    temperature=self.temperature,
-                    max_tokens=self.max_output_tokens,
+                    endpoint=_endpoint_label(getattr(self, "base_url", "")),
+                    request_kind="chat.completions",
                     stream=True,
+                    attempt=attempt + 1,
+                    retry_count=attempt,
+                    max_attempts=EMPTY_RESPONSE_RETRIES + 1,
+                    max_output_tokens=max_output_tokens,
                 )
                 pending_parts: list[str] = []
                 emitted_text = False
                 chunk_count = 0
                 choice_chunk_count = 0
                 reasoning_chars = 0
+                output_chars = 0
+                first_content_ms: float | None = None
+                provider_setup_ms: float | None = None
                 finish_reasons: set[str] = set()
                 response_ids: set[str] = set()
-                for chunk in stream:
-                    chunk_count += 1
-                    response_id = _safe_fragment(getattr(chunk, "id", None), 48)
-                    if response_id:
-                        response_ids.add(response_id)
-                    choices = getattr(chunk, "choices", None) or []
-                    if not choices:
-                        continue
-                    choice_chunk_count += len(choices)
-                    choice = choices[0]
-                    finish_reason = _safe_fragment(getattr(choice, "finish_reason", None), 32)
-                    if finish_reason:
-                        finish_reasons.add(finish_reason)
-                    delta = getattr(choice, "delta", None)
-                    reasoning_chars += len(_reasoning_text(delta))
-                    content = _content_text(getattr(delta, "content", None))
-                    if not content:
-                        continue
-                    if emitted_text:
-                        yield content
-                        continue
-                    pending_parts.append(content)
-                    buffered = "".join(pending_parts)
-                    if buffered.strip():
-                        emitted_text = True
-                        pending_parts.clear()
-                        yield buffered
+                try:
+                    stream = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            *context_messages,
+                            {"role": "user", "content": serialized},
+                        ],
+                        temperature=self.temperature,
+                        max_tokens=max_output_tokens,
+                        stream=True,
+                    )
+                    provider_setup_ms = span.elapsed_ms()
+                    for chunk in stream:
+                        chunk_count += 1
+                        response_id = _safe_fragment(getattr(chunk, "id", None), 48)
+                        if response_id:
+                            response_ids.add(response_id)
+                        choices = getattr(chunk, "choices", None) or []
+                        if not choices:
+                            continue
+                        choice_chunk_count += len(choices)
+                        choice = choices[0]
+                        finish_reason = _safe_fragment(getattr(choice, "finish_reason", None), 32)
+                        if finish_reason:
+                            finish_reasons.add(finish_reason)
+                        delta = getattr(choice, "delta", None)
+                        reasoning_chars += len(_reasoning_text(delta))
+                        content = _content_text(getattr(delta, "content", None))
+                        if not content:
+                            continue
+                        output_chars += len(content)
+                        if first_content_ms is None:
+                            first_content_ms = span.elapsed_ms()
+                        if emitted_text:
+                            yield content
+                            continue
+                        pending_parts.append(content)
+                        buffered = "".join(pending_parts)
+                        if buffered.strip():
+                            emitted_text = True
+                            pending_parts.clear()
+                            yield buffered
+                except BaseException as exc:
+                    span.fail(
+                        exc,
+                        provider_setup_ms=provider_setup_ms,
+                        ttft_ms=first_content_ms,
+                        output_chars=output_chars,
+                        stream_chunks=chunk_count,
+                        reasoning_chars=reasoning_chars,
+                    )
+                    raise
                 if emitted_text:
+                    span.finish(
+                        provider_setup_ms=provider_setup_ms,
+                        ttft_ms=first_content_ms,
+                        stream_duration_ms=round(span.elapsed_ms() - (first_content_ms or 0), 3),
+                        output_chars=output_chars,
+                        stream_chunks=chunk_count,
+                        choice_chunks=choice_chunk_count,
+                        reasoning_chars=reasoning_chars,
+                        finish_reasons=sorted(finish_reasons),
+                        provider_response_ids=sorted(response_ids),
+                    )
                     return
+                span.finish(
+                    provider_setup_ms=provider_setup_ms,
+                    ttft_ms=None,
+                    output_chars=0,
+                    stream_chunks=chunk_count,
+                    choice_chunks=choice_chunk_count,
+                    reasoning_chars=reasoning_chars,
+                    finish_reasons=sorted(finish_reasons),
+                    provider_response_ids=sorted(response_ids),
+                    status="empty",
+                )
                 empty_diagnostics.append(
                     _stream_empty_diagnostic(
                         attempt + 1,
@@ -152,15 +237,22 @@ class LLMClient:
             raise LLMError(_provider_failure_detail(self, exc)) from exc
 
     def generate_json(self, system_prompt: str, user_payload: dict[str, Any]) -> dict[str, Any]:
+        system_prompt = compact_json_system_prompt(system_prompt)
         outputs: list[str] = []
         next_payload = user_payload
         last_error: json.JSONDecodeError | None = None
         json_mode_supported = True
         for attempt in range(JSON_REPAIR_ATTEMPTS + 1):
-            text = self._generate_json_candidate(system_prompt, next_payload, json_mode_supported)
-            if json_mode_supported and _response_format_unsupported(text):
-                json_mode_supported = False
-                text = self.generate_text(system_prompt, next_payload)
+            with llm_span_attributes(
+                response_mode="json",
+                json_attempt=attempt + 1,
+                json_retry_count=attempt,
+                json_max_attempts=JSON_REPAIR_ATTEMPTS + 1,
+            ):
+                text = self._generate_json_candidate(system_prompt, next_payload, json_mode_supported)
+                if json_mode_supported and _response_format_unsupported(text):
+                    json_mode_supported = False
+                    text = self.generate_text(system_prompt, next_payload)
             outputs.append(text)
             try:
                 return _loads_llm_json(text)
@@ -220,6 +312,23 @@ def _completion_message_content(completion: Any) -> str:
     except (IndexError, TypeError, AttributeError):
         return ""
     return _content_text(content)
+
+
+def _completion_span_metrics(completion: Any) -> dict[str, Any]:
+    if completion is None:
+        return {}
+    choices = getattr(completion, "choices", None) or []
+    finish_reason = None
+    if choices:
+        finish_reason = _safe_fragment(getattr(choices[0], "finish_reason", None), 32) or None
+    usage = getattr(completion, "usage", None)
+    return {
+        "provider_response_id": _safe_fragment(getattr(completion, "id", None), 48) or None,
+        "finish_reason": finish_reason,
+        "input_tokens": getattr(usage, "prompt_tokens", None),
+        "output_tokens": getattr(usage, "completion_tokens", None),
+        "total_tokens": getattr(usage, "total_tokens", None),
+    }
 
 
 def _content_text(content: Any) -> str:

@@ -5,13 +5,77 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.api.chat import (
     _build_turn_traces,
+    _events_after_cursor,
+    _format_scheduled_task_schedule,
     _message_turn_ids_from_events,
     _persist_chat_turn_cancelled,
     _persist_chat_turn_interrupted,
     _relay_event_payload,
+    list_chat_session_spans,
     message_read,
 )
-from app.db.models import AgentEvent, ChatSession, KnowledgeConcept, Message
+from app.db.models import AgentEvent, ChatSession, KnowledgeConcept, Message, Tenant, User
+
+
+def test_session_spans_endpoint_returns_internal_spans_without_relaying_them() -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(Tenant(id="tenant_demo", name="Demo"))
+        user = User(
+            id="user_demo",
+            tenant_id="tenant_demo",
+            username="demo",
+            password_hash="hashed",
+        )
+        db.add(user)
+        db.add(
+            ChatSession(
+                id="session_test",
+                tenant_id="tenant_demo",
+                user_id=user.id,
+            )
+        )
+        db.add(
+            AgentEvent(
+                id="evt_span",
+                tenant_id="tenant_demo",
+                session_id="session_test",
+                event_type="llm_call_finished",
+                payload_json={
+                    "span_id": "span_demo",
+                    "operation": "router.scene",
+                    "duration_ms": 123.4,
+                },
+            )
+        )
+        db.add(
+            AgentEvent(
+                id="evt_business",
+                tenant_id="tenant_demo",
+                session_id="session_test",
+                event_type="router_decision_created",
+                payload_json={"decision": "answer_only"},
+            )
+        )
+        db.commit()
+
+        spans = list_chat_session_spans(
+            "session_test",
+            tenant_id="tenant_demo",
+            current_user=user,
+            db=db,
+        )
+        relayed = _events_after_cursor(db, "tenant_demo", "session_test", None)
+
+    assert len(spans) == 1
+    assert spans[0]["operation"] == "router.scene"
+    assert spans[0]["duration_ms"] == 123.4
+    assert [event.event_type for event in relayed] == ["router_decision_created"]
 
 
 def test_turn_trace_uses_router_skill_hint_when_events_have_turn_id() -> None:
@@ -452,6 +516,15 @@ def test_scheduled_task_draft_trace_restores_config_stages_for_refresh() -> None
     assert all(line["state"] == "completed" for line in traces[0]["lines"])
     assert traces[0]["lines"][1]["detail"] == "计划：每天 16:50"
     assert "提醒我喝咖啡" in traces[0]["lines"][2]["detail"]
+
+
+def test_scheduled_task_schedule_formatter_preserves_fallbacks() -> None:
+    assert (
+        _format_scheduled_task_schedule("weekly", {"time": "18:30", "weekdays": ["1", "x", 6, 7, -1]})
+        == "每周 周二、周日 18:30"
+    )
+    assert _format_scheduled_task_schedule("monthly", {"day_of_month": 21}) == "每月 21 号 09:00"
+    assert _format_scheduled_task_schedule("unknown", {"time": "08:15"}) == "每天 08:15"
 
 
 def test_cancel_endpoint_persists_terminal_trace_for_client_turn_id() -> None:

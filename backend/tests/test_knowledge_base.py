@@ -30,6 +30,7 @@ from app.db.models import (
 from app.knowledge.schema import KnowledgeChunkUpdateRequest, KnowledgeDocumentUpdateRequest, KnowledgeSearchRequest, KnowledgeSearchResponse
 from app.knowledge.okf import search_concepts
 from app.knowledge.service import IngestPayload, KnowledgeService
+from app.observability.spans import bind_span_sink
 from app.skills.skill_schema import SkillCard
 
 
@@ -412,6 +413,83 @@ def test_model_driven_document_route_does_not_fall_back_to_lexical_matching(monk
         assert response.selected_documents == []
         assert any(item.get("phase") == "document_route_no_match" for item in response.route_trace)
         assert all("fallback" not in str(item.get("phase") or "") for item in response.route_trace)
+
+
+def test_knowledge_search_records_persistent_substep_spans() -> None:
+    events: list[tuple[str, dict]] = []
+    with _test_session() as db:
+        db.add(Tenant(id="tenant_demo", name="Demo"))
+        db.add(KnowledgeBase(id="kb_demo", tenant_id="tenant_demo", name="默认知识库"))
+        document = KnowledgeDocument(
+            id="kdoc_frontend",
+            tenant_id="tenant_demo",
+            knowledge_base_id="kb_demo",
+            filename="frontend.md",
+            file_type="md",
+            title="前端规范资料",
+            status="ready",
+            metadata_json={"document_card": {"title": "前端规范资料", "summary": "前端规范"}},
+        )
+        bucket = KnowledgeBucket(
+            id="kbucket_frontend",
+            tenant_id="tenant_demo",
+            knowledge_base_id="kb_demo",
+            document_id=document.id,
+            bucket_key="frontend",
+            title="前端规范",
+            summary="Vue 3 与 TypeScript",
+        )
+        db.add(document)
+        db.add(bucket)
+        db.add(
+            KnowledgeChunk(
+                tenant_id="tenant_demo",
+                knowledge_base_id="kb_demo",
+                document_id=document.id,
+                bucket_id=bucket.id,
+                chunk_index=0,
+                content="前端规范包括 Vue 3 与 TypeScript。",
+                summary="前端规范",
+                source_ref="frontend.md",
+            )
+        )
+        db.commit()
+
+        with bind_span_sink(
+            lambda event_type, payload: events.append((event_type, payload))
+        ):
+            response = KnowledgeService(db).search(
+                KnowledgeSearchRequest(
+                    tenant_id="tenant_demo",
+                    knowledge_base_ids=["kb_demo"],
+                    query="前端规范",
+                    mode="chat",
+                    need_evidence_pack=True,
+                )
+            )
+
+    assert response.chunks
+    finished = {
+        payload["operation"]: payload
+        for event_type, payload in events
+        if event_type == "knowledge_span_finished"
+    }
+    assert {
+        "knowledge.search",
+        "knowledge.load_concepts",
+        "knowledge.route_concepts",
+        "knowledge.load_documents",
+        "knowledge.route_documents",
+        "knowledge.load_buckets",
+        "knowledge.route_buckets",
+        "knowledge.expand_sections",
+        "knowledge.load_chunks",
+        "knowledge.rank_chunks",
+        "knowledge.build_evidence_pack",
+    }.issubset(finished)
+    assert finished["knowledge.search"]["duration_ms"] >= 0
+    assert finished["knowledge.load_documents"]["candidate_count"] == 1
+    assert finished["knowledge.build_evidence_pack"]["evidence_count"] == 1
 
 
 def test_okf_search_does_not_require_manually_curated_business_terms() -> None:

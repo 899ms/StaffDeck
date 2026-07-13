@@ -7,6 +7,7 @@ from app import paths
 from app.db.models import ChatSession, ModelConfig, Skill
 from app.knowledge.citations import knowledge_citations_from_results
 from app.llm import LLMClient
+from app.observability.spans import llm_operation
 from app.session.session_schema import RouterDecision, StepAgentResult
 from app.tools.tool_schema import ToolResult
 
@@ -83,7 +84,10 @@ class ResponseGenerator:
         try:
             if tool_result and not tool_result.success:
                 return tool_failure_reply(tool_result)
-            text = LLMClient(model_config).generate_text(self._system_prompt(persona_prompt), payload)
+            with llm_operation("response.generate"):
+                text = LLMClient(model_config).generate_text(
+                    self._system_prompt(persona_prompt), payload
+                )
             reply = text.strip() or step_result.reply or self._minimal_fallback(router_decision)
             return self._visible_reply_or_fallback(
                 reply, session, router_decision, step_result, tool_result, skill
@@ -121,19 +125,22 @@ class ResponseGenerator:
             if router_decision.decision == "clarify" and step_result.reply:
                 yield from self.chunk_text(step_result.reply)
                 return
-            stream = LLMClient(model_config).generate_text_stream(self._system_prompt(persona_prompt), payload)
-            reply_parts: list[str] = []
-            has_streamed = False
-            for chunk in stream:
-                if not chunk:
-                    continue
-                reply_parts.append(chunk)
-                if not has_streamed:
-                    preview = "".join(reply_parts).strip()
-                    if not preview:
+            with llm_operation("response.generate_stream"):
+                stream = LLMClient(model_config).generate_text_stream(
+                    self._system_prompt(persona_prompt), payload
+                )
+                reply_parts: list[str] = []
+                has_streamed = False
+                for chunk in stream:
+                    if not chunk:
                         continue
-                    has_streamed = True
-                yield chunk
+                    reply_parts.append(chunk)
+                    if not has_streamed:
+                        preview = "".join(reply_parts).strip()
+                        if not preview:
+                            continue
+                        has_streamed = True
+                    yield chunk
             if has_streamed:
                 return
             reply = self._visible_reply_or_fallback(

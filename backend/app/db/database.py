@@ -33,6 +33,10 @@ database_url = _normalize_database_url(settings.database_url)
 connect_args = {"check_same_thread": False, "timeout": 30} if database_url.startswith("sqlite") else {}
 engine: Engine = create_engine(database_url, echo=False, connect_args=connect_args)
 
+_DEFAULT_MODEL_OUTPUT_LIMIT_MIGRATION_ID = "20260712_default_model_output_tokens_8192"
+_LEGACY_DEFAULT_MODEL_OUTPUT_TOKENS = 2048
+_DEFAULT_MODEL_OUTPUT_TOKENS = 8192
+
 
 def init_db() -> None:
     import app.db.models  # noqa: F401
@@ -64,6 +68,8 @@ def _migrate_sqlite_skill_schema() -> None:
     legacy_id_column = f"{legacy_key}_id"
     legacy_id_prefix = f"{legacy_key}_"
     with engine.begin() as conn:
+        _migrate_default_model_output_limit(conn, tables)
+
         if "users" in tables:
             user_columns = {column["name"] for column in inspector.get_columns("users")}
             if "role" not in user_columns:
@@ -237,6 +243,48 @@ def _migrate_sqlite_skill_schema() -> None:
                 _seed_skill_versions(conn)
             _normalize_agent_branch_rows(conn, tables)
             _seed_agent_branch_state(conn, inspector, tables)
+
+
+def _migrate_default_model_output_limit(conn, tables: set[str]) -> None:
+    if "model_configs" not in tables:
+        return
+
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS app_data_migrations (
+                id VARCHAR PRIMARY KEY,
+                applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    applied = conn.execute(
+        text("SELECT id FROM app_data_migrations WHERE id = :id"),
+        {"id": _DEFAULT_MODEL_OUTPUT_LIMIT_MIGRATION_ID},
+    ).first()
+    if applied:
+        return
+
+    conn.execute(
+        text(
+            """
+            UPDATE model_configs
+            SET max_output_tokens = :new_limit,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE is_default = 1
+              AND max_output_tokens = :legacy_limit
+            """
+        ),
+        {
+            "new_limit": _DEFAULT_MODEL_OUTPUT_TOKENS,
+            "legacy_limit": _LEGACY_DEFAULT_MODEL_OUTPUT_TOKENS,
+        },
+    )
+    conn.execute(
+        text("INSERT INTO app_data_migrations (id) VALUES (:id)"),
+        {"id": _DEFAULT_MODEL_OUTPUT_LIMIT_MIGRATION_ID},
+    )
 
 
 def _migrate_skill_content(value: object, skill_id: str) -> dict[str, object]:

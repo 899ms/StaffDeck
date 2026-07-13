@@ -16,6 +16,7 @@ import {
   CHAT_ATTACHMENT_LIST_CLASS,
   CHAT_ATTACHMENT_META_CLASS,
   CHAT_ATTACHMENT_NAME_CLASS,
+  CHAT_BUBBLE_STREAMING_PLACEHOLDER_CLASS,
   CHAT_CITATION_CHIP_CLASS,
   CHAT_CITATION_HEADING_CLASS,
   CHAT_CITATION_INDEX_CLASS,
@@ -29,6 +30,8 @@ import {
   CHAT_MESSAGE_ITEM_CLASS,
   CHAT_MESSAGE_MODE_CHIP_CLASS,
   CHAT_PLAIN_ANSWER_CLASS,
+  CHAT_QUEUED_STATUS_CLASS,
+  CHAT_QUEUED_STATUS_ROW_CLASS,
   CHAT_TYPING_CARET_CLASS,
   chatBubbleClass,
   chatRowClass,
@@ -84,11 +87,19 @@ export default function MessageBubble({ chat, item, render }: MessageBubbleProps
     showTypingCaret,
   } = render;
   const queuedMessage = item.role === 'user' && item.metadata?.queued === true;
+  const compactStreamingPlaceholder = Boolean(
+    item.role === 'assistant' && showTypingCaret && !showInlineTrace && !visibleContent,
+  );
 
   return (
     <div className={CHAT_MESSAGE_ITEM_CLASS}>
       <div className={chatRowClass(item.role)}>
-        <div className={chatBubbleClass(item.role, item.isError)}>
+        <div
+          className={cn(
+            chatBubbleClass(item.role, item.isError),
+            compactStreamingPlaceholder && CHAT_BUBBLE_STREAMING_PLACEHOLDER_CLASS,
+          )}
+        >
           {statusOnly ? (
             <div className="text-[13px] text-[#858b9c]">{visibleContent}</div>
           ) : showInlineTrace && summary ? (
@@ -103,22 +114,18 @@ export default function MessageBubble({ chat, item, render }: MessageBubbleProps
 
           {!statusOnly && visibleContent ? (
             item.role === 'assistant' ? (
-              <MarkdownMessage content={visibleContent} />
+              <div data-i18n-ignore>
+                <MarkdownMessage content={visibleContent} />
+              </div>
             ) : (
               <div className={CHAT_PLAIN_ANSWER_CLASS}>
-                {queuedMessage && (
-                  <span className={CHAT_MESSAGE_MODE_CHIP_CLASS}>
-                    <StaffdeckIcon name="clock" size={13} />
-                    排队中
-                  </span>
-                )}
                 {scheduledTaskPrompt && (
                   <span className={CHAT_MESSAGE_MODE_CHIP_CLASS}>
                     <StaffdeckIcon name="clock" size={13} />
                     定时任务
                   </span>
                 )}
-                <span>{visibleContent}</span>
+                <span data-i18n-ignore>{visibleContent}</span>
               </div>
             )
           ) : showTypingCaret ? (
@@ -137,8 +144,8 @@ export default function MessageBubble({ chat, item, render }: MessageBubbleProps
                     </span>
                   )}
                   <span className={CHAT_ATTACHMENT_COPY_CLASS}>
-                    <span className={CHAT_ATTACHMENT_NAME_CLASS}>{attachment.filename}</span>
-                    <span className={CHAT_ATTACHMENT_META_CLASS}>
+                    <span className={CHAT_ATTACHMENT_NAME_CLASS} data-i18n-ignore>{attachment.filename}</span>
+                    <span className={CHAT_ATTACHMENT_META_CLASS} data-i18n-ignore>
                       {attachmentTypeLabel(attachment)}
                       {attachment.error ? ` · ${attachment.error}` : ''}
                     </span>
@@ -162,8 +169,8 @@ export default function MessageBubble({ chat, item, render }: MessageBubbleProps
                     className={CHAT_CITATION_CHIP_CLASS}
                     onClick={() => setActiveCitation(citation)}
                   >
-                    <span className={CHAT_CITATION_INDEX_CLASS}>{citation.label || citation.id}</span>
-                    <span className={CHAT_CITATION_TITLE_CLASS}>{citationDisplayTitle(citation)}</span>
+                    <span className={CHAT_CITATION_INDEX_CLASS} data-i18n-ignore>{citation.label || citation.id}</span>
+                    <span className={CHAT_CITATION_TITLE_CLASS} data-i18n-ignore>{citationDisplayTitle(citation)}</span>
                   </button>
                 ))}
               </div>
@@ -204,6 +211,14 @@ export default function MessageBubble({ chat, item, render }: MessageBubbleProps
           )}
         </div>
       </div>
+      {queuedMessage && (
+        <div className={CHAT_QUEUED_STATUS_ROW_CLASS}>
+          <span className={CHAT_QUEUED_STATUS_CLASS} role="status">
+            <StaffdeckIcon name="clock" size={12} />
+            排队中
+          </span>
+        </div>
+      )}
     </div>
   );
 }

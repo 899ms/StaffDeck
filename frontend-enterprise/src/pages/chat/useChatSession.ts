@@ -121,10 +121,18 @@ import {
   type TraceLine,
   type TurnTrace,
 } from './chatTypes';
+import {
+  chatQueueStorageKey,
+  readQueuedChatTurns,
+  writeQueuedChatTurns,
+  type PreparedChatTurn,
+} from './chatQueueStorage';
 
 const CHAT_BASE_PATH = '/workspace/chat';
 const STREAM_TEXT_EVENTS = new Set(['stream_replace', 'stream_delta', 'token']);
 const STREAM_RELAY_RECOVERY_POLL_INTERVAL_MS = 5 * 1000;
+const DEFAULT_SCHEDULE_TIME = '09:00';
+const SCHEDULE_WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'] as const;
 // Shared with the management shell (App.tsx `ENTERPRISE_SIDEBAR_STORAGE_KEY`) so
 // the collapse state is preserved when switching between 管理端 and 对话端.
 // Stored as '1' (expanded) / '0' (collapsed); unset defaults to expanded.
@@ -134,28 +142,40 @@ function chatSessionPath(id: string): string {
   return `${CHAT_BASE_PATH}/${id}`;
 }
 
+type DraftScheduleType = 'once' | 'daily' | 'weekly' | 'monthly';
+type DraftScheduleFormatter = (schedule: Record<string, unknown>) => string;
+
+const DRAFT_SCHEDULE_FORMATTERS: Record<DraftScheduleType, DraftScheduleFormatter> = {
+  once: (schedule) => `一次性 ${typeof schedule.run_at === 'string' ? schedule.run_at : '待确认时间'}`,
+  weekly: (schedule) => `每周 ${formatScheduleWeekdays(schedule.weekdays)} ${scheduleTime(schedule)}`,
+  monthly: (schedule) => `每月 ${schedule.day_of_month || 1} 号 ${scheduleTime(schedule)}`,
+  daily: (schedule) => `每天 ${scheduleTime(schedule)}`,
+};
+
+function scheduleTime(schedule: Record<string, unknown>): string {
+  return typeof schedule.time === 'string' ? schedule.time : DEFAULT_SCHEDULE_TIME;
+}
+
+function normalizeDraftScheduleType(value: unknown): DraftScheduleType {
+  if (typeof value !== 'string') return 'daily';
+  return value in DRAFT_SCHEDULE_FORMATTERS ? (value as DraftScheduleType) : 'daily';
+}
+
+function formatScheduleWeekdays(value: unknown): string {
+  if (!Array.isArray(value)) return SCHEDULE_WEEKDAY_LABELS[0];
+  const labels = value
+    .map((item) => Number(item))
+    .filter((item) => Number.isInteger(item) && item >= 0 && item < SCHEDULE_WEEKDAY_LABELS.length)
+    .map((item) => SCHEDULE_WEEKDAY_LABELS[item]);
+  return labels.length ? labels.join('、') : SCHEDULE_WEEKDAY_LABELS[0];
+}
+
 function formatScheduledTaskDraftSchedule(draft?: Partial<ScheduledTaskDraftRead> | Record<string, unknown>): string {
   const schedule = draft?.schedule && typeof draft.schedule === 'object' && !Array.isArray(draft.schedule)
     ? draft.schedule as Record<string, unknown>
     : {};
-  const scheduleType = typeof draft?.schedule_type === 'string' ? draft.schedule_type : 'daily';
-  if (scheduleType === 'once') {
-    return `一次性 ${typeof schedule.run_at === 'string' ? schedule.run_at : '待确认时间'}`;
-  }
-  if (scheduleType === 'weekly') {
-    const labels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-    const weekdays = Array.isArray(schedule.weekdays)
-      ? schedule.weekdays
-        .map((item) => Number(item))
-        .filter((item) => Number.isInteger(item) && item >= 0 && item <= 6)
-        .map((item) => labels[item])
-      : [];
-    return `每周 ${weekdays.length ? weekdays.join('、') : '周一'} ${typeof schedule.time === 'string' ? schedule.time : '09:00'}`;
-  }
-  if (scheduleType === 'monthly') {
-    return `每月 ${schedule.day_of_month || 1} 号 ${typeof schedule.time === 'string' ? schedule.time : '09:00'}`;
-  }
-  return `每天 ${typeof schedule.time === 'string' ? schedule.time : '09:00'}`;
+  const scheduleType = normalizeDraftScheduleType(draft?.schedule_type);
+  return DRAFT_SCHEDULE_FORMATTERS[scheduleType](schedule);
 }
 
 function scheduledTaskDraftTraceDetail(draft?: Partial<ScheduledTaskDraftRead> | Record<string, unknown>): string | undefined {
@@ -227,24 +247,16 @@ function scheduledTaskStatusTraceLine(phase: string, data: Record<string, unknow
 
 export type UseChatSession = ReturnType<typeof useChatSession>;
 
-type PreparedChatTurn = {
-  queueId: string;
-  conversationId: string;
-  agentId: string;
-  turnId: string;
-  text: string;
-  attachments: ChatAttachmentRead[];
-  interactionMode: ComposerInteractionMode;
-  modelConfigId?: string;
-  createdAt: string;
-};
-
 export function useChatSession() {
   const { sessionId, draftAgentId } = useParams<{ sessionId?: string; draftAgentId?: string }>();
   const navigate = useNavigate();
   const [auth] = useState(() => getEnterpriseAuthSession());
   const tenantId = auth?.user.tenant_id || TENANT_ID;
   const userId = auth?.user.id || '';
+  const queueStorageKey = chatQueueStorageKey(tenantId, userId);
+  const [restoredQueuedTurns] = useState(() => (
+    readQueuedChatTurns(window.sessionStorage, queueStorageKey)
+  ));
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [sessionReadTimes, setSessionReadTimes] = useState<Record<string, string>>(() => loadSessionReadTimes(userId));
@@ -318,8 +330,9 @@ export function useChatSession() {
   const knownSessionIdsRef = useRef(new Set<string>());
   const optimisticSessionIdsRef = useRef(new Set<string>());
   const pendingPromotedSessionIdRef = useRef<string | null>(null);
-  const queuedTurnsRef = useRef<PreparedChatTurn[]>([]);
+  const queuedTurnsRef = useRef<PreparedChatTurn[]>(restoredQueuedTurns);
   const queuedTurnProcessingRef = useRef(false);
+  const queuedTurnPreviewsRestoredRef = useRef(false);
   const sessionsInitializedRef = useRef(false);
   const autoOpenedSessionIdsRef = useRef(new Set<string>());
   const loadErrorNoticeRef = useRef<Record<string, number>>({});
@@ -330,6 +343,9 @@ export function useChatSession() {
   const notifyTrace = useCallback(() => setTraceTick((value) => value + 1), []);
   const notifyFeedback = useCallback(() => setFeedbackTick((value) => value + 1), []);
   const notifyQueue = useCallback(() => setQueuedTurnsTick((value) => value + 1), []);
+  const persistQueuedTurns = useCallback(() => (
+    writeQueuedChatTurns(window.sessionStorage, queueStorageKey, queuedTurnsRef.current)
+  ), [queueStorageKey]);
 
   const redirectToLogin = useCallback(() => {
     clearEnterpriseAuthSession();
@@ -636,6 +652,7 @@ export function useChatSession() {
     optimisticSessionIdsRef.current.delete(id);
     if (queuedTurnsRef.current.some((item) => item.conversationId === id)) {
       queuedTurnsRef.current = queuedTurnsRef.current.filter((item) => item.conversationId !== id);
+      persistQueuedTurns();
       notifyQueue();
     }
     storeRef.current.delete(id);
@@ -657,7 +674,7 @@ export function useChatSession() {
     });
     notifyStore();
     notifyStream();
-  }, [notifyQueue, notifyStore, notifyStream]);
+  }, [notifyQueue, notifyStore, notifyStream, persistQueuedTurns]);
 
   const upsertOptimisticSession = useCallback((session: ChatSession) => {
     optimisticSessionIdsRef.current.add(session.id);
@@ -1191,9 +1208,20 @@ export function useChatSession() {
 
   const enqueuePreparedTurn = useCallback((turn: PreparedChatTurn) => {
     queuedTurnsRef.current = [...queuedTurnsRef.current, turn];
+    const persisted = persistQueuedTurns();
     appendQueuedTurnPreview(turn);
     notifyQueue();
     notify.info('已加入发送队列');
+    if (!persisted) {
+      notify.warning('排队内容过大，刷新页面后可能无法恢复');
+    }
+  }, [appendQueuedTurnPreview, notifyQueue, persistQueuedTurns]);
+
+  useEffect(() => {
+    if (queuedTurnPreviewsRestoredRef.current) return;
+    queuedTurnPreviewsRestoredRef.current = true;
+    queuedTurnsRef.current.forEach(appendQueuedTurnPreview);
+    if (queuedTurnsRef.current.length > 0) notifyQueue();
   }, [appendQueuedTurnPreview, notifyQueue]);
 
   const updateMessageFeedback = useCallback((
@@ -2607,6 +2635,7 @@ export function useChatSession() {
         queuedTurnsRef.current = queuedTurnsRef.current.map((item) => (
           item.conversationId === previousId ? { ...item, conversationId: nextSessionId } : item
         ));
+        persistQueuedTurns();
         notifyQueue();
       }
       setScheduledDrafts((prev) => {
@@ -2780,6 +2809,7 @@ export function useChatSession() {
     notifyQueue,
     notifyStore,
     notifyStream,
+    persistQueuedTurns,
     pollScheduledSessionEvents,
     redirectToLogin,
     removeQueuedTurnPreview,
@@ -2856,16 +2886,32 @@ export function useChatSession() {
     if (queuedTurnProcessingRef.current) return;
     const nextTurn = queuedTurnsRef.current[0];
     if (!nextTurn) return;
+    if (sessionsLoading) return;
+    const queuedSession = sessions.find((item) => item.id === nextTurn.conversationId);
+    if (
+      queuedSession
+      && (queuedSession.status === 'running' || queuedSession.status === 'executing')
+    ) {
+      return;
+    }
+    if (
+      !queuedSession
+      && !isDraftConversationKey(nextTurn.conversationId)
+      && !optimisticSessionIdsRef.current.has(nextTurn.conversationId)
+    ) {
+      return;
+    }
     const stream = getStreamSlot(nextTurn.conversationId);
     if (stream.loading || runningTurn?.sessionId === nextTurn.conversationId) return;
     queuedTurnsRef.current = queuedTurnsRef.current.slice(1);
+    persistQueuedTurns();
     notifyQueue();
     queuedTurnProcessingRef.current = true;
     void executePreparedTurn(nextTurn, { queued: true }).finally(() => {
       queuedTurnProcessingRef.current = false;
       notifyQueue();
     });
-  }, [executePreparedTurn, getStreamSlot, notifyQueue, runningTurn]);
+  }, [executePreparedTurn, getStreamSlot, notifyQueue, persistQueuedTurns, runningTurn, sessions, sessionsLoading]);
 
   useEffect(() => {
     void queuedTurnsTick;

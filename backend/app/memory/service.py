@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 from app import paths
 from app.db.models import ChatSession, MemoryRecord, ModelConfig, Tool, User, utc_now
 from app.llm import LLMClient
+from app.observability.spans import llm_operation
 from app.session.session_schema import ChatTurnRequest, StepAgentResult
 from app.tools.tool_schema import ToolResult
 
@@ -66,14 +67,15 @@ class MemoryService:
         candidates = rows[:30]
         by_id = {row.id: row for row in candidates}
         try:
-            raw = LLMClient(model_config).generate_json(
-                RERANK_PROMPT_PATH.read_text(encoding="utf-8"),
-                {
-                    "user_message": query,
-                    "candidate_memories": [memory_read(row) for row in candidates],
-                    "limit": limit,
-                },
-            )
+            with llm_operation("memory.rerank", candidate_count=len(candidates)):
+                raw = LLMClient(model_config).generate_json(
+                    RERANK_PROMPT_PATH.read_text(encoding="utf-8"),
+                    {
+                        "user_message": query,
+                        "candidate_memories": [memory_read(row) for row in candidates],
+                        "limit": limit,
+                    },
+                )
         except Exception:
             return self._lexical_recall(query, rows, limit)
         ids = raw.get("memory_ids") if isinstance(raw, dict) else []
@@ -120,17 +122,18 @@ class MemoryService:
             normalize=False,
             agent_id=agent_id,
         )
-        raw_delta = LLMClient(model_config).generate_json(
-            PROMPT_PATH.read_text(encoding="utf-8"),
-            {
-                "user_message": request.message,
-                "assistant_reply": reply,
-                "recent_messages": _recent_messages_with_reply(recent_messages, reply),
-                "existing_memories": [memory_read(row) for row in existing_rows],
-                "step_result": step_result.model_dump(mode="json"),
-                "tool_result": tool_result.model_dump(mode="json") if tool_result else None,
-            },
-        )
+        with llm_operation("memory.capture", existing_count=len(existing_rows)):
+            raw_delta = LLMClient(model_config).generate_json(
+                PROMPT_PATH.read_text(encoding="utf-8"),
+                {
+                    "user_message": request.message,
+                    "assistant_reply": reply,
+                    "recent_messages": _recent_messages_with_reply(recent_messages, reply),
+                    "existing_memories": [memory_read(row) for row in existing_rows],
+                    "step_result": step_result.model_dump(mode="json"),
+                    "tool_result": tool_result.model_dump(mode="json") if tool_result else None,
+                },
+            )
         records: list[MemoryRecord] = []
         for update in _normalize_memory_updates(raw_delta):
             if update["operation"] == "delete":

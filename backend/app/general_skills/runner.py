@@ -25,6 +25,7 @@ from app.general_skills.schema import (
 )
 from app.general_skills.runtime_env import GeneralSkillRuntimeError, ensure_runtime_python, runtime_environment
 from app.llm import LLMClient, LLMError
+from app.observability.spans import llm_operation
 
 
 PROMPT_DIR = paths.resource_dir() / "app" / "llm" / "prompts"
@@ -61,7 +62,10 @@ class GeneralSkillSelector:
                 if skill.status == "published"
             ],
         }
-        raw = LLMClient(model_config).generate_json(SELECTOR_PROMPT.read_text(encoding="utf-8"), payload)
+        with llm_operation("general_skill.select"):
+            raw = LLMClient(model_config).generate_json(
+                SELECTOR_PROMPT.read_text(encoding="utf-8"), payload
+            )
         decision = GeneralSkillSelection.model_validate(raw)
         slugs = {skill.slug for skill in general_skills if skill.status == "published"}
         if decision.use_general_skill and decision.selected_slug in slugs:
@@ -246,10 +250,11 @@ class GeneralSkillRunner:
                 "timeout_seconds": RUN_TIMEOUT_SECONDS,
             },
         }
-        raw = LLMClient(_with_min_tokens(model_config, GENERAL_SKILL_MAX_TOKENS)).generate_json(
-            RUNNER_PROMPT.read_text(encoding="utf-8"),
-            payload,
-        )
+        with llm_operation("general_skill.plan"):
+            raw = LLMClient(_with_min_tokens(model_config, GENERAL_SKILL_MAX_TOKENS)).generate_json(
+                RUNNER_PROMPT.read_text(encoding="utf-8"),
+                payload,
+            )
         plan = GeneralSkillExecutionPlan.model_validate(raw)
         plan.runtime = _plan_runtime(plan)
         if not plan.code.strip():
@@ -381,10 +386,11 @@ class GeneralSkillRunner:
             },
             "previous_attempts": attempts[-3:],
         }
-        raw = LLMClient(_with_min_tokens(model_config, GENERAL_SKILL_MAX_TOKENS)).generate_json(
-            REPAIR_PROMPT.read_text(encoding="utf-8"),
-            payload,
-        )
+        with llm_operation("general_skill.repair", attempt=next_attempt):
+            raw = LLMClient(_with_min_tokens(model_config, GENERAL_SKILL_MAX_TOKENS)).generate_json(
+                REPAIR_PROMPT.read_text(encoding="utf-8"),
+                payload,
+            )
         plan = GeneralSkillExecutionPlan.model_validate(raw)
         plan.runtime = _plan_runtime(plan)
         if not plan.code.strip():
@@ -573,7 +579,10 @@ class GeneralSkillRunner:
             "structured_result": structured_result,
         }
         try:
-            raw = LLMClient(model_config).generate_json(REPLY_PROMPT.read_text(encoding="utf-8"), payload)
+            with llm_operation("general_skill.reply"):
+                raw = LLMClient(model_config).generate_json(
+                    REPLY_PROMPT.read_text(encoding="utf-8"), payload
+                )
             reply = GeneralSkillReply.model_validate(raw).reply.strip()
         except LLMError:
             raise
@@ -627,7 +636,10 @@ class GeneralSkillRunner:
             "structured_result": structured_result,
         }
         try:
-            raw = LLMClient(model_config).generate_json(REVIEW_PROMPT.read_text(encoding="utf-8"), payload)
+            with llm_operation("general_skill.review", attempt=attempt):
+                raw = LLMClient(model_config).generate_json(
+                    REVIEW_PROMPT.read_text(encoding="utf-8"), payload
+                )
             review = GeneralSkillExecutionReview.model_validate(raw).model_dump(mode="json")
         except Exception as exc:
             fallback_needs_retry = _execution_needs_retry(stdout, stderr, structured_result)
