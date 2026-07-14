@@ -348,7 +348,7 @@ const TIMELINE_TRACKS: TimelineTrackConfig[] = [
   },
 ];
 
-type DayActivity = { label: string; dot: string };
+type DayActivity = { label: string; dot: string; time?: string };
 
 type ActivityTimelineProps = {
   employeeSessions: EnterpriseChatSessionRead[];
@@ -594,6 +594,9 @@ function MonthCalendar({
                         <div className="flex items-start gap-[8px]">
                           <span className={`mt-[4px] size-[6px] shrink-0 rounded-full ${item.dot}`} />
                           <span className="flex-1 break-words text-[12px] leading-[17px] text-[#464c5e] in-data-[theme=dark]:text-[#c9cede]">
+                            {item.time ? (
+                              <span className="mr-[6px] tabular-nums text-[#858b9c]">{item.time}</span>
+                            ) : null}
                             {item.label}
                           </span>
                         </div>
@@ -956,7 +959,7 @@ function buildDayActivities(props: ActivityTimelineProps): Record<string, DayAct
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return;
     const key = dateKey(date);
-    (map[key] ||= []).push({ label, dot });
+    (map[key] ||= []).push({ label, dot, time: formatHm(date) });
   };
 
   const chatByDay: Record<string, number> = {};
@@ -977,7 +980,7 @@ function buildDayActivities(props: ActivityTimelineProps): Record<string, DayAct
       if (!value) return;
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) return;
-      push(value, `${formatHm(date)} ${title}`, ACTIVITY_DOT.task);
+      push(value, title, ACTIVITY_DOT.task);
     });
   });
 
